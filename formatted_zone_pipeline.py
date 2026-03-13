@@ -1,54 +1,25 @@
-import os
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, to_date
 import duckdb
 
-# 1. Configurar la sesión de Spark
+# 1. Iniciar sesión de Spark
 spark = SparkSession.builder \
     .appName("FormattedZonePipeline") \
     .getOrCreate()
 
-# Ruta a tu carpeta de datasets (ajusta si es necesario)
-datasets_path = "datasets/"
-db_name = "FormattedZone.duckdb"
+# 2. Leer los archivos CSV de la Landing Zone
+# Asegúrate de que las rutas a tus archivos CSV sean correctas
+df_nasdaq = spark.read.csv("datasets/nasdaq_companies.csv", header=True, inferSchema=True)
+df_sp500 = spark.read.csv("datasets/sp500_daily_data.csv", header=True, inferSchema=True)
+df_exchange = spark.read.csv("datasets/US_exchange.csv", header=True, inferSchema=True)
 
-def process_and_save():
-    # --- PROCESAR NASDAQ ---
-    print("Procesando Nasdaq...")
-    df_nasdaq = spark.read.csv(os.path.join(datasets_path, "nasdaq_companies.csv"), header=True, inferSchema=True)
-    # Limpiamos nombres de columnas (quitar espacios o puntos)
-    df_nasdaq = df_nasdaq.withColumnRenamed("Last Sale", "LastSale") \
-                         .withColumnRenamed("Market Cap", "MarketCap") \
-                         .withColumnRenamed("IPO Year", "IPOyear")
-    
-    # --- PROCESAR SP500 ---
-    print("Procesando SP500...")
-    df_sp500 = spark.read.csv(os.path.join(datasets_path, "sp500_daily_data.csv"), header=True, inferSchema=True)
-    # Aseguramos que la fecha sea tipo Date
-    df_sp500 = df_sp500.withColumn("Date", to_date(col("Date")))
+# 3. Cargar en DuckDB
+# Convertimos los DataFrames de Spark a Pandas para enviarlos a DuckDB
+# Es la forma más rápida y estándar en entornos de clase
+con = duckdb.connect('FormattedZone.duckdb')
 
-    # --- PROCESAR US_EXCHANGE ---
-    print("Procesando US Exchange...")
-    df_exchange = spark.read.csv(os.path.join(datasets_path, "US_exchange.csv"), header=True, inferSchema=True)
-    df_exchange = df_exchange.withColumn("Date", to_date(col("Date")))
+con.execute("INSERT INTO nasdaq SELECT * FROM df_nasdaq")
+con.execute("INSERT INTO sp500 SELECT * FROM df_sp500")
+con.execute("INSERT INTO us_exchange SELECT * FROM df_exchange")
 
-    # --- GUARDAR EN DUCKDB ---
-    print(f"Guardando tablas en {db_name}...")
-    con = duckdb.connect(db_name)
-
-    # Convertimos a Pandas para que DuckDB los ingeste directamente de forma eficiente
-    # Nota: Si los datasets son GIGANTES, hay formas más complejas, pero para clase esto es lo mejor.
-    pd_nasdaq = df_nasdaq.toPandas()
-    pd_sp500 = df_sp500.toPandas()
-    pd_exchange = df_exchange.toPandas()
-
-    # Creamos las tablas en DuckDB
-    con.execute("CREATE OR REPLACE TABLE nasdaq AS SELECT * FROM pd_nasdaq")
-    con.execute("CREATE OR REPLACE TABLE sp500 AS SELECT * FROM pd_sp500")
-    con.execute("CREATE OR REPLACE TABLE us_exchange AS SELECT * FROM pd_exchange")
-
-    con.close()
-    print("¡Proceso completado con éxito!")
-
-if __name__ == "__main__":
-    process_and_save()
+con.close()
+print("Datos cargados correctamente en FormattedZone.duckdb")
