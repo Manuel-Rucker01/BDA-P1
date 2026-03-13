@@ -1,25 +1,124 @@
-from pyspark.sql import SparkSession
+"""
+FormattedZone Data Pipeline
+
+This script loads CSV datasets from the datasets directory into a DuckDB database.
+It uses Apache Spark to efficiently read the CSV files and then converts them to
+DuckDB tables for storage.
+"""
+
+import os
+import sys
 import duckdb
+import pandas as pd
+from pyspark.sql import SparkSession
 
-# 1. Iniciar sesión de Spark
-spark = SparkSession.builder \
-    .appName("FormattedZonePipeline") \
-    .getOrCreate()
 
-# 2. Leer los archivos CSV de la Landing Zone
-# Asegúrate de que las rutas a tus archivos CSV sean correctas
-df_nasdaq = spark.read.csv("datasets/nasdaq_companies.csv", header=True, inferSchema=True)
-df_sp500 = spark.read.csv("datasets/sp500_daily_data.csv", header=True, inferSchema=True)
-df_exchange = spark.read.csv("datasets/US_exchange.csv", header=True, inferSchema=True)
+def prepare_database(db_path):
+    """Initialize the database and remove any existing tables."""
+    print("Preparing DuckDB database...")
+    try:
+        connection = duckdb.connect(db_path)
+        connection.execute("DROP TABLE IF EXISTS nasdaq")
+        connection.execute("DROP TABLE IF EXISTS sp500")
+        connection.execute("DROP TABLE IF EXISTS us_exchange")
+        connection.close()
+        print("  Database prepared successfully - existing tables cleared")
+    except Exception as error:
+        print(f"Error preparing database: {error}")
+        sys.exit(1)
 
-# 3. Cargar en DuckDB
-# Convertimos los DataFrames de Spark a Pandas para enviarlos a DuckDB
-# Es la forma más rápida y estándar en entornos de clase
-con = duckdb.connect('FormattedZone.duckdb')
 
-con.execute("INSERT INTO nasdaq SELECT * FROM df_nasdaq")
-con.execute("INSERT INTO sp500 SELECT * FROM df_sp500")
-con.execute("INSERT INTO us_exchange SELECT * FROM df_exchange")
+def initialize_spark():
+    """Create and return a Spark session."""
+    print("\nInitializing Spark session...")
+    try:
+        session = SparkSession.builder \
+            .appName("FormattedZonePipeline") \
+            .getOrCreate()
+        print("  Spark session initialized successfully")
+        return session
+    except Exception as error:
+        print(f"Error initializing Spark: {error}")
+        sys.exit(1)
 
-con.close()
-print("Datos cargados correctamente en FormattedZone.duckdb")
+
+def load_csv_files(spark, datasets_dir):
+    """Read CSV files from the datasets directory using Spark."""
+    print("\nLoading CSV files with Spark...")
+    
+    try:
+        nasdaq_path = os.path.join(datasets_dir, "nasdaq_companies.csv")
+        nasdaq_df = spark.read.csv(nasdaq_path, header=True, inferSchema=True)
+        nasdaq_count = nasdaq_df.count()
+        print(f"  NASDAQ companies: {nasdaq_count} rows")
+        
+        sp500_path = os.path.join(datasets_dir, "sp500_daily_data.csv")
+        sp500_df = spark.read.csv(sp500_path, header=True, inferSchema=True)
+        sp500_count = sp500_df.count()
+        print(f"  S&P 500 daily data: {sp500_count} rows")
+        
+        exchange_path = os.path.join(datasets_dir, "US_exchange.csv")
+        exchange_df = spark.read.csv(exchange_path, header=True, inferSchema=True)
+        exchange_count = exchange_df.count()
+        print(f"  US exchange: {exchange_count} rows")
+        
+        return nasdaq_df, sp500_df, exchange_df
+    except Exception as error:
+        print(f"Error reading CSV files: {error}")
+        spark.stop()
+        sys.exit(1)
+
+
+def write_to_duckdb(db_path, nasdaq_df, sp500_df, exchange_df):
+    """Convert Spark DataFrames to Pandas and write to DuckDB."""
+    print(f"\nWriting data to DuckDB: {db_path}")
+    
+    try:
+        connection = duckdb.connect(db_path)
+        
+        # Write NASDAQ data
+        print("  Converting and writing nasdaq...")
+        nasdaq_pandas = nasdaq_df.toPandas()
+        connection.execute("CREATE TABLE nasdaq AS SELECT * FROM nasdaq_pandas")
+        print("    nasdaq table created")
+        
+        # Write S&P 500 data
+        print("  Converting and writing sp500...")
+        sp500_pandas = sp500_df.toPandas()
+        connection.execute("CREATE TABLE sp500 AS SELECT * FROM sp500_pandas")
+        print("    sp500 table created")
+        
+        # Write US Exchange data
+        print("  Converting and writing us_exchange...")
+        exchange_pandas = exchange_df.toPandas()
+        connection.execute("CREATE TABLE us_exchange AS SELECT * FROM exchange_pandas")
+        print("    us_exchange table created")
+        
+        connection.close()
+    except Exception as error:
+        print(f"Error writing to DuckDB: {error}")
+        sys.exit(1)
+
+
+def main():
+    """Main entry point for the data pipeline."""
+    # Get the directory where this script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    db_path = os.path.join(script_dir, "FormattedZone.duckdb")
+    datasets_dir = os.path.join(script_dir, "../datasets")
+    
+    # Initialize components
+    prepare_database(db_path)
+    spark = initialize_spark()
+    
+    # Load and process data
+    nasdaq_df, sp500_df, exchange_df = load_csv_files(spark, datasets_dir)
+    write_to_duckdb(db_path, nasdaq_df, sp500_df, exchange_df)
+    
+    # Cleanup
+    spark.stop()
+    print("\nPipeline completed successfully - all datasets loaded into FormattedZone.duckdb")
+
+
+if __name__ == "__main__":
+    main()
