@@ -3,11 +3,15 @@ import os
 import pandas as pd
 import tempfile
 
-DATASET = "dhimananubhav/nasdaq-company-list" 
-FINAL_FILE_PATH = "datasets/"
+# --- Configuration ---
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATASETS_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "datasets"))
+FINAL_CSV_PATH = os.path.join(DATASETS_DIR, "nasdaq_companies.csv")
 
-# 1. Ensure the final destination directory exists
-os.makedirs(os.path.dirname(FINAL_FILE_PATH), exist_ok=True)
+DATASET = "dhimananubhav/nasdaq-company-list" 
+
+# 1. Ensure the final destination directory exists safely
+os.makedirs(DATASETS_DIR, exist_ok=True)
 
 # 2. Create a temporary directory context manager
 with tempfile.TemporaryDirectory() as temp_dir:
@@ -26,11 +30,9 @@ with tempfile.TemporaryDirectory() as temp_dir:
         # Load the CSV into a DataFrame
         df = pd.read_csv(csv_path)
         
-        # Save it to your final, permanent location
-        df.to_csv(FINAL_FILE_PATH+"nasdaq_companies.csv", index=False)
-        print(f"[INFO] Dataset successfully saved to {FINAL_FILE_PATH}")
+        # Save it to your final, permanent location using the rock-solid path
+        df.to_csv(FINAL_CSV_PATH, index=False)
+        print(f"[INFO] Dataset successfully saved to {FINAL_CSV_PATH}")
         
     else:
         print("[INFO] No CSV files found in the downloaded dataset.")
-
-# Once the 'with' block ends, temp_dir and the original Kaggle files are automatically deleted!

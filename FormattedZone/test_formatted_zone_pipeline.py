@@ -47,12 +47,12 @@ class TestTableCreation:
         ).fetchone()
         assert result[0] == 1, "nasdaq table does not exist"
     
-    def test_sp500_table_exists(self, db_connection):
-        """Verify that the sp500 table exists."""
+    def test_company_history_table_exists(self, db_connection):
+        """Verify that the company_history table exists."""
         result = db_connection.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'sp500'"
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'company_history'"
         ).fetchone()
-        assert result[0] == 1, "sp500 table does not exist"
+        assert result[0] == 1, "company_history table does not exist"
     
     def test_us_exchange_table_exists(self, db_connection):
         """Verify that the us_exchange table exists."""
@@ -71,11 +71,11 @@ class TestDataIntegrity:
         row_count = result[0]
         assert row_count == 3426, f"Expected 3426 rows in nasdaq, got {row_count}"
     
-    def test_sp500_row_count(self, db_connection):
-        """Verify that the sp500 table has the expected number of rows."""
-        result = db_connection.execute("SELECT COUNT(*) FROM sp500").fetchone()
+    def test_company_history_row_count(self, db_connection):
+        """Verify that the company_history table has the expected number of rows."""
+        result = db_connection.execute("SELECT COUNT(*) FROM company_history").fetchone()
         row_count = result[0]
-        assert row_count == 1255, f"Expected 1255 rows in sp500, got {row_count}"
+        assert row_count == 1255, f"Expected 1255 rows in company_history, got {row_count}"
     
     def test_us_exchange_row_count(self, db_connection):
         """Verify that the us_exchange table has the expected number of rows."""
@@ -93,11 +93,11 @@ class TestTableStructure:
         column_count = result[0]
         assert column_count > 0, "nasdaq table has no columns"
     
-    def test_sp500_has_columns(self, db_connection):
-        """Verify that the sp500 table has columns."""
-        result = db_connection.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = 'sp500'").fetchone()
+    def test_company_history_has_columns(self, db_connection):
+        """Verify that the company_history table has columns."""
+        result = db_connection.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = 'company_history'").fetchone()
         column_count = result[0]
-        assert column_count > 0, "sp500 table has no columns"
+        assert column_count > 0, "company_history table has no columns"
     
     def test_us_exchange_has_columns(self, db_connection):
         """Verify that the us_exchange table has columns."""
@@ -113,13 +113,13 @@ class TestTableStructure:
         for col in expected_columns:
             assert col in column_names, f"Expected column '{col}' not found in nasdaq table"
     
-    def test_sp500_specific_columns(self, db_connection):
-        """Verify that sp500 table contains expected columns."""
-        columns = db_connection.execute("DESCRIBE sp500").fetchall()
+    def test_company_history_specific_columns(self, db_connection):
+        """Verify that company_history table contains expected columns."""
+        columns = db_connection.execute("DESCRIBE company_history").fetchall()
         column_names = [col[0] for col in columns]
         expected_columns = ['Date', 'Open', 'High', 'Close', 'Volume']
         for col in expected_columns:
-            assert col in column_names, f"Expected column '{col}' not found in sp500 table"
+            assert col in column_names, f"Expected column '{col}' not found in company_history table"
     
     def test_us_exchange_specific_columns(self, db_connection):
         """Verify that us_exchange table contains expected columns."""
@@ -139,20 +139,21 @@ class TestDataQuality:
         null_count = result[0]
         assert null_count == 0, f"Found {null_count} null symbols in nasdaq table"
     
-    def test_sp500_no_null_dates(self, db_connection):
-        """Verify that sp500 table has no null dates."""
-        result = db_connection.execute("SELECT COUNT(*) FROM sp500 WHERE Date IS NULL").fetchone()
+    def test_company_history_no_null_dates(self, db_connection):
+        """Verify that company_history table has no null dates."""
+        result = db_connection.execute("SELECT COUNT(*) FROM company_history WHERE Date IS NULL").fetchone()
         null_count = result[0]
-        assert null_count == 0, f"Found {null_count} null dates in sp500 table"
-    
+        assert null_count == 0, f"Found {null_count} null dates in company_history table"
+
+
     def test_us_exchange_no_null_dates(self, db_connection):
         """Verify that us_exchange table has no null dates."""
         result = db_connection.execute("SELECT COUNT(*) FROM us_exchange WHERE Date IS NULL").fetchone()
         null_count = result[0]
         assert null_count == 0, f"Found {null_count} null dates in us_exchange table"
     
-    def test_sp500_positive_volumes(self, db_connection):
-        """Verify that sp500 volume values are reasonable (>= 0)."""
-        result = db_connection.execute("SELECT COUNT(*) FROM sp500 WHERE Volume < 0").fetchone()
+    def test_company_history_positive_volumes(self, db_connection):
+        """Verify that company_history volume values are reasonable (>= 0)."""
+        result = db_connection.execute("SELECT COUNT(*) FROM company_history WHERE Volume < 0").fetchone()
         negative_count = result[0]
-        assert negative_count == 0, f"Found {negative_count} negative volume values in sp500"
+        assert negative_count == 0, f"Found {negative_count} negative volume values in company_history"

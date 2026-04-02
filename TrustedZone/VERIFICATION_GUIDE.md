@@ -74,22 +74,22 @@
 {
   "raw_profiles": {
     "nasdaq": {"total_rows": 5025, "total_columns": ..., ...},
-    "sp500": {...},
+    "company_history": {...},
     "exchange": {...}
   },
   "cleaned_profiles": {
     "nasdaq": {...},
-    "sp500": {...},
+    "company_history": {...},
     "exchange": {...}
   },
   "rows_removed": {
     "nasdaq": 134,
-    "sp500": 14,
+    "company_history": 14,
     "exchange": 15
   },
   "removal_rate": {
     "nasdaq": "2.66%",
-    "sp500": "0.56%",
+    "company_history": "0.56%",
     "exchange": "1.19%"
   }
 }
@@ -204,7 +204,7 @@ Writing cleaned data to TrustedZone DuckDB...
 
 Verifying TrustedZone database integrity...
   nasdaq: 4891 rows
-  sp500: 2503 rows
+  company_history: 2503 rows
   us_exchange: 1245 rows
 ✓ TrustedZone database verification passed
 
@@ -243,9 +243,9 @@ python formatted_zone_pipeline.py
 | `initialize_spark()` | Create Spark session | SparkSession |
 | `extract_from_formatted_zone(path, spark)` | Load data from FormattedZone | 3 DataFrames |
 | `profile_data(df, name)` | Generate data statistics | Dict |
-| `apply_data_quality_rules(nasdaq, sp500, exchange)` | Clean data, return metrics | 3 DataFrames + Dict |
-| `validate_cleaned_data(nasdaq, sp500, exchange)` | Validate all datasets | Boolean |
-| `write_to_trusted_zone(path, nasdaq, sp500, exchange, metrics)` | Persist to database | None |
+| `apply_data_quality_rules(nasdaq, company_history, exchange)` | Clean data, return metrics | 3 DataFrames + Dict |
+| `validate_cleaned_data(nasdaq, company_history, exchange)` | Validate all datasets | Boolean |
+| `write_to_trusted_zone(path, nasdaq, company_history, exchange, metrics)` | Persist to database | None |
 | `verify_trusted_zone_database(db_path)` | Verify database integrity | Boolean |
 
 ---

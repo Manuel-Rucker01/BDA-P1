@@ -47,7 +47,7 @@ def prepare_trusted_database(db_path: str) -> None:
     try:
         connection = duckdb.connect(db_path)
         connection.execute("DROP TABLE IF EXISTS nasdaq")
-        connection.execute("DROP TABLE IF EXISTS sp500")
+        connection.execute("DROP TABLE IF EXISTS company_history")
         connection.execute("DROP TABLE IF EXISTS us_exchange")
         connection.execute("DROP TABLE IF EXISTS data_quality_metrics")
         connection.close()
@@ -82,17 +82,17 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
         # Read data
         logger.info("  Reading data from FormattedZone...")
         nasdaq_pd = con.execute("SELECT * FROM nasdaq").df()
-        sp500_pd = con.execute("SELECT * FROM sp500").df()
+        company_history_pd = con.execute("SELECT * FROM company_history").df()
         exchange_pd = con.execute("SELECT * FROM us_exchange").df()
         
         raw_counts = {
             "nasdaq": len(nasdaq_pd),
-            "sp500": len(sp500_pd),
+            "company_history": len(company_history_pd),
             "exchange": len(exchange_pd)
         }
         
         logger.info(f"  NASDAQ: {raw_counts['nasdaq']} rows")
-        logger.info(f"  S&P 500: {raw_counts['sp500']} rows")
+        logger.info(f"  Company History: {raw_counts['company_history']} rows")
         logger.info(f"  Exchange: {raw_counts['exchange']} rows")
         
         # Using Spark's SQL engine to define constraints (demonstrating Spark SQL usage)
@@ -102,8 +102,8 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
         nasdaq_spark = spark.createDataFrame(nasdaq_pd)
         nasdaq_spark.createOrReplaceTempView("nasdaq_raw")
         
-        sp500_spark = spark.createDataFrame(sp500_pd)
-        sp500_spark.createOrReplaceTempView("sp500_raw")
+        company_history_spark = spark.createDataFrame(company_history_pd)
+        company_history_spark.createOrReplaceTempView("company_history_raw")
         
         exchange_spark = spark.createDataFrame(exchange_pd)
         exchange_spark.createOrReplaceTempView("us_exchange_raw")
@@ -123,13 +123,13 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
         logger.info("  S&P 500 Denial Constraints defined in Spark SQL")
         spark.sql("""
             -- S&P 500 Constraints: Date NOT NULL, High >= Low, Volume >= 0
-            SELECT * FROM sp500_raw
+            SELECT * FROM company_history_raw
             WHERE Date IS NOT NULL
             AND High >= Low
             AND Volume >= 0
             AND (Open >= 0 OR Open IS NULL)
             AND (Close >= 0 OR Close IS NULL)
-        """).createOrReplaceTempView("sp500_constraints")
+        """).createOrReplaceTempView("company_history_constraints")
         
         logger.info("  Exchange Denial Constraints defined in Spark SQL")
         spark.sql("""
@@ -153,14 +153,14 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
             ((nasdaq_pd['IPOyear'] <= 2026) | (nasdaq_pd['IPOyear'].isna()))
         ].copy()
         
-        # S&P 500
-        logger.info("  Applying S&P 500 constraints...")
-        sp500_clean = sp500_pd[
-            (sp500_pd['Date'].notna()) &
-            (sp500_pd['High'] >= sp500_pd['Low']) &
-            (sp500_pd['Volume'] >= 0) &
-            ((sp500_pd['Open'] >= 0) | (sp500_pd['Open'].isna())) &
-            ((sp500_pd['Close'] >= 0) | (sp500_pd['Close'].isna()))
+        # Company History
+        logger.info("  Applying Company History constraints...")
+        company_history_clean = company_history_pd[
+            (company_history_pd['Date'].notna()) &
+            (company_history_pd['High'] >= company_history_pd['Low']) &
+            (company_history_pd['Volume'] >= 0) &
+            ((company_history_pd['Open'] >= 0) | (company_history_pd['Open'].isna())) &
+            ((company_history_pd['Close'] >= 0) | (company_history_pd['Close'].isna()))
         ].copy()
         
         # Exchange
@@ -175,18 +175,18 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
         
         clean_counts = {
             "nasdaq": len(nasdaq_clean),
-            "sp500": len(sp500_clean),
+            "company_history": len(company_history_clean),
             "exchange": len(exchange_clean)
         }
         
         rows_removed = {
             "nasdaq": raw_counts["nasdaq"] - clean_counts["nasdaq"],
-            "sp500": raw_counts["sp500"] - clean_counts["sp500"],
+            "company_history": raw_counts["company_history"] - clean_counts["company_history"],
             "exchange": raw_counts["exchange"] - clean_counts["exchange"]
         }
         
         removal_rate = {}
-        for dataset in ["nasdaq", "sp500", "exchange"]:
+        for dataset in ["nasdaq", "company_history", "exchange"]:
             if raw_counts[dataset] > 0:
                 rate = (rows_removed[dataset] / raw_counts[dataset] * 100)
                 removal_rate[dataset] = f"{rate:.2f}%"
@@ -195,12 +195,12 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
         
         logger.info("\nConstraints applied successfully!")
         logger.info(f"  NASDAQ: {clean_counts['nasdaq']} rows after filtering ({removal_rate['nasdaq']} removed)")
-        logger.info(f"  S&P 500: {clean_counts['sp500']} rows after filtering ({removal_rate['sp500']} removed)")
+        logger.info(f"  Company History: {clean_counts['company_history']} rows after filtering ({removal_rate['company_history']} removed)")
         logger.info(f"  Exchange: {clean_counts['exchange']} rows after filtering ({removal_rate['exchange']} removed)")
         
         cleaned_data = {
             "nasdaq": nasdaq_clean,
-            "sp500": sp500_clean,
+            "company_history": company_history_clean,
             "exchange": exchange_clean
         }
         
@@ -212,7 +212,7 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
             "denial_constraints": {
                 "nasdaq": ["Symbol NOT NULL", "Name NOT NULL", 
                           "LastSale >= 0 OR NULL", "MarketCap >= 0 OR NULL", "IPOyear <= 2026"],
-                "sp500": ["Date NOT NULL", "High >= Low", "Volume >= 0", 
+                "company_history": ["Date NOT NULL", "High >= Low", "Volume >= 0", 
                          "Open >= 0 OR NULL", "Close >= 0 OR NULL"],
                 "exchange": ["Date NOT NULL", "EUR > 0", "JPY > 0"]
             },
@@ -246,17 +246,17 @@ def validate_cleaned_data(connection) -> bool:
         else:
             logger.info("  NASDAQ data validation passed")
         
-        # SP500 Validation
-        sp500_issues = []
-        sp500_nulls = connection.execute("SELECT COUNT(*) FROM sp500 WHERE Date IS NULL").fetchone()[0]
-        if sp500_nulls > 0:
-            sp500_issues.append(f"Found {sp500_nulls} rows with null Date")
+        # Company History Validation
+        company_history_issues = []
+        company_history_nulls = connection.execute("SELECT COUNT(*) FROM company_history WHERE Date IS NULL").fetchone()[0]
+        if company_history_nulls > 0:
+            company_history_issues.append(f"Found {company_history_nulls} rows with null Date")
             is_valid = False
         
-        if sp500_issues:
-            logger.warning(f"S&P 500 validation issues: {', '.join(sp500_issues)}")
+        if company_history_issues:
+            logger.warning(f"Company History validation issues: {', '.join(company_history_issues)}")
         else:
-            logger.info("  S&P 500 data validation passed")
+            logger.info("  Company History data validation passed")
         
         # Exchange Validation
         exchange_issues = []
@@ -289,11 +289,11 @@ def write_to_trusted_zone(trusted_db_path: str, cleaned_data: Dict, metrics: Dic
         connection.execute("CREATE TABLE nasdaq AS SELECT * FROM nasdaq_df")
         nasdaq_count = len(nasdaq_df)
         
-        # Write S&P 500
-        logger.info("  Writing S&P 500 data...")
-        sp500_df = cleaned_data["sp500"]
-        connection.execute("CREATE TABLE sp500 AS SELECT * FROM sp500_df")
-        sp500_count = len(sp500_df)
+        # Write Company History
+        logger.info("  Writing Company History data...")
+        company_history_df = cleaned_data["company_history"]
+        connection.execute("CREATE TABLE company_history AS SELECT * FROM company_history_df")
+        company_history_count = len(company_history_df)
         
         # Write Exchange
         logger.info("  Writing Exchange data...")
@@ -303,7 +303,7 @@ def write_to_trusted_zone(trusted_db_path: str, cleaned_data: Dict, metrics: Dic
         
         # Log final counts
         logger.info(f"  NASDAQ: {nasdaq_count} rows written")
-        logger.info(f"  S&P 500: {sp500_count} rows written")
+        logger.info(f"  Company History: {company_history_count} rows written")
         logger.info(f"  Exchange: {exchange_count} rows written")
         
         # Write metrics
@@ -335,7 +335,7 @@ def verify_trusted_zone_database(trusted_db_path: str) -> bool:
         tables = connection.execute("SELECT table_name FROM information_schema.tables").fetchall()
         table_names = [table[0] for table in tables]
         
-        required_tables = {"nasdaq", "sp500", "us_exchange", "data_quality_metrics"}
+        required_tables = {"nasdaq", "company_history", "us_exchange", "data_quality_metrics"}
         missing_tables = required_tables - set(table_names)
         
         if missing_tables:
@@ -344,14 +344,14 @@ def verify_trusted_zone_database(trusted_db_path: str) -> bool:
         
         # Verify row counts
         nasdaq_count = connection.execute("SELECT COUNT(*) FROM nasdaq").fetchone()[0]
-        sp500_count = connection.execute("SELECT COUNT(*) FROM sp500").fetchone()[0]
+        company_history_count = connection.execute("SELECT COUNT(*) FROM company_history").fetchone()[0]
         exchange_count = connection.execute("SELECT COUNT(*) FROM us_exchange").fetchone()[0]
         
         logger.info(f"  nasdaq: {nasdaq_count} rows")
-        logger.info(f"  sp500: {sp500_count} rows")
+        logger.info(f"  company_history: {company_history_count} rows")
         logger.info(f"  us_exchange: {exchange_count} rows")
         
-        if nasdaq_count == 0 or sp500_count == 0 or exchange_count == 0:
+        if nasdaq_count == 0 or company_history_count == 0 or exchange_count == 0:
             logger.error("One or more tables are empty!")
             return False
         

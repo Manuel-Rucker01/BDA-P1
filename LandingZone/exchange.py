@@ -3,10 +3,11 @@ import pandas as pd
 from datetime import datetime, timedelta
 from forex_python.converter import CurrencyRates, RatesNotAvailableError
 
-
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATASETS_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "datasets"))
 BASE_CURRENCY = 'USD'
 DAYS_TO_FETCH = 100
-FINAL_FILE_PATH = "datasets/US_exchange.csv"
+FINAL_FILE_PATH = os.path.join(DATASETS_DIR, "US_exchange.csv")
 
 os.makedirs(os.path.dirname(FINAL_FILE_PATH), exist_ok=True)
 c = CurrencyRates()

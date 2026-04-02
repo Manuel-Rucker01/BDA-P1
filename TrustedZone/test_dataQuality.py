@@ -78,7 +78,7 @@ class TestDatabasePreparation:
             # Create database with tables
             conn = duckdb.connect(db_path)
             conn.execute("CREATE TABLE nasdaq (symbol VARCHAR)")
-            conn.execute("CREATE TABLE sp500 (date DATE)")
+            conn.execute("CREATE TABLE company_history (date DATE)")
             conn.execute("CREATE TABLE us_exchange (rate FLOAT)")
             conn.close()
             
@@ -151,8 +151,8 @@ class TestDataExtraction:
             conn.register('nasdaq_data', nasdaq_df)
             conn.execute("CREATE TABLE nasdaq AS SELECT * FROM nasdaq_data")
             
-            # Create S&P 500 table
-            sp500_data = {
+            # Create Company History table
+            company_history_data = {
                 "Date": ["2023-01-01", "2023-01-02"],
                 "Open": [380.0, 385.0],
                 "High": [390.0, 395.0],
@@ -160,9 +160,9 @@ class TestDataExtraction:
                 "Close": [385.0, 390.0],
                 "Volume": [1000000, 1100000]
             }
-            sp500_df = pd.DataFrame(sp500_data)
-            conn.register('sp500_data', sp500_df)
-            conn.execute("CREATE TABLE sp500 AS SELECT * FROM sp500_data")
+            company_history_df = pd.DataFrame(company_history_data)
+            conn.register('company_history_data', company_history_df)
+            conn.execute("CREATE TABLE company_history AS SELECT * FROM company_history_data")
             
             # Create Exchange table
             exchange_data = {
@@ -190,7 +190,7 @@ class TestDataExtraction:
         
         # Verify cleaned_data has expected keys
         assert "nasdaq" in cleaned_data
-        assert "sp500" in cleaned_data
+        assert "company_history" in cleaned_data
         assert "exchange" in cleaned_data
         
         # Verify metrics has expected keys
@@ -202,12 +202,12 @@ class TestDataExtraction:
         
         # Verify row counts
         assert len(cleaned_data["nasdaq"]) == 3
-        assert len(cleaned_data["sp500"]) == 2
+        assert len(cleaned_data["company_history"]) == 2
         assert len(cleaned_data["exchange"]) == 2
         
         # Verify column names
         assert "Symbol" in cleaned_data["nasdaq"].columns
-        assert "Date" in cleaned_data["sp500"].columns
+        assert "Date" in cleaned_data["company_history"].columns
         assert "EUR" in cleaned_data["exchange"].columns
     
     def test_extract_raises_on_missing_database(self):
@@ -236,8 +236,8 @@ class TestDataExtraction:
             conn.register('nasdaq_data', nasdaq_df)
             conn.execute("CREATE TABLE nasdaq AS SELECT * FROM nasdaq_data")
             
-            # Create valid S&P 500 table
-            sp500_data = {
+            # Create valid Company History table
+            company_history_data = {
                 "Date": ["2023-01-01", "2023-01-02"],
                 "Open": [380.0, 385.0],
                 "High": [390.0, 395.0],
@@ -245,9 +245,9 @@ class TestDataExtraction:
                 "Close": [385.0, 390.0],
                 "Volume": [1000000, 1100000]
             }
-            sp500_df = pd.DataFrame(sp500_data)
-            conn.register('sp500_data', sp500_df)
-            conn.execute("CREATE TABLE sp500 AS SELECT * FROM sp500_data")
+            company_history_df = pd.DataFrame(company_history_data)
+            conn.register('company_history_data', company_history_df)
+            conn.execute("CREATE TABLE company_history AS SELECT * FROM company_history_data")
             
             # Create valid Exchange table
             exchange_data = {
@@ -293,7 +293,7 @@ class TestDataValidation:
             conn.register('nasdaq_data', nasdaq_df)
             conn.execute("CREATE TABLE nasdaq AS SELECT * FROM nasdaq_data")
             
-            sp500_data = {
+            company_history_data = {
                 "Date": ["2023-01-01"],
                 "Open": [380.0],
                 "High": [390.0],
@@ -301,9 +301,9 @@ class TestDataValidation:
                 "Close": [385.0],
                 "Volume": [1000000]
             }
-            sp500_df = pd.DataFrame(sp500_data)
-            conn.register('sp500_data', sp500_df)
-            conn.execute("CREATE TABLE sp500 AS SELECT * FROM sp500_data")
+            company_history_df = pd.DataFrame(company_history_data)
+            conn.register('company_history_data', company_history_df)
+            conn.execute("CREATE TABLE company_history AS SELECT * FROM company_history_data")
             
             exchange_data = {
                 "Date": ["2023-01-01"],
@@ -345,8 +345,8 @@ class TestDataValidation:
             conn.register('nasdaq_data', nasdaq_df)
             conn.execute("CREATE TABLE nasdaq AS SELECT * FROM nasdaq_data")
             
-            # Valid S&P 500
-            sp500_data = {
+            # Valid Company History
+            company_history_data = {
                 "Date": ["2023-01-01"],
                 "Open": [380.0],
                 "High": [390.0],
@@ -354,9 +354,9 @@ class TestDataValidation:
                 "Close": [385.0],
                 "Volume": [1000000]
             }
-            sp500_df = pd.DataFrame(sp500_data)
-            conn.register('sp500_data', sp500_df)
-            conn.execute("CREATE TABLE sp500 AS SELECT * FROM sp500_data")
+            company_history_df = pd.DataFrame(company_history_data)
+            conn.register('company_history_data', company_history_df)
+            conn.execute("CREATE TABLE company_history AS SELECT * FROM company_history_data")
             
             # Valid Exchange
             exchange_data = {
@@ -392,7 +392,7 @@ class TestDataWriting:
             }
             nasdaq_df = pd.DataFrame(nasdaq_data)
             
-            sp500_data = {
+            company_history_data = {
                 "Date": ["2023-01-01"],
                 "Open": [380.0],
                 "High": [390.0],
@@ -400,7 +400,7 @@ class TestDataWriting:
                 "Close": [385.0],
                 "Volume": [1000000]
             }
-            sp500_df = pd.DataFrame(sp500_data)
+            company_history_df = pd.DataFrame(company_history_data)
             
             exchange_data = {
                 "Date": ["2023-01-01"],
@@ -411,15 +411,15 @@ class TestDataWriting:
             
             cleaned_data = {
                 "nasdaq": nasdaq_df,
-                "sp500": sp500_df,
+                "company_history": company_history_df,
                 "exchange": exchange_df
             }
             
             metrics = {
-                "raw_counts": {"nasdaq": 1, "sp500": 1, "exchange": 1},
-                "clean_counts": {"nasdaq": 1, "sp500": 1, "exchange": 1},
-                "rows_removed": {"nasdaq": 0, "sp500": 0, "exchange": 0},
-                "removal_rate": {"nasdaq": "0%", "sp500": "0%", "exchange": "0%"},
+                "raw_counts": {"nasdaq": 1, "company_history": 1, "exchange": 1},
+                "clean_counts": {"nasdaq": 1, "company_history": 1, "exchange": 1},
+                "rows_removed": {"nasdaq": 0, "company_history": 0, "exchange": 0},
+                "removal_rate": {"nasdaq": "0%", "company_history": "0%", "exchange": "0%"},
                 "denial_constraints": {}
             }
             
@@ -432,7 +432,7 @@ class TestDataWriting:
             table_names = [table[0] for table in tables]
             
             assert "nasdaq" in table_names
-            assert "sp500" in table_names
+            assert "company_history" in table_names
             assert "us_exchange" in table_names
             assert "data_quality_metrics" in table_names
             
@@ -453,7 +453,7 @@ class TestDataWriting:
             }
             nasdaq_df = pd.DataFrame(nasdaq_data)
             
-            sp500_data = {
+            company_history_data = {
                 "Date": ["2023-01-01"],
                 "Open": [380.0],
                 "High": [390.0],
@@ -461,7 +461,7 @@ class TestDataWriting:
                 "Close": [385.0],
                 "Volume": [1000000]
             }
-            sp500_df = pd.DataFrame(sp500_data)
+            company_history_df = pd.DataFrame(company_history_data)
             
             exchange_data = {
                 "Date": ["2023-01-01"],
@@ -472,15 +472,15 @@ class TestDataWriting:
             
             cleaned_data = {
                 "nasdaq": nasdaq_df,
-                "sp500": sp500_df,
+                "company_history": company_history_df,
                 "exchange": exchange_df
             }
             
             metrics = {
-                "raw_counts": {"nasdaq": 2, "sp500": 1, "exchange": 1},
-                "clean_counts": {"nasdaq": 2, "sp500": 1, "exchange": 1},
-                "rows_removed": {"nasdaq": 0, "sp500": 0, "exchange": 0},
-                "removal_rate": {"nasdaq": "0%", "sp500": "0%", "exchange": "0%"},
+                "raw_counts": {"nasdaq": 2, "company_history": 1, "exchange": 1},
+                "clean_counts": {"nasdaq": 2, "company_history": 1, "exchange": 1},
+                "rows_removed": {"nasdaq": 0, "company_history": 0, "exchange": 0},
+                "removal_rate": {"nasdaq": "0%", "company_history": "0%", "exchange": "0%"},
                 "denial_constraints": {}
             }
             
@@ -495,8 +495,8 @@ class TestDataWriting:
             assert nasdaq_read[0][0] == "AAPL"
             assert nasdaq_read[1][0] == "MSFT"
             
-            sp500_read = conn.execute("SELECT * FROM sp500").fetchall()
-            assert len(sp500_read) == 1
+            company_history_read = conn.execute("SELECT * FROM company_history").fetchall()
+            assert len(company_history_read) == 1
             
             exchange_read = conn.execute("SELECT * FROM us_exchange").fetchall()
             assert len(exchange_read) == 1
@@ -522,7 +522,7 @@ class TestDatabaseVerification:
             }
             nasdaq_df = pd.DataFrame(nasdaq_data)
             
-            sp500_data = {
+            company_history_data = {
                 "Date": ["2023-01-01"],
                 "Open": [380.0],
                 "High": [390.0],
@@ -530,7 +530,7 @@ class TestDatabaseVerification:
                 "Close": [385.0],
                 "Volume": [1000000]
             }
-            sp500_df = pd.DataFrame(sp500_data)
+            company_history_df = pd.DataFrame(company_history_data)
             
             exchange_data = {
                 "Date": ["2023-01-01"],
@@ -541,15 +541,15 @@ class TestDatabaseVerification:
             
             cleaned_data = {
                 "nasdaq": nasdaq_df,
-                "sp500": sp500_df,
+                "company_history": company_history_df,
                 "exchange": exchange_df
             }
             
             metrics = {
-                "raw_counts": {"nasdaq": 1, "sp500": 1, "exchange": 1},
-                "clean_counts": {"nasdaq": 1, "sp500": 1, "exchange": 1},
-                "rows_removed": {"nasdaq": 0, "sp500": 0, "exchange": 0},
-                "removal_rate": {"nasdaq": "0%", "sp500": "0%", "exchange": "0%"}
+                "raw_counts": {"nasdaq": 1, "company_history": 1, "exchange": 1},
+                "clean_counts": {"nasdaq": 1, "company_history": 1, "exchange": 1},
+                "rows_removed": {"nasdaq": 0, "company_history": 0, "exchange": 0},
+                "removal_rate": {"nasdaq": "0%", "company_history": "0%", "exchange": "0%"}
             }
             
             prepare_trusted_database(db_path)
@@ -583,7 +583,7 @@ class TestDatabaseVerification:
             # Create database with empty tables
             conn = duckdb.connect(db_path)
             conn.execute("CREATE TABLE nasdaq (symbol VARCHAR)")
-            conn.execute("CREATE TABLE sp500 (date DATE)")
+            conn.execute("CREATE TABLE company_history (date DATE)")
             conn.execute("CREATE TABLE us_exchange (date DATE)")
             conn.execute("CREATE TABLE data_quality_metrics (metric_name VARCHAR, metric_value VARCHAR, timestamp TIMESTAMP)")
             conn.close()
@@ -616,7 +616,7 @@ class TestIntegration:
             conn.register('nasdaq_data', nasdaq_df)
             conn.execute("CREATE TABLE nasdaq AS SELECT * FROM nasdaq_data")
             
-            sp500_data = {
+            company_history_data = {
                 "Date": ["2023-01-01", "2023-01-02"],
                 "Open": [380.0, 385.0],
                 "High": [390.0, 395.0],
@@ -624,9 +624,9 @@ class TestIntegration:
                 "Close": [385.0, 390.0],
                 "Volume": [1000000, 1100000]
             }
-            sp500_df = pd.DataFrame(sp500_data)
-            conn.register('sp500_data', sp500_df)
-            conn.execute("CREATE TABLE sp500 AS SELECT * FROM sp500_data")
+            company_history_df = pd.DataFrame(company_history_data)
+            conn.register('company_history_data', company_history_df)
+            conn.execute("CREATE TABLE company_history AS SELECT * FROM company_history_data")
             
             exchange_data = {
                 "Date": ["2023-01-01", "2023-01-02"],
@@ -685,7 +685,7 @@ class TestIntegration:
             conn.register('nasdaq_data', nasdaq_df)
             conn.execute("CREATE TABLE nasdaq AS SELECT * FROM nasdaq_data")
             
-            sp500_data = {
+            company_history_data = {
                 "Date": ["2023-01-01", "2023-01-02"],
                 "Open": [380.0, 385.0],
                 "High": [390.0, 375.0],  # High < Low should be filtered
@@ -693,9 +693,9 @@ class TestIntegration:
                 "Close": [385.0, 390.0],
                 "Volume": [1000000, -100]  # Negative volume should be filtered
             }
-            sp500_df = pd.DataFrame(sp500_data)
-            conn.register('sp500_data', sp500_df)
-            conn.execute("CREATE TABLE sp500 AS SELECT * FROM sp500_data")
+            company_history_df = pd.DataFrame(company_history_data)
+            conn.register('company_history_data', company_history_df)
+            conn.execute("CREATE TABLE company_history AS SELECT * FROM company_history_data")
             
             exchange_data = {
                 "Date": ["2023-01-01", "2023-01-02"],
@@ -724,7 +724,7 @@ class TestIntegration:
             
             # Verify invalid records were filtered out
             assert metrics["clean_counts"]["nasdaq"] < metrics["raw_counts"]["nasdaq"]
-            assert metrics["clean_counts"]["sp500"] < metrics["raw_counts"]["sp500"]
+            assert metrics["clean_counts"]["company_history"] < metrics["raw_counts"]["company_history"]
             assert metrics["clean_counts"]["exchange"] < metrics["raw_counts"]["exchange"]
             
             db_verified = verify_trusted_zone_database(trusted_db_path)

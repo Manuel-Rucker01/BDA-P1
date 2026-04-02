@@ -4,9 +4,12 @@ import os
 from datetime import timedelta
 
 # --- Configuration ---
-COMPANIES_CSV_PATH = "../datasets/nasdaq_companies.csv"
-TICKER_COLUMN_NAME = "Symbol"  
-MASTER_FILE_PATH = "../datasets/all_companies_daily_data.csv"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATASETS_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "datasets"))
+
+COMPANIES_CSV_PATH = os.path.join(DATASETS_DIR, "nasdaq_companies.csv")
+MASTER_FILE_PATH = os.path.join(DATASETS_DIR, "company_history.csv")
+TICKER_COLUMN_NAME = "Symbol"
 
 def update_all_tickers():
     """Reads the CSV of companies and updates data for all tickers in a single master file."""
