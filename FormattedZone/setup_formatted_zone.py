@@ -1,6 +1,6 @@
 import duckdb
 
-# Conexión al archivo (se crea automáticamente)
+# connect to the DuckDB database
 con = duckdb.connect('./FormattedZone/FormattedZone.duckdb')
 
-print("Creando tablas en FormattedZone...")
+print("Creating tables in FormattedZone...")

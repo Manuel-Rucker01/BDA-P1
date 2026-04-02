@@ -11,8 +11,8 @@ for table in tables:
 print("\nSample data from nasdaq:")
 print(con.execute("SELECT * FROM nasdaq LIMIT 2").df())
 
-print("\nSample data from sp500:")
-print(con.execute("SELECT * FROM sp500 LIMIT 2").df())
+print("\nSample data from company_history:")
+print(con.execute("SELECT * FROM company_history LIMIT 2").df())
 
 print("\nSample data from us_exchange:")
 print(con.execute("SELECT * FROM us_exchange LIMIT 2").df())

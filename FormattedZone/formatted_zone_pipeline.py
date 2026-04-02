@@ -19,7 +19,7 @@ def prepare_database(db_path):
     try:
         connection = duckdb.connect(db_path)
         connection.execute("DROP TABLE IF EXISTS nasdaq")
-        connection.execute("DROP TABLE IF EXISTS sp500")
+        connection.execute("DROP TABLE IF EXISTS company_history")
         connection.execute("DROP TABLE IF EXISTS us_exchange")
         connection.close()
         print("  Database prepared successfully - existing tables cleared")
@@ -52,24 +52,24 @@ def load_csv_files(spark, datasets_dir):
         nasdaq_count = nasdaq_df.count()
         print(f"  NASDAQ companies: {nasdaq_count} rows")
         
-        sp500_path = os.path.join(datasets_dir, "sp500_daily_data.csv")
-        sp500_df = spark.read.csv(sp500_path, header=True, inferSchema=True)
-        sp500_count = sp500_df.count()
-        print(f"  S&P 500 daily data: {sp500_count} rows")
+        company_history_path = os.path.join(datasets_dir, "company_history.csv")
+        company_history_df = spark.read.csv(company_history_path, header=True, inferSchema=True)
+        company_history_count = company_history_df.count()
+        print(f"  Company history: {company_history_count} rows")
         
         exchange_path = os.path.join(datasets_dir, "US_exchange.csv")
         exchange_df = spark.read.csv(exchange_path, header=True, inferSchema=True)
         exchange_count = exchange_df.count()
         print(f"  US exchange: {exchange_count} rows")
         
-        return nasdaq_df, sp500_df, exchange_df
+        return nasdaq_df, company_history_df, exchange_df
     except Exception as error:
         print(f"Error reading CSV files: {error}")
         spark.stop()
         sys.exit(1)
 
 
-def write_to_duckdb(db_path, nasdaq_df, sp500_df, exchange_df):
+def write_to_duckdb(db_path, nasdaq_df, company_history_df, exchange_df):
     """Convert Spark DataFrames to Pandas and write to DuckDB."""
     print(f"\nWriting data to DuckDB: {db_path}")
     
@@ -82,11 +82,11 @@ def write_to_duckdb(db_path, nasdaq_df, sp500_df, exchange_df):
         connection.execute("CREATE TABLE nasdaq AS SELECT * FROM nasdaq_pandas")
         print("    nasdaq table created")
         
-        # Write S&P 500 data
-        print("  Converting and writing sp500...")
-        sp500_pandas = sp500_df.toPandas()
-        connection.execute("CREATE TABLE sp500 AS SELECT * FROM sp500_pandas")
-        print("    sp500 table created")
+        # Write company history data
+        print("  Converting and writing company_history...")
+        company_history_pandas = company_history_df.toPandas()
+        connection.execute("CREATE TABLE company_history AS SELECT * FROM company_history_pandas")
+        print("    company_history table created")
         
         # Write US Exchange data
         print("  Converting and writing us_exchange...")
@@ -112,8 +112,8 @@ def main():
     spark = initialize_spark()
     
     # Load and process data
-    nasdaq_df, sp500_df, exchange_df = load_csv_files(spark, datasets_dir)
-    write_to_duckdb(db_path, nasdaq_df, sp500_df, exchange_df)
+    nasdaq_df, company_history_df, exchange_df = load_csv_files(spark, datasets_dir)
+    write_to_duckdb(db_path, nasdaq_df, company_history_df, exchange_df)
     
     # Cleanup
     spark.stop()
