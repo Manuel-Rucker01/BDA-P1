@@ -1,0 +1,40 @@
+
+===========================================================================
+ARIMA MULTI-ASSET ANALYSIS REPORT
+===========================================================================
+
+📊 EXECUTIVE SUMMARY
+Total Assets Analyzed: 6
+Average Predictability (MAPE): 57.11%
+Average Direction Accuracy: 27.8%
+
+🏆 RANKINGS BY PREDICTABILITY (Lower MAPE = Better)
+  1. JPY_USD                   MAPE=  0.60% | ARIMA(2, 0, 0)
+  2. EUR_USD                   MAPE=  0.97% | ARIMA(0, 1, 0)
+  3. SP500_Close               MAPE=  1.04% | ARIMA(0, 1, 0)
+  4. EUR_Returns               MAPE=100.76% | ARIMA(0, 0, 1)
+  5. SP500_Returns             MAPE=111.05% | ARIMA(1, 0, 1)
+  6. JPY_Returns               MAPE=128.23% | ARIMA(1, 0, 0)
+
+🎯 DIRECTION PREDICTION RANKING
+  1. SP500_Returns             DirAcc= 66.7% | ARIMA(1, 0, 1)
+  2. JPY_USD                   DirAcc= 50.0% | ARIMA(2, 0, 0)
+  3. JPY_Returns               DirAcc= 50.0% | ARIMA(1, 0, 0)
+  4. SP500_Close               DirAcc=  0.0% | ARIMA(0, 1, 0)
+  5. EUR_USD                   DirAcc=  0.0% | ARIMA(0, 1, 0)
+  6. EUR_Returns               DirAcc=  0.0% | ARIMA(0, 0, 1)
+
+💡 KEY INSIGHTS
+  • S&P 500 Close price more predictable than Returns
+    (MAPE: 1.04% vs 111.05%)
+
+  • FX Markets vs Equity Comparison:
+    - Forex avg MAPE: 68.32%
+    - Equity avg MAPE: 1.04%
+    - Conclusion: Equity more predictable than FX
+
+📈 RECOMMENDATIONS
+  1. Best for Trading: JPY_USD
+     - Use ARIMA model for reliable JPY_USD forecasts
+  2. Ensemble Strategy: Combine predictions from top 3 assets
+  3. Monitoring: Watch assets with MAPE > 10% for regime changes
