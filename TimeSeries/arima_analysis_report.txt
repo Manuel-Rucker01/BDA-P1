@@ -1,0 +1,33 @@
+
+===========================================================================
+ARIMA MULTI-ASSET ANALYSIS REPORT
+===========================================================================
+
+EXECUTIVE SUMMARY
+Total Assets Analyzed: 6
+Average Predictability (MAPE): 50.14%
+Average Direction Accuracy: 13.6%
+
+RANKINGS BY PREDICTABILITY (Lower MAPE = Better)
+  1. JPY_USD                   MAPE=  1.27% | ARIMA(2, 0, 0)
+  2. EUR_USD                   MAPE=  1.29% | ARIMA(2, 0, 0)
+  3. Company_Close             MAPE= 12.87% | ARIMA(0, 1, 0)
+  4. Company_Returns           MAPE= 83.33% | ARIMA(0, 0, 0)
+  5. JPY_Returns               MAPE= 98.77% | ARIMA(0, 0, 1)
+  6. EUR_Returns               MAPE=103.33% | ARIMA(0, 0, 1)
+
+🎯 DIRECTION PREDICTION RANKING
+  1. JPY_USD                   DirAcc= 36.4% | ARIMA(2, 0, 0)
+  2. EUR_USD                   DirAcc= 27.3% | ARIMA(2, 0, 0)
+  3. Company_Close             DirAcc=  9.1% | ARIMA(0, 1, 0)
+  4. JPY_Returns               DirAcc=  9.1% | ARIMA(0, 0, 1)
+  5. Company_Returns           DirAcc=  0.0% | ARIMA(0, 0, 0)
+  6. EUR_Returns               DirAcc=  0.0% | ARIMA(0, 0, 1)
+
+KEY INSIGHTS
+
+RECOMMENDATIONS
+  1. Best for Trading: JPY_USD
+     - Use ARIMA model for reliable JPY_USD forecasts
+  2. Ensemble Strategy: Combine predictions from top 3 assets
+  3. Monitoring: Watch assets with MAPE > 10% for regime changes
