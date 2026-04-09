@@ -1,3 +1,5 @@
+import os
+import duckdb
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
@@ -7,23 +9,36 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline as ImbPipeline
 
+# --- Configuration ---
+# Assuming this script is inside an "Analysis" or "Pipelines" folder 
+# next to the "ExploitationZone" folder.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "ExploitationZone"))
+DB_PATH = os.path.join(EXPLOITATION_DIR, "ExploitationZone.duckdb")
+
 def train_rf_v5():
     print("--- 🌲 Entrenando Random Forest de Mercado (V5 - Realista) ---")
-    df = pd.read_csv("master_dataset_pro.csv").dropna()
+    
+    # 1. READ DIRECTLY FROM DUCKDB IN THE EXPLOITATION ZONE
+    print(f"[INFO] Leyendo tabla 'master_dataset' de: {DB_PATH}")
+    conn = duckdb.connect(DB_PATH)
+    df = conn.execute("SELECT * FROM master_dataset").df().dropna()
+    conn.close()
+
     df['Date'] = pd.to_datetime(df['Date'])
     
-    # 1. ORDENAR POR SÍMBOLO Y FECHA PARA CALCULAR VARIACIONES
+    # 2. ORDENAR POR SÍMBOLO Y FECHA PARA CALCULAR VARIACIONES
     df = df.sort_values(['Symbol', 'Date'])
 
     # --- FEATURE ENGINEERING (Mismo que en MLP para ser comparables) ---
-    # Usamos el cambio porcentual en lugar del precio fijo
-    df['sp500_daily_pct'] = df.groupby('Symbol')['sp500_close'].pct_change()
-    df['volume_pressure'] = df['sp500_volume'] / df.groupby('Symbol')['sp500_volume'].transform('mean')
+    # UPDATED: Usamos 'company_close' y 'company_volume' de nuestra DB
+    df['company_daily_pct'] = df.groupby('Symbol')['company_close'].pct_change()
+    df['volume_pressure'] = df['company_volume'] / df.groupby('Symbol')['company_volume'].transform('mean')
     
     df = df.dropna()
     df = df.sort_values('Date')
 
-    # 2. SPLIT TEMPORAL (80/20)
+    # 3. SPLIT TEMPORAL (80/20)
     split_idx = int(len(df) * 0.8)
     train_df = df.iloc[:split_idx]
     test_df = df.iloc[split_idx:]
@@ -31,7 +46,7 @@ def train_rf_v5():
     # Mismas variables que el modelo MLP
     features = [
         'Sector', 'Industry', 'MarketCap', 
-        'sp500_daily_pct', 
+        'company_daily_pct', 
         'volume_pressure', 
         'eur_rate', 'jpy_rate'
     ]
@@ -39,14 +54,14 @@ def train_rf_v5():
     X_train, y_train = train_df[features], train_df['target_7d_up']
     X_test, y_test = test_df[features], test_df['target_7d_up']
 
-    # 3. PREPROCESAMIENTO
+    # 4. PREPROCESAMIENTO
     preprocessor = ColumnTransformer(
         transformers=[
-            ('num', StandardScaler(), ['MarketCap', 'sp500_daily_pct', 'volume_pressure', 'eur_rate', 'jpy_rate']),
+            ('num', StandardScaler(), ['MarketCap', 'company_daily_pct', 'volume_pressure', 'eur_rate', 'jpy_rate']),
             ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), ['Sector', 'Industry'])
         ])
 
-    # 4. PIPELINE: Preprocesar -> SMOTE -> Random Forest
+    # 5. PIPELINE: Preprocesar -> SMOTE -> Random Forest
     pipeline = ImbPipeline(steps=[
         ('prep', preprocessor),
         ('resample', SMOTE(random_state=42)),
