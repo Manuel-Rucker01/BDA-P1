@@ -1,3 +1,10 @@
+"""
+Verification for FormattedZone.duckdb
+
+This script connects to the FormattedZone.duckdb database 
+and gets sample data from the tables.
+"""
+
 import duckdb
 
 con = duckdb.connect('FormattedZone/FormattedZone.duckdb')

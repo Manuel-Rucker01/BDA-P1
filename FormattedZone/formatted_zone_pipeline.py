@@ -22,7 +22,7 @@ def prepare_database(db_path):
         connection.execute("DROP TABLE IF EXISTS company_history")
         connection.execute("DROP TABLE IF EXISTS us_exchange")
         connection.close()
-        print("  Database prepared successfully - existing tables cleared")
+        print("Database prepared successfully - existing tables cleared")
     except Exception as error:
         print(f"Error preparing database: {error}")
         sys.exit(1)
