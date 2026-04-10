@@ -16,7 +16,7 @@ RANKINGS BY PREDICTABILITY (Lower MAPE = Better)
   5. JPY_Returns               MAPE= 98.77% | ARIMA(0, 0, 1)
   6. EUR_Returns               MAPE=103.33% | ARIMA(0, 0, 1)
 
-🎯 DIRECTION PREDICTION RANKING
+DIRECTION PREDICTION RANKING
   1. JPY_USD                   DirAcc= 36.4% | ARIMA(2, 0, 0)
   2. EUR_USD                   DirAcc= 27.3% | ARIMA(2, 0, 0)
   3. Company_Close             DirAcc=  9.1% | ARIMA(0, 1, 0)
