@@ -1,3 +1,12 @@
+"""
+Data Collector for US Exchange Rates
+
+This script collects historical exchange rates for the US Dollar (USD) 
+against various currencies for the last 100 business days.
+
+"""
+
+
 import os
 import pandas as pd
 from datetime import datetime, timedelta

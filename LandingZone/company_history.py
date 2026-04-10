@@ -1,3 +1,13 @@
+"""
+Data Collector for Company History
+
+This script reads a list of companies from a CSV file and 
+collects historical stock data for each company using the yfinance library.
+This collector allows for incremental updates.
+
+"""
+
+
 import yfinance as yf
 import pandas as pd
 import os

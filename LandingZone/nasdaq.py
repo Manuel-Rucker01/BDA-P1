@@ -1,3 +1,10 @@
+"""
+Data Collector for NASDAQ Companies
+
+This script downloads the NASDAQ company list from Kaggle and saves it as a CSV file.
+
+"""
+
 import kaggle
 import os
 import pandas as pd
