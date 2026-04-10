@@ -11,17 +11,15 @@ from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline as ImbPipeline
 
 # --- Configuration ---
-# Assuming this script is inside an "Analysis" or "Pipelines" folder 
-# next to the "ExploitationZone" folder.
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "ExploitationZone"))
 DB_PATH = os.path.join(EXPLOITATION_DIR, "ExploitationZone.duckdb")
 
 def train_optimized_mlp_v5():
-    print("--- 🧠 Optimizando MLP V5 con GridSearch y Validación Temporal ---")
+    print("--- Optimizing MLP V5 with GridSearch and Temporal Validation ---")
     
     # 1. READ DIRECTLY FROM DUCKDB IN THE EXPLOITATION ZONE
-    print(f"[INFO] Leyendo tabla 'master_dataset' de: {DB_PATH}")
+    print(f"[INFO] Reading table 'master_dataset' from: {DB_PATH}")
     conn = duckdb.connect(DB_PATH)
     df = conn.execute("SELECT * FROM master_dataset").df().dropna()
     conn.close()
@@ -31,7 +29,6 @@ def train_optimized_mlp_v5():
     df = df.sort_values(['Symbol', 'Date'])
 
     # --- FEATURE ENGINEERING ---
-    # UPDATED: Changed 'sp500' to 'company' to match the schema created in DuckDB
     df['company_daily_pct'] = df.groupby('Symbol')['company_close'].pct_change()
     df['volume_pressure'] = df['company_volume'] / df.groupby('Symbol')['company_volume'].transform('mean')
     df = df.dropna().sort_values('Date')
@@ -41,38 +38,40 @@ def train_optimized_mlp_v5():
     train_df = df.iloc[:split_idx]
     test_df = df.iloc[split_idx:]
 
-    # UPDATED: Changed feature list to include 'company_daily_pct'
+    # we include 'company_daily_pct' and 'volume_pressure' as new features, which are common in stock prediction tasks.
     features = ['Sector', 'Industry', 'MarketCap', 'company_daily_pct', 'volume_pressure', 'eur_rate', 'jpy_rate']
     X_train, y_train = train_df[features], train_df['target_7d_up']
     X_test, y_test = test_df[features], test_df['target_7d_up']
 
-    # Preprocesamiento
+    # Preprocessing: we apply StandardScaler to numerical features and 
+    # OneHotEncoder to categorical features.
     preprocessor = ColumnTransformer(
         transformers=[
             ('num', StandardScaler(), ['MarketCap', 'company_daily_pct', 'volume_pressure', 'eur_rate', 'jpy_rate']),
             ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), ['Sector', 'Industry'])
         ])
 
-    # Pipeline con SMOTE y MLP
+    # Pipeline with SMOTE and MLP
     pipeline = ImbPipeline(steps=[
         ('prep', preprocessor),
         ('resample', SMOTE(random_state=42)),
         ('mlp', MLPClassifier(max_iter=400, early_stopping=True, random_state=42))
     ])
 
-    # --- ESPACIO DE BÚSQUEDA (Grid) ---
+    # Parameters for GridSearch: we try different combinations
+    # of hyperparameters to find the best model.
     param_grid = {
-        'mlp__hidden_layer_sizes': [(128, 64), (64, 32), (100,)], # Diferentes arquitecturas
-        'mlp__activation': ['tanh', 'relu'],                      # Funciones de activación
-        'mlp__alpha': [0.0001, 0.05],                             # Regularización (L2)
-        'mlp__learning_rate_init': [0.001, 0.01]                  # Velocidad de aprendizaje
+        'mlp__hidden_layer_sizes': [(128, 64), (64, 32), (100,)], # Different architectures
+        'mlp__activation': ['tanh', 'relu'],                      # Activation functions
+        'mlp__alpha': [0.0001, 0.05],                             # Regularization (L2)
+        'mlp__learning_rate_init': [0.001, 0.01]                  # Learning rate
     }
 
-    # Validación temporal para no hacer trampas
+    # Temporal cross-validation: to ensure that the model is validated on future data.
     tscv = TimeSeriesSplit(n_splits=3)
 
-    print("Iniciando búsqueda... Esto puede tardar varios minutos.")
-    # Usamos scoring 'f1' para priorizar la detección de subidas
+    print("Starting GridSearchCV with temporal validation...")
+    # We use f1-score as the scoring metric because we want to balance precision and recall in this imbalanced classification problem.
     grid_search = GridSearchCV(
         pipeline, 
         param_grid, 
@@ -84,19 +83,19 @@ def train_optimized_mlp_v5():
 
     grid_search.fit(X_train, y_train)
 
-    print(f"\n✅ Mejores parámetros: {grid_search.best_params_}")
+    print(f"\nBest Parameters: {grid_search.best_params_}")
 
-    # Evaluación final con el TEST
+    # Final evaluation on the test set.
     best_model = grid_search.best_estimator_
     y_pred = best_model.predict(X_test)
 
     print("\n" + "="*45)
-    print("       RESULTADOS MLP TRAS GRIDSEARCH")
+    print("       Results of MLP Classifier on Test Set       ")
     print("="*45)
     print(f"Accuracy Final: {accuracy_score(y_test, y_pred):.4f}")
-    print("\nMatriz de Confusión:")
+    print("\nConfusion Matrix:")
     print(confusion_matrix(y_test, y_pred))
-    print("\nInforme:")
+    print("\nClassification Report:")
     print(classification_report(y_test, y_pred))
 
     return best_model
