@@ -101,7 +101,7 @@ To understand which time series are most suitable for ARIMA forecasting and dete
 
 ---
 
-## 📊 Comprehensive Results Analysis
+## Comprehensive Results Analysis
 
 ### Dataset Characteristics
 ```
@@ -124,21 +124,21 @@ Train/Test: 80/20 split = 49 train / 13 test samples
 
 ---
 
-## 🎯 Results Interpretation
+## Results Interpretation
 
-### **Category 1: PRICES (Highly Predictable) ⭐**
+### **Category 1: PRICES (Highly Predictable) **
 
 #### **1. JPY_USD - ARIMA(2,0,0)**
 | Metric | Value | Interpretation |
 |--------|-------|-----------------|
-| **MAPE** | **0.60%** | ✅ Exceptional - 99.4% accuracy |
-| **AIC** | 124.2 | ✅ Good fit quality |
+| **MAPE** | **0.60%** | Exceptional - 99.4% accuracy |
+| **AIC** | 124.2 | Good fit quality |
 | **RMSE** | 1.11 | Typical model error |
 | **MAE** | 0.93 | Average error in rate units |
 | **DirAcc** | 50.0% | Random (can't predict direction) |
 | **ARIMA(2,0,0)** | AR(2) | Uses last 2 rates; no differencing |
 
-**🎯 Verdict: EXCELLENT**
+**Verdict: EXCELLENT**
 - **Why good**: Lowest MAPE of all assets. JPY is a major currency pair with stable trends.
 - **Why 50% direction?**: Accuracy works for levels, not levels. Small errors don't help direction.
 - **Trade use**: Ideal for short-term JPY forecasts (next 1-5 days)
@@ -148,8 +148,8 @@ Train/Test: 80/20 split = 49 train / 13 test samples
 #### **2. EUR_USD - ARIMA(0,1,0)**
 | Metric | Value | Interpretation |
 |--------|-------|-----------------|
-| **MAPE** | **0.97%** | ✅ Excellent - 99% accuracy |
-| **AIC** | -418.7 | ✅ Best fit (negative = very good) |
+| **MAPE** | **0.97%** | Excellent - 99% accuracy |
+| **AIC** | -418.7 | Best fit (negative = very good) |
 | **RMSE** | 0.0097 | Tiny errors |
 | **MAE** | 0.0083 | Minimal average error |
 | **DirAcc** | 0.0% | Can't predict direction |
@@ -165,30 +165,30 @@ Train/Test: 80/20 split = 49 train / 13 test samples
 #### **3. SP500_Close - ARIMA(0,1,0)**
 | Metric | Value | Interpretation |
 |--------|-------|-----------------|
-| **MAPE** | **1.04%** | ✅ Excellent - 99% accuracy |
-| **AIC** | 505.5 | ✅ Good fit |
+| **MAPE** | **1.04%** | Excellent - 99% accuracy |
+| **AIC** | 505.5 | Good fit |
 | **RMSE** | 78.99 | Error in index points (~250 point index) |
 | **MAE** | 71.05 | Average forecast miss |
 | **DirAcc** | 0.0% | Can't predict direction |
 | **ARIMA(0,1,0)** | Random Walk | Pure momentum |
 
-**🎯 Verdict: EXCELLENT**
+**Verdict: EXCELLENT**
 - **Why good**: S&P 500 follows strong trend. ARIMA captures momentum perfectly.
 - **Why 1.04% > EUR 0.97%?**: Index prices larger ($6,800) vs rates ($0.85), same % error.
 - **Trade use**: Excellent for 1-5 day forecasts of index levels.
 
 ---
 
-### **Category 2: RETURNS (Unpredictable) ❌**
+### **Category 2: RETURNS (Unpredictable)**
 
 #### **4. SP500_Returns - ARIMA(1,0,1)**
 | Metric | Value | Interpretation |
 |--------|-------|-----------------|
-| **MAPE** | **111.05%** | ❌ Poor - Completely unreliable |
+| **MAPE** | **111.05%** | Poor - Completely unreliable |
 | **AIC** | 98.1 | Moderate fit (not great) |
 | **RMSE** | 0.723 | ~0.72% error per day |
 | **MAE** | 0.603 | Average error |
-| **DirAcc** | **66.7%** | ⚠️ Better than random! |
+| **DirAcc** | **66.7%** | Better than random! |
 | **ARIMA(1,0,1)** | AR(1) + MA(1) | Tries past return + past error |
 
 **🎯 Verdict: POOR MAPE, BUT INTERESTING**
@@ -204,14 +204,14 @@ Train/Test: 80/20 split = 49 train / 13 test samples
 #### **5. EUR_Returns - ARIMA(0,0,1)**
 | Metric | Value | Interpretation |
 |--------|-------|-----------------|
-| **MAPE** | **100.76%** | ❌ Poor - Unreliable |
+| **MAPE** | **100.76%** | Poor - Unreliable |
 | **AIC** | 38.0 | Poor fit |
 | **RMSE** | 0.428 | ~0.43% daily error |
 | **MAE** | 0.308 | Average magnitude |
 | **DirAcc** | 0.0% | Can't predict direction |
 | **ARIMA(0,0,1)** | MA(1) | Only uses past error |
 
-**🎯 Verdict: POOR**
+**Verdict: POOR**
 - **Why worse than JPY price (0.6%)?**: Currency returns are white noise, prices trend.
 - **Why pure MA?**: No autoregressive term helps (past returns don't predict future).
 - **Trade use**: NOT recommended. Better to trade on fundamentals or technical indicators.
@@ -221,21 +221,21 @@ Train/Test: 80/20 split = 49 train / 13 test samples
 #### **6. JPY_Returns - ARIMA(1,0,0)**
 | Metric | Value | Interpretation |
 |--------|-------|-----------------|
-| **MAPE** | **128.23%** | ❌ Worst - Highly unreliable |
+| **MAPE** | **128.23%** | Worst - Highly unreliable |
 | **AIC** | 82.0 | Moderate (not terrible) |
 | **RMSE** | 0.476 | ~0.48% daily error |
 | **MAE** | 0.390 | Average error |
 | **DirAcc** | 50.0% | Random guess |
 | **ARIMA(1,0,0)** | AR(1) | Uses previous return |
 
-**🎯 Verdict: POOR**
+**Verdict: POOR**
 - **Why highest MAPE?**: Highest percentage change magnitude → larger relative errors.
 - **Why 50% direction = no signal?**: Random walk hypothesis validates here.
 - **Trade use**: Avoid. Returns don't contain predictable patterns for trading.
 
 ---
 
-## 📈 Key Metrics Explained
+## Key Metrics Explained
 
 ### **MAPE (Mean Absolute Percentage Error)** - Primary Metric
 ```
@@ -339,7 +339,7 @@ Examples:
 
 ---
 
-## 🔍 Why Results Are What They Are
+## Why Results Are What They Are
 
 ### **Prices Predictable (~1% MAPE) - WHY?**
 
@@ -386,19 +386,19 @@ Examples:
 
 ---
 
-## 💡 Key Takeaways
+## Key Takeaways
 
 | Finding | Implication | Action |
 |---------|-------------|---------|
-| **Prices ~ 1% MAPE** | Highly predictable | ✅ Use ARIMA for price forecasting |
-| **Returns > 100% MAPE** | Fundamentally random | ❌ Don't use ARIMA for returns |
-| **FX Prices < Equity** | EUR/JPY simpler than SP500 | 🎯 Focus on currency pair forecasts |
-| **Small sample (62 days)** | High statistical uncertainty | ⚠️ Test on more data before trading |
-| **SARIMA not needed** | Already optimal with ARIMA | ⏭️ No seasonality benefit (too short) |
+| **Prices ~ 1% MAPE** | Highly predictable | Use ARIMA for price forecasting |
+| **Returns > 100% MAPE** | Fundamentally random | Don't use ARIMA for returns |
+| **FX Prices < Equity** | EUR/JPY simpler than SP500 | Focus on currency pair forecasts |
+| **Small sample (62 days)** | High statistical uncertainty | Test on more data before trading |
+| **SARIMA not needed** | Already optimal with ARIMA | No seasonality benefit (too short) |
 
 ---
 
-## 🚀 Recommendations
+## Recommendations
 
 1. **Best Use Case**: 1-5 day price forecasts for JPY_USD and EUR_USD
    - MAPE < 1%, highly reliable
@@ -417,24 +417,3 @@ Examples:
    - Returns: LSTM neural networks, Random Forest
    - Prices: ARIMA + external regressors (VIX, interest rates)
    - Both: Ensemble methods (combine ARIMA + ML)
-
----
-
-## 📚 References
-
-**Theoretical Background**:
-- Efficient Market Hypothesis (Fama, 1970): Prices follow random walk
-- Random Walk Model: Δprice = noise → MAPE ≈ 1-2% for price
-- ARIMA (Box-Jenkins): Univariate autoregressive forecasting
-
-**This Project**:
-- Data Source: ExploitationZone/master_dataset_pro.csv
-- Pipeline: LandingZone → FormattedZone → TrustedZone → ExploitationZone
-- Analysis Date: April 2, 2026
-- Tools: Python 3.12, PMDarima, StatsModels, Pandas
-
----
-
-**Report Generated**: April 2, 2026  
-**Data Period**: December 2, 2025 - March 12, 2026  
-**Status**: ✅ Analysis Complete
