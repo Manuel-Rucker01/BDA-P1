@@ -4,6 +4,13 @@ FormattedZone Data Pipeline
 This script loads CSV datasets from the datasets directory into a DuckDB database.
 It uses Apache Spark to efficiently read the CSV files and then converts them to
 DuckDB tables for storage.
+
+Datasets loaded:
+- nasdaq_companies: NASDAQ listed companies
+- company_history: Historical stock data for companies
+- us_exchange: US currency exchange rates
+- sp500_companies: S&P 500 companies with market data
+- forbes_employers: Forbes worldwide best employers list
 """
 
 import os
@@ -21,6 +28,8 @@ def prepare_database(db_path):
         connection.execute("DROP TABLE IF EXISTS nasdaq")
         connection.execute("DROP TABLE IF EXISTS company_history")
         connection.execute("DROP TABLE IF EXISTS us_exchange")
+        connection.execute("DROP TABLE IF EXISTS sp500_companies")
+        connection.execute("DROP TABLE IF EXISTS forbes_employers")
         connection.close()
         print("Database prepared successfully - existing tables cleared")
     except Exception as error:
@@ -34,6 +43,9 @@ def initialize_spark():
     try:
         session = SparkSession.builder \
             .appName("FormattedZonePipeline") \
+            .config("spark.driver.memory", "2g") \
+            .config("spark.executor.memory", "2g") \
+            .config("spark.sql.execution.arrow.pyspark.enabled", "true") \
             .getOrCreate()
         print("  Spark session initialized successfully")
         return session
@@ -62,16 +74,34 @@ def load_csv_files(spark, datasets_dir):
         exchange_count = exchange_df.count()
         print(f"  US exchange: {exchange_count} rows")
         
-        return nasdaq_df, company_history_df, exchange_df
+        # Load new datasets
+        sp500_path = os.path.join(datasets_dir, "sp500_companies.csv")
+        sp500_df = spark.read.csv(sp500_path, header=True, inferSchema=True)
+        sp500_count = sp500_df.count()
+        print(f"  S&P 500 companies: {sp500_count} rows")
+        
+        forbes_path = os.path.join(datasets_dir, "forbes_employers.csv")
+        forbes_df = spark.read.csv(forbes_path, header=True, inferSchema=True)
+        forbes_count = forbes_df.count()
+        print(f"  Forbes employers: {forbes_count} rows")
+        
+        return nasdaq_df, company_history_df, exchange_df, sp500_df, forbes_df
     except Exception as error:
         print(f"Error reading CSV files: {error}")
         spark.stop()
         sys.exit(1)
 
 
-def write_to_duckdb(db_path, nasdaq_df, company_history_df, exchange_df):
+def write_to_duckdb(db_path, nasdaq_df, company_history_df, exchange_df, sp500_df, forbes_df):
     """Convert Spark DataFrames to Pandas and write to DuckDB."""
     print(f"\nWriting data to DuckDB: {db_path}")
+    
+    def convert_datetime_columns(df):
+        """Convert datetime64 columns to string for DuckDB compatibility."""
+        for col in df.columns:
+            if df[col].dtype == 'datetime64[ns]':
+                df[col] = df[col].astype(str)
+        return df
     
     try:
         connection = duckdb.connect(db_path)
@@ -79,24 +109,43 @@ def write_to_duckdb(db_path, nasdaq_df, company_history_df, exchange_df):
         # Write NASDAQ data
         print("  Converting and writing nasdaq...")
         nasdaq_pandas = nasdaq_df.toPandas()
+        nasdaq_pandas = convert_datetime_columns(nasdaq_pandas)
         connection.execute("CREATE TABLE nasdaq AS SELECT * FROM nasdaq_pandas")
         print("    nasdaq table created")
         
         # Write company history data
         print("  Converting and writing company_history...")
         company_history_pandas = company_history_df.toPandas()
+        company_history_pandas = convert_datetime_columns(company_history_pandas)
         connection.execute("CREATE TABLE company_history AS SELECT * FROM company_history_pandas")
         print("    company_history table created")
         
         # Write US Exchange data
         print("  Converting and writing us_exchange...")
         exchange_pandas = exchange_df.toPandas()
+        exchange_pandas = convert_datetime_columns(exchange_pandas)
         connection.execute("CREATE TABLE us_exchange AS SELECT * FROM exchange_pandas")
         print("    us_exchange table created")
+        
+        # Write S&P 500 companies data
+        print("  Converting and writing sp500_companies...")
+        sp500_pandas = sp500_df.toPandas()
+        sp500_pandas = convert_datetime_columns(sp500_pandas)
+        connection.execute("CREATE TABLE sp500_companies AS SELECT * FROM sp500_pandas")
+        print("    sp500_companies table created")
+        
+        # Write Forbes employers data
+        print("  Converting and writing forbes_employers...")
+        forbes_pandas = forbes_df.toPandas()
+        forbes_pandas = convert_datetime_columns(forbes_pandas)
+        connection.execute("CREATE TABLE forbes_employers AS SELECT * FROM forbes_pandas")
+        print("    forbes_employers table created")
         
         connection.close()
     except Exception as error:
         print(f"Error writing to DuckDB: {error}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
@@ -112,8 +161,8 @@ def main():
     spark = initialize_spark()
     
     # Load and process data
-    nasdaq_df, company_history_df, exchange_df = load_csv_files(spark, datasets_dir)
-    write_to_duckdb(db_path, nasdaq_df, company_history_df, exchange_df)
+    nasdaq_df, company_history_df, exchange_df, sp500_df, forbes_df = load_csv_files(spark, datasets_dir)
+    write_to_duckdb(db_path, nasdaq_df, company_history_df, exchange_df, sp500_df, forbes_df)
     
     # Cleanup
     spark.stop()

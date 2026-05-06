@@ -11,7 +11,7 @@ for t in tables:
 print('\n=== Row Counts ===')
 print(f'  NASDAQ: {conn.execute("SELECT COUNT(*) FROM nasdaq").fetchone()[0]} rows')
 print(f'  Company History: {conn.execute("SELECT COUNT(*) FROM company_history").fetchone()[0]} rows')
-print(f'  Exchange: {conn.execute("SELECT COUNT(*) FROM us_exchange").fetchone()[0]} rows')
+print(f'  Exchange: {conn.execute("SELECT COUNT(*) FROM exchange").fetchone()[0]} rows')
 
 print('\n=== Data Quality Metrics ===')
 metrics = conn.execute('SELECT metric_value FROM data_quality_metrics').fetchone()[0]

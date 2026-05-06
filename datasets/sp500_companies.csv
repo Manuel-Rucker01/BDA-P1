@@ -1,0 +1,99 @@
+Ticker,Name,Sector,Industry,MarketCap,Country,Website,Employees
+AAPL,Apple Inc.,Technology,Consumer Electronics,3888777003008,United States,https://www.apple.com,150000.0
+MSFT,Microsoft Corporation,Technology,Software - Infrastructure,2952363507712,United States,https://www.microsoft.com,228000.0
+AMZN,"Amazon.com, Inc.",Consumer Cyclical,Internet Retail,2255514238976,United States,https://www.amazon.com,1576000.0
+GOOGL,Alphabet Inc.,Communication Services,Internet Content & Information,3810313371648,United States,https://abc.xyz,190820.0
+META,"Meta Platforms, Inc.",Communication Services,Internet Content & Information,1658528202752,United States,https://www.meta.com,78865.0
+BRK-B,Berkshire Hathaway Inc.,Financial Services,Insurance - Diversified,1074784239616,United States,https://www.berkshirehathaway.com,392400.0
+JNJ,Johnson & Johnson,Healthcare,Drug Manufacturers - General,584376451072,United States,https://www.jnj.com,138200.0
+V,Visa Inc.,Financial Services,Credit Services,618804346880,United States,https://www.visa.com,
+PG,The Procter & Gamble Company,Consumer Defensive,Household & Personal Products,376303222784,United States,https://www.pginvestor.com,109000.0
+JPM,JPMorgan Chase & Co.,Financial Services,Banks - Diversified,846051934208,United States,https://www.jpmorganchase.com,318512.0
+UNH,UnitedHealth Group Incorporated,Healthcare,Healthcare Plans,262693191680,United States,https://www.unitedhealthgroup.com,
+HD,"The Home Depot, Inc.",Consumer Cyclical,Home Improvement Retail,380534259712,United States,https://www.homedepot.com,470000.0
+DIS,The Walt Disney Company,Communication Services,Entertainment,187234205696,United States,https://thewaltdisneycompany.com,175560.0
+MA,Mastercard Incorporated,Financial Services,Credit Services,469788098560,United States,https://www.mastercard.com,39800.0
+BAC,Bank of America Corporation,Financial Services,Banks - Diversified,387470426112,United States,https://www.bankofamerica.com,213207.0
+NVDA,NVIDIA Corporation,Technology,Semiconductors,4621547864064,United States,https://www.nvidia.com,36000.0
+ADBE,Adobe Inc.,Technology,Software - Application,108254142464,United States,https://www.adobe.com,31360.0
+CRM,"Salesforce, Inc.",Technology,Software - Application,176272326656,United States,https://www.salesforce.com,76453.0
+NFLX,"Netflix, Inc.",Communication Services,Entertainment,333709443072,United States,https://www.netflix.com,16000.0
+KO,The Coca-Cola Company,Consumer Defensive,Beverages - Non-Alcoholic,343440457728,United States,https://www.coca-colacompany.com,
+PFE,Pfizer Inc.,Healthcare,Drug Manufacturers - General,151524114432,United States,https://www.pfizer.com,
+TMO,Thermo Fisher Scientific Inc.,Healthcare,Diagnostics & Research,191960514560,United States,https://www.thermofisher.com,
+ABT,Abbott Laboratories,Healthcare,Medical Devices,195296903168,United States,https://www.abbott.com,115000.0
+ACN,Accenture plc,Technology,Information Technology Services,133546909696,Ireland,https://www.accenture.com,784000.0
+NKE,"NIKE, Inc.",Consumer Cyclical,Footwear & Accessories,96817070080,United States,https://www.nike.com,77800.0
+MRK,"Merck & Co., Inc.",Healthcare,Drug Manufacturers - General,305378983936,United States,https://www.merck.com,
+CSCO,"Cisco Systems, Inc.",Technology,Communication Equipment,312926666752,United States,https://www.cisco.com,86200.0
+PEP,"PepsiCo, Inc.",Consumer Defensive,Beverages - Non-Alcoholic,225529085952,United States,https://www.pepsico.com,306000.0
+COST,Costco Wholesale Corporation,Consumer Defensive,Discount Stores,437418196992,United States,https://www.costco.com,341000.0
+TMUS,"T-Mobile US, Inc.",Communication Services,Telecom Services,240993452032,United States,https://www.t-mobile.com,75000.0
+LIN,Linde plc,Basic Materials,Specialty Chemicals,232818278400,United Kingdom,https://www.linde.com,
+C,Citigroup Inc.,Financial Services,Banks - Diversified,207554871296,United States,https://www.citigroup.com,226000.0
+WMT,Walmart Inc.,Consumer Defensive,Discount Stores,980580958208,United States,https://www.walmart.com,2100000.0
+CVX,Chevron Corporation,Energy,Oil & Gas Integrated,367741108224,United States,https://www.chevron.com,
+XOM,Exxon Mobil Corporation,Energy,Oil & Gas Integrated,621104136192,United States,https://corporate.exxonmobil.com,57900.0
+ABBV,AbbVie Inc.,Healthcare,Drug Manufacturers - General,397325729792,United States,https://www.abbvie.com,
+AVGO,Broadcom Inc.,Technology,Semiconductors,1577184657408,United States,https://www.broadcom.com,33000.0
+LLY,Eli Lilly and Company,Healthcare,Drug Manufacturers - General,952338219008,United States,https://www.lilly.com,50000.0
+TXN,Texas Instruments Incorporated,Technology,Semiconductors,199651737600,United States,https://www.ti.com,33000.0
+QCOM,QUALCOMM Incorporated,Technology,Semiconductors,152602296320,United States,https://www.qualcomm.com,52000.0
+AMGN,Amgen Inc.,Healthcare,Drug Manufacturers - General,202015604736,United States,https://www.amgen.com,31500.0
+SBUX,Starbucks Corporation,Consumer Cyclical,Restaurants,111070355456,United States,https://www.starbucks.com,381000.0
+MCD,McDonald's Corporation,Consumer Cyclical,Restaurants,234939990016,United States,https://www.mcdonalds.com,
+MDT,Medtronic plc,Healthcare,Medical Devices,124234194944,Ireland,https://www.medtronic.com,95000.0
+NEE,"NextEra Energy, Inc.",Utilities,Utilities - Regulated Electric,192059047936,United States,https://www.nexteraenergy.com,17400.0
+HON,Honeywell International Inc.,Industrials,Conglomerates,164403986432,United States,https://www.honeywell.com,101000.0
+LOW,"Lowe's Companies, Inc.",Consumer Cyclical,Home Improvement Retail,157268344832,United States,https://www.lowes.com,300000.0
+UPS,"United Parcel Service, Inc.",Industrials,Integrated Freight & Logistics,99032055808,United States,https://www.ups.com,241250.0
+UNP,Union Pacific Corporation,Industrials,Railroads,157901471744,United States,https://www.up.com,29287.0
+IBM,International Business Machines Corporation,Technology,Information Technology Services,240376512512,United States,https://www.ibm.com,
+PM,Philip Morris International Inc.,Consumer Defensive,Tobacco,285495033856,United States,https://www.pmi.com,84900.0
+RTX,RTX Corporation,Industrials,Aerospace & Defense,275061571584,United States,https://www.rtx.com,180000.0
+AMAT,"Applied Materials, Inc.",Technology,Semiconductor Equipment & Materials,297947168768,United States,https://www.appliedmaterials.com,35500.0
+CAT,Caterpillar Inc.,Industrials,Farm & Heavy Construction Machinery,355542794240,United States,https://www.caterpillar.com,118000.0
+BA,The Boeing Company,Industrials,Aerospace & Defense,182224076800,United States,https://www.boeing.com,182000.0
+SPGI,S&P Global Inc.,Financial Services,Financial Data & Stock Exchanges,126412947456,United States,https://www.spglobal.com,44500.0
+DE,Deere & Company,Industrials,Farm & Heavy Construction Machinery,179584122880,United States,https://www.deere.com/en,73100.0
+SYK,Stryker Corporation,Healthcare,Medical Devices,145509711872,United States,https://www.stryker.com,56000.0
+LMT,Lockheed Martin Corporation,Industrials,Aerospace & Defense,152319918080,United States,https://www.lockheedmartin.com,123000.0
+PLD,"Prologis, Inc.",Real Estate,REIT - Industrial,131443965952,United States,https://www.prologis.com,2802.0
+GS,"The Goldman Sachs Group, Inc.",Financial Services,Capital Markets,279181492224,United States,https://www.goldmansachs.com,47400.0
+AXP,American Express Company,Financial Services,Credit Services,238466662400,United States,https://www.americanexpress.com,76800.0
+BLK,"BlackRock, Inc.",Financial Services,Asset Management,169679241216,United States,https://www.blackrock.com,
+BKNG,Booking Holdings Inc.,Consumer Cyclical,Travel Services,132128301056,United States,https://www.bookingholdings.com,23571.0
+ADI,"Analog Devices, Inc.",Technology,Semiconductors,173841891328,United States,https://www.analog.com,24500.0
+VZ,Verizon Communications Inc.,Communication Services,Telecom Services,207687254016,United States,https://www.verizon.com,89900.0
+T,AT&T Inc.,Communication Services,Telecom Services,198362791936,United States,https://www.att.com,133030.0
+CMCSA,Comcast Corporation,Communication Services,Telecom Services,114199658496,United States,https://corporate.comcast.com,179000.0
+NEM,Newmont Corporation,Basic Materials,Gold,134153658368,United States,https://www.newmont.com,
+GILD,"Gilead Sciences, Inc.",Healthcare,Drug Manufacturers - General,187838889984,United States,https://www.gilead.com,
+SCHW,The Charles Schwab Corporation,Financial Services,Capital Markets,170685071360,United States,https://www.schwab.com,33000.0
+MDLZ,"Mondelez International, Inc.",Consumer Defensive,Confectioners,75873083392,United States,https://www.mondelezinternational.com,91000.0
+ISRG,"Intuitive Surgical, Inc.",Healthcare,Medical Instruments & Supplies,179003392000,United States,https://www.intuitive.com,17021.0
+INTU,Intuit Inc.,Technology,Software - Application,105945112576,United States,https://www.intuit.com,18200.0
+AMT,American Tower Corporation,Real Estate,REIT - Specialty,87708139520,United States,https://www.americantower.com,4691.0
+CI,The Cigna Group,Healthcare,Healthcare Plans,74878042112,United States,https://www.thecignagroup.com,
+REGN,"Regeneron Pharmaceuticals, Inc.",Healthcare,Biotechnology,82426560512,United States,https://www.regeneron.com,15410.0
+VRTX,Vertex Pharmaceuticals Incorporated,Healthcare,Biotechnology,121132597248,United States,https://www.vrtx.com,6400.0
+HUM,Humana Inc.,Healthcare,Healthcare Plans,22831437824,United States,https://www.humana.com,67060.0
+ZTS,Zoetis Inc.,Healthcare,Drug Manufacturers - Specialty & Generic,56752472064,United States,https://www.zoetis.com,14500.0
+BDX,"Becton, Dickinson and Company",Healthcare,Medical Instruments & Supplies,67165888512,United States,https://www.bd.com,70000.0
+APD,"Air Products and Chemicals, Inc.",Basic Materials,Specialty Chemicals,62606413824,United States,https://www.airproducts.com,21087.0
+CSX,CSX Corporation,Industrials,Railroads,78677843968,United States,https://www.csx.com,23000.0
+TJX,"The TJX Companies, Inc.",Consumer Cyclical,Apparel Retail,176100294656,United States,https://www.tjx.com,364000.0
+FIS,"Fidelity National Information Services, Inc.",Technology,Information Technology Services,25664460800,United States,https://www.fisglobal.com,50000.0
+TGT,Target Corporation,Consumer Defensive,Discount Stores,53023838208,United States,https://target.com,440000.0
+EQIX,"Equinix, Inc.",Real Estate,REIT - Specialty,91191377920,United States,https://www.equinix.com,13716.0
+ICE,"Intercontinental Exchange, Inc.",Financial Services,Financial Data & Stock Exchanges,87813193728,United States,https://www.ice.com,12844.0
+MMC,"Marsh & McLennan Companies, Inc.",Financial Services,Insurance Brokers,89819709440,United States,https://www.marshmclennan.com,90000.0
+CL,Colgate-Palmolive Company,Consumer Defensive,Household & Personal Products,76853714944,United States,https://www.colgatepalmolive.com,
+MO,"Altria Group, Inc.",Consumer Defensive,Tobacco,113427841024,United States,https://www.altria.com,
+DUK,Duke Energy Corporation,Utilities,Utilities - Regulated Electric,98591891456,United States,https://www.duke-energy.com,
+SO,The Southern Company,Utilities,Utilities - Regulated Electric,103834198016,United States,https://www.southerncompany.com,
+SHW,The Sherwin-Williams Company,Basic Materials,Specialty Chemicals,89917071360,United States,https://www.sherwin-williams.com,
+WM,"Waste Management, Inc.",Industrials,Waste Management,92892258304,United States,https://www.wm.com,60500.0
+ITW,Illinois Tool Works Inc.,Industrials,Specialty Industrial Machinery,85013241856,United States,https://www.itw.com,43000.0
+PNC,"The PNC Financial Services Group, Inc.",Financial Services,Banks - Regional,94193008640,United States,https://www.pnc.com,53859.0
+USB,U.S. Bancorp,Financial Services,Banks - Regional,91216306176,United States,https://www.usbank.com,70000.0

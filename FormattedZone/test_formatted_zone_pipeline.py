@@ -60,6 +60,20 @@ class TestTableCreation:
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'us_exchange'"
         ).fetchone()
         assert result[0] == 1, "us_exchange table does not exist"
+    
+    def test_sp500_companies_table_exists(self, db_connection):
+        """Verify that the sp500_companies table exists."""
+        result = db_connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'sp500_companies'"
+        ).fetchone()
+        assert result[0] == 1, "sp500_companies table does not exist"
+    
+    def test_forbes_employers_table_exists(self, db_connection):
+        """Verify that the forbes_employers table exists."""
+        result = db_connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'forbes_employers'"
+        ).fetchone()
+        assert result[0] == 1, "forbes_employers table does not exist"
 
 
 class TestDataIntegrity:
@@ -75,13 +89,25 @@ class TestDataIntegrity:
         """Verify that the company_history table has the expected number of rows."""
         result = db_connection.execute("SELECT COUNT(*) FROM company_history").fetchone()
         row_count = result[0]
-        assert row_count == 1255, f"Expected 1255 rows in company_history, got {row_count}"
+        assert row_count == 481133, f"Expected 481133 rows in company_history, got {row_count}"
     
     def test_us_exchange_row_count(self, db_connection):
         """Verify that the us_exchange table has the expected number of rows."""
         result = db_connection.execute("SELECT COUNT(*) FROM us_exchange").fetchone()
         row_count = result[0]
-        assert row_count == 73, f"Expected 73 rows in us_exchange, got {row_count}"
+        assert row_count == 71, f"Expected 71 rows in us_exchange, got {row_count}"
+    
+    def test_sp500_companies_row_count(self, db_connection):
+        """Verify that the sp500_companies table has the expected number of rows."""
+        result = db_connection.execute("SELECT COUNT(*) FROM sp500_companies").fetchone()
+        row_count = result[0]
+        assert row_count == 98, f"Expected 98 rows in sp500_companies, got {row_count}"
+    
+    def test_forbes_employers_row_count(self, db_connection):
+        """Verify that the forbes_employers table has the expected number of rows."""
+        result = db_connection.execute("SELECT COUNT(*) FROM forbes_employers").fetchone()
+        row_count = result[0]
+        assert row_count == 700, f"Expected 700 rows in forbes_employers, got {row_count}"
 
 
 class TestTableStructure:
@@ -104,6 +130,18 @@ class TestTableStructure:
         result = db_connection.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = 'us_exchange'").fetchone()
         column_count = result[0]
         assert column_count > 0, "us_exchange table has no columns"
+    
+    def test_sp500_companies_has_columns(self, db_connection):
+        """Verify that the sp500_companies table has columns."""
+        result = db_connection.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = 'sp500_companies'").fetchone()
+        column_count = result[0]
+        assert column_count > 0, "sp500_companies table has no columns"
+    
+    def test_forbes_employers_has_columns(self, db_connection):
+        """Verify that the forbes_employers table has columns."""
+        result = db_connection.execute("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = 'forbes_employers'").fetchone()
+        column_count = result[0]
+        assert column_count > 0, "forbes_employers table has no columns"
     
     def test_nasdaq_specific_columns(self, db_connection):
         """Verify that nasdaq table contains expected columns."""
@@ -128,6 +166,22 @@ class TestTableStructure:
         expected_columns = ['Date', 'EUR', 'JPY']
         for col in expected_columns:
             assert col in column_names, f"Expected columns not found in us_exchange table"
+    
+    def test_sp500_companies_specific_columns(self, db_connection):
+        """Verify that sp500_companies table contains expected columns."""
+        columns = db_connection.execute("DESCRIBE sp500_companies").fetchall()
+        column_names = [col[0] for col in columns]
+        expected_columns = ['Ticker', 'Name', 'Sector', 'MarketCap', 'Employees']
+        for col in expected_columns:
+            assert col in column_names, f"Expected column '{col}' not found in sp500_companies table"
+    
+    def test_forbes_employers_specific_columns(self, db_connection):
+        """Verify that forbes_employers table contains expected columns."""
+        columns = db_connection.execute("DESCRIBE forbes_employers").fetchall()
+        column_names = [col[0] for col in columns]
+        expected_columns = ['rank', 'company', 'employees', 'publish_year']
+        for col in expected_columns:
+            assert col in column_names, f"Expected column '{col}' not found in forbes_employers table"
 
 
 class TestDataQuality:
@@ -145,7 +199,6 @@ class TestDataQuality:
         null_count = result[0]
         assert null_count == 0, f"Found {null_count} null dates in company_history table"
 
-
     def test_us_exchange_no_null_dates(self, db_connection):
         """Verify that us_exchange table has no null dates."""
         result = db_connection.execute("SELECT COUNT(*) FROM us_exchange WHERE Date IS NULL").fetchone()
@@ -157,3 +210,16 @@ class TestDataQuality:
         result = db_connection.execute("SELECT COUNT(*) FROM company_history WHERE Volume < 0").fetchone()
         negative_count = result[0]
         assert negative_count == 0, f"Found {negative_count} negative volume values in company_history"
+    
+    def test_sp500_companies_no_null_tickers(self, db_connection):
+        """Verify that sp500_companies table has no null tickers."""
+        result = db_connection.execute("SELECT COUNT(*) FROM sp500_companies WHERE Ticker IS NULL").fetchone()
+        null_count = result[0]
+        assert null_count == 0, f"Found {null_count} null tickers in sp500_companies table"
+    
+    def test_forbes_employers_no_null_companies(self, db_connection):
+        """Verify that forbes_employers table has no null company names."""
+        result = db_connection.execute("SELECT COUNT(*) FROM forbes_employers WHERE company IS NULL").fetchone()
+        null_count = result[0]
+        assert null_count == 0, f"Found {null_count} null company names in forbes_employers table"
+

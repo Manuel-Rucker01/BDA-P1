@@ -1,0 +1,701 @@
+rank,company,industries,country_territory,employees,publish_year
+1,Samsung Electronics,Conglomerate,South Korea,270372,2023
+2,Microsoft,"IT, Internet, Software & Services",United States,221000,2023
+3,Alphabet,"IT, Internet, Software & Services",United States,190234,2023
+4,Apple,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",United States,164000,2023
+5,Ferrari,Automotive (Automotive and Suppliers),Italy,4919,2023
+6,IBM,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",United States,288300,2023
+7,Adobe,"IT, Internet, Software & Services",United States,29000,2023
+8,Costco Wholesale,Retail and Wholesale,United States,314000,2023
+9,BMW Group,Automotive (Automotive and Suppliers),Germany,149475,2023
+10,Cisco Systems,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",United States,83300,2023
+11,AIRBUS,Aerospace & Defense,Netherlands,134267,2023
+12,Adidas,"Clothing, Shoes, Sports Equipment",Germany,59258,2023
+13,Lockheed Martin,Aerospace & Defense,United States,116000,2023
+14,Rolex,"Clothing, Shoes, Sports Equipment",Switzerland,14000,2023
+15,Dell Technologies,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",United States,133000,2023
+16,Rossmann,Retail and Wholesale,Germany,60500,2023
+17,PayPal,Banking and Financial Services,United States,29900,2023
+18,Delta Air Lines,Transportation and Logistics,United States,90000,2023
+19,Bosch,Automotive (Automotive and Suppliers),Germany,421000,2023
+20,Nike,"Clothing, Shoes, Sports Equipment",United States,83700,2023
+21,Honda Motor,Automotive (Automotive and Suppliers),Japan,197039,2023
+22,Sony,Conglomerate,Japan,110000,2023
+23,Lego Group,Packaged Goods,Denmark,27000,2023
+24,Decathlon,Retail and Wholesale,France,104116,2023
+25,Pfizer,Drugs & Biotechnology,United States,83300,2023
+26,Dr. Oetker,"Food, Soft Beverages, Alcohol & Tobacco",Germany,17900,2023
+27,Mercedes-Benz Group,Automotive (Automotive and Suppliers),Germany,170000,2023
+28,Marriott International,Travel & Leisure      ,United States,377000,2023
+29,DM,Retail and Wholesale,Germany,71620,2023
+30,Puma,"Clothing, Shoes, Sports Equipment",Germany,20000,2023
+31,IKEA,Retail and Wholesale,Netherlands,208000,2023
+32,Intel,"IT, Internet, Software & Services",United States,131900,2023
+33,Fraunhofer Society,Healthcare & Social,Germany,30800,2023
+34,Siemens,"Engineering, Manufacturing",Germany,311000,2023
+35,Dassault Group,Aerospace & Defense,France,12400,2023
+36,L'Oréal,Packaged Goods,France,88000,2023
+37,Electricite de France,Utilities,France,171490,2023
+38,Amazon,"IT, Internet, Software & Services",United States,NA,2023
+39,Carl-Zeiss-Stiftung,"Engineering, Manufacturing",Germany,38700,2023
+40,Chanel,"Clothing, Shoes, Sports Equipment",United Kingdom,32000,2023
+41,Volkswagen Group,Automotive (Automotive and Suppliers),Germany,675800,2023
+42,Enel,Utilities,Italy,65178,2023
+43,San Miguel,"Food, Soft Beverages, Alcohol & Tobacco",Philippines,50433,2023
+44,3M,Conglomerate,United States,92000,2023
+45,Mastercard,Banking and Financial Services,United States,29900,2023
+46,Kärcher,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",Germany,15330,2023
+47,Erste Group Bank,Banking and Financial Services,Austria,42746,2023
+48,KB Financial Group,Banking and Financial Services,South Korea,17261,2023
+49,Prada,"Clothing, Shoes, Sports Equipment",Italy,13768,2023
+50,Roche Holding,Drugs & Biotechnology,Switzerland,103613,2023
+51,Netflix,Media & Advertising,United States,12800,2023
+52,Northrop Grumman,Aerospace & Defense,United States,95000,2023
+53,Rolls-Royce Holdings,Aerospace & Defense,United Kingdom,44000,2023
+54,Security Bank Corp.,Banking and Financial Services,Philippines,7338,2023
+55,ENBW,Utilities,Germany,26980,2023
+56,Johnson & Johnson,Drugs & Biotechnology,United States,150000,2023
+57,Boeing,Aerospace & Defense,United States,156354,2023
+58,Colgate-Palmolive,Packaged Goods,United States,34000,2023
+59,The Home Depot,Retail and Wholesale,United States,475000,2023
+60,Naval Group,Aerospace & Defense,France,16000,2023
+61,Safran,Aerospace & Defense,France,83000,2023
+62,Oracle,"IT, Internet, Software & Services",United States,170000,2023
+63,Covéa,Insurance,France,24000,2023
+64,MAIF,Insurance,France,8000,2023
+65,Miele Gruppe,"Engineering, Manufacturing",Germany,23300,2023
+66,Novartis,Drugs & Biotechnology,Switzerland,105533,2023
+67,Hyatt Hotels,Travel & Leisure      ,United States,130000,2023
+68,"Merck KGaA, Darmstadt, Germany and its affiliates",Drugs & Biotechnology,Germany,64000,2023
+69,Volvo Group,"Engineering, Manufacturing",Sweden,105000,2023
+70,Reliance Industries,Conglomerate,India,389415,2023
+71,DBS Bank,Banking and Financial Services,Singapore,36000,2023
+72,Philips,Health Care Equipment & Services,Netherlands,80000,2023
+73,Ford Motor,Automotive (Automotive and Suppliers),United States,173000,2023
+74,Bain Capital,Banking and Financial Services,United States,1600,2023
+75,Michelin Group,Automotive (Automotive and Suppliers),France,125000,2023
+76,Sanofi ,Drugs & Biotechnology,France,91573,2023
+77,Coca-Cola,"Food, Soft Beverages, Alcohol & Tobacco",United States,700000,2023
+78,Heineken,"Food, Soft Beverages, Alcohol & Tobacco",Netherlands,85000,2023
+79,PGE Polska Grupa Energetyczna,Utilities,Poland,41000,2023
+80,Energie AG Oberoesterreich,Utilities,Austria,4997,2023
+81,Groupe Adeo,Retail and Wholesale,France,155000,2023
+82,Ace Hardware,Retail and Wholesale,United States,5583,2023
+83,Sherwin-Williams,"Construction, Oil & Gas Operations, Mining and Chemicals",United States,64000,2023
+84,Fidelity Investments,Banking and Financial Services,United States,68000,2023
+85,Shopify,"IT, Internet, Software & Services",Canada,11600,2023
+86,Banco Comercial Portugues,Banking and Financial Services,Portugal,15745,2023
+87,eBay,"IT, Internet, Software & Services",United States,11600,2023
+88,Isuzu Motors,Automotive (Automotive and Suppliers),Japan,44495,2023
+89,General Dynamics,Aerospace & Defense,United States,100000,2023
+90,Salesforce,"IT, Internet, Software & Services",United States,72000,2023
+91,Infineon Technologies,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",Germany,56200,2023
+92,HP,"IT, Internet, Software & Services",United States,58000,2023
+93,PDD Holdings,Business Services & Supplies,China,12992,2023
+94,Arkema,"Construction, Oil & Gas Operations, Mining and Chemicals",France,21117,2023
+95,BASF,"Construction, Oil & Gas Operations, Mining and Chemicals",Germany,111481,2023
+96,LVMH Moët Hennessy Louis Vuitton,"Clothing, Shoes, Sports Equipment",France,196000,2023
+97,Panasonic,"Engineering, Manufacturing",Japan,233391,2023
+98,Meta Platforms,"IT, Internet, Software & Services",United States,71970,2023
+99,Progressive,Insurance,United States,50000,2023
+100,Manitou,"Engineering, Manufacturing",France,5000,2023
+101,Pirelli,Automotive (Automotive and Suppliers),Italy,31300,2023
+102,Radisson Hotel Group,Travel & Leisure      ,Belgium,100000,2023
+103,Absa Group,Banking and Financial Services,South Africa,35451,2023
+104,Toyota Group,Automotive (Automotive and Suppliers),Japan,375235,2023
+105,MTU Aero Engines,Aerospace & Defense,Germany,11000,2023
+106,Møller-Maersk,Transportation and Logistics,Denmark,104260,2023
+107,Danone,"Food, Soft Beverages, Alcohol & Tobacco",France,96000,2023
+108,Alibaba Group,"IT, Internet, Software & Services",China,235216,2023
+109,KIA,Automotive (Automotive and Suppliers),South Korea,52000,2023
+110,Beiersdorf,Packaged Goods,Germany,21640,2023
+111,Labortoires Pierre Fabre,Drugs & Biotechnology,France,9600,2023
+112,Boston Scientific,Health Care Equipment & Services,United States,45000,2023
+113,Intuit,"IT, Internet, Software & Services",United States,17300,2023
+114,SK Group,Conglomerate,South Korea,117590,2023
+115,Insight Enterprises,"IT, Internet, Software & Services",United States,13448,2023
+116,SAP,"IT, Internet, Software & Services",Germany,105000,2023
+117,Hilton Worldwide Holdings,Travel & Leisure      ,United States,45000,2023
+118,B. Braun,Health Care Equipment & Services,Germany,65000,2023
+119,Dyson,"Engineering, Manufacturing",Singapore,14000,2023
+120,American Express,Banking and Financial Services,United States,77300,2023
+121,JD.com,Retail and Wholesale,China,45000,2023
+122,OpenText,"IT, Internet, Software & Services",Canada,24000,2023
+123,Viatris,Drugs and Biotechnology,United States,37000,2023
+124,Caterpillar,"Engineering, Manufacturing",United States,109100,2023
+125,IHG Hotels & Resorts,Travel & Leisure      ,United Kingdom,345000,2023
+126,Covestro,"Construction, Oil & Gas Operations, Mining and Chemicals",Germany,18000,2023
+127,Hewlett Packard Enterprise,"IT, Internet, Software & Services",United States,60000,2023
+128,Huawei,"Telecommunications Services, Cable Supplier",China,195000,2023
+129,Four Seasons Hotels and Resorts,Travel & Leisure      ,Canada,45000,2023
+130,Standard Bank Group,Banking and Financial Services,South Africa,49325,2023
+131,Bayer ,"Construction, Oil & Gas Operations, Mining and Chemicals",Germany,101369,2023
+132,Discover Financial Services,Banking and Financial Services,United States,20200,2023
+133,Fielmann,Retail and Wholesale,Germany,22354,2023
+134,Sandvik,"Engineering, Manufacturing",Sweden,40000,2023
+135,Carlsberg,"Food, Soft Beverages, Alcohol & Tobacco",Denmark,39375,2023
+136,Raytheon Technologies,Aerospace & Defense,United States,182000,2023
+137,SC Johnson,"Engineering, Manufacturing",United States,13000,2023
+138,ArianeGroup,Aerospace & Defense,France,8000,2023
+139,Aéma Groupe,Insurance,France,18000,2023
+140,Eli Lilly,Drugs & Biotechnology,United States,40000,2023
+141,Canon,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",Japan,180775,2023
+142,KGHM Polska Miedz,"Construction, Oil & Gas Operations, Mining and Chemicals",Poland,34000,2023
+143,Danfoss,"Engineering, Manufacturing",Denmark,42000,2023
+144,BAE Systems,Aerospace & Defense,United Kingdom,35000,2023
+145,Acer,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",Taiwan,7725,2023
+146,Bonduelle,"Food, Soft Beverages, Alcohol & Tobacco",France,12100,2023
+147,Capital One,Banking and Financial Services,United States,55943,2023
+148,Henkel,Packaged Goods,Germany,50000,2023
+149,TUI Group,Travel & Leisure      ,Germany,61091,2023
+150,Deere & Company,"Engineering, Manufacturing",United States,82000,2023
+151,Fosun International,Conglomerate,China,108000,2023
+152,Charles Schwab,Banking and Financial Services,United States,36600,2023
+153,JPMorgan Chase,Banking and Financial Services,United States,250000,2023
+154,NVIDIA,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",United States,26196,2023
+155,Energizer Holdings,"Engineering, Manufacturing",United States,7500,2023
+156,Plansee Group,"Engineering, Manufacturing",Austria,3500,2023
+157,ANZ,Banking and Financial Services,Australia,39196,2023
+158,Hitachi,Conglomerate,Japan,29485,2023
+159,AAM - American Axle & Manufacturing,Automotive (Automotive and Suppliers),United States,19000,2023
+160,Hilti,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",Liechtenstein,32000,2023
+161,Naver,"IT, Internet, Software & Services",South Korea,4930,2023
+162,Metropolitan Bank & Trust,Banking and Financial Services,Philippines,10000,2023
+163,Asustek Computer,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",Taiwan,17000,2023
+164,Safaricom,Utilities,Kenya,5500,2023
+165,Schindler,"Engineering, Manufacturing",Switzerland,69000,2023
+166,Legrand,"Engineering, Manufacturing",France,38000,2023
+167,Deutsche Telekom,"Telecommunications Services, Cable Supplier",Germany,206800,2023
+168,Shiseido,"Construction, Oil & Gas Operations, Mining and Chemicals",Japan,34410,2023
+169,Liebherr Group,"Engineering, Manufacturing",Switzerland,51321,2023
+170,Shinhan Financial Group,Banking and Financial Services,South Korea,20000,2023
+171,Bridgestone,"Construction, Oil & Gas Operations, Mining and Chemicals",Japan,129260,2023
+172,MercadoLibre,Business Services & Supplies,Uruguay,40055,2023
+173,Walt Disney,Media & Advertising,United States,220000,2023
+174,Mattel,Packaged Goods,United States,31000,2023
+175,Renault,Automotive (Automotive and Suppliers),France,105812,2023
+176,Harley-Davidson,Automotive (Automotive and Suppliers),United States,6300,2023
+177,Eiffage,"Construction, Oil & Gas Operations, Mining and Chemicals",France,73500,2023
+178,Hallmark Cards,Media & Advertising,United States,20000,2023
+179,Mitsubishi Electric,"Engineering, Manufacturing",Japan,149655,2023
+180,Procter & Gamble,Packaged Goods,United States,106000,2023
+181,Nintendo,Media & Advertising,Japan,7317,2023
+182,Illumina,Drugs & Biotechnology,United States,10000,2023
+183,Tencent Holdings,"IT, Internet, Software & Services",China,108436,2023
+184,ABB,"Engineering, Manufacturing",Switzerland,105000,2023
+185,Hugo Boss ,"Clothing, Shoes, Sports Equipment",Germany,17000,2023
+186,Ayala Corp,Conglomerate,Philippines,47747,2023
+187,Alstom,"Engineering, Manufacturing",France,70000,2023
+188,Duke Energy,Utilities,United States,28000,2023
+189,Saudi Arabian Oil Company (Saudi Aramco),"Construction, Oil & Gas Operations, Mining and Chemicals",Saudi Arabia,70000,2023
+190,Air France-KLM,Transportation and Logistics,France,42000,2023
+191,Autodesk,"IT, Internet, Software & Services",United States,13700,2023
+192,Xiaomi  ,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",China,32543,2023
+193,Lenovo Group,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",Hong Kong,77000,2023
+194,Lindt & Sprungli,"Food, Soft Beverages, Alcohol & Tobacco",Switzerland,14000,2023
+195,LIXIL,"Engineering, Manufacturing",Japan,55000,2023
+196,Coca-Cola Europacific Partners,"Food, Soft Beverages, Alcohol & Tobacco",United Kingdom,33000,2023
+197,ENGIE ,Utilities,France,96454,2023
+198,GSK,Drugs & Biotechnology,United Kingdom,69400,2023
+199,Scotiabank,Banking and Financial Services,Canada,90000,2023
+200,RWE,Utilities,Germany,20000,2023
+201,bioMerieux,Drugs & Biotechnology,France,13800,2023
+202,Brunswick,"Engineering, Manufacturing",United States,18500,2023
+203,Chevron,"Construction, Oil & Gas Operations, Mining and Chemicals",United States,38258,2023
+204,Nippon Paint,"Construction, Oil & Gas Operations, Mining and Chemicals",Japan,30247,2023
+205,Clorox,Retail and Wholesale,United States,8700,2023
+206,Best Buy,Retail and Wholesale,United States,90000,2023
+207,Kempinski Hotels,Travel & Leisure      ,Switzerland,24000,2023
+208,Hapag-Lloyd,Transportation and Logistics,Germany,13900,2023
+209,Desjardins Group,Banking and Financial Services,Canada,58774,2023
+210,Tesco,Retail and Wholesale,United Kingdom,330000,2023
+211,Douglas,Retail and Wholesale,Germany,18000,2023
+212,PepsiCo,"Food, Soft Beverages, Alcohol & Tobacco",United States,291000,2023
+213,Expedia Group,Travel & Leisure      ,United States,16500,2023
+214,FedEx,Transportation and Logistics,United States,558000,2023
+215,Abbott Laboratories,Drugs & Biotechnology,United States,115000,2023
+216,Continental,Automotive (Automotive and Suppliers),Germany,199038,2023
+217,Abu Dhabi National Oil Company,"Construction, Oil & Gas Operations, Mining and Chemicals",United Arab Emirates,31460,2023
+218,Liberty Mutual,Insurance,United States,50000,2023
+219,Manulife,Banking and Financial Services,Canada,40000,2023
+220,Raymond James Financial,Banking and Financial Services,United States,17000,2023
+221,Qatar Fuel Company (WOQOD),"Construction, Oil & Gas Operations, Mining and Chemicals",Qatar,5000,2023
+222,Qualcomm,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",United States,51000,2023
+223,Mitsubishi Motors,Automotive (Automotive and Suppliers),Japan,80000,2023
+224,Hornbach Holding,Retail and Wholesale,Germany,25000,2023
+225,General Motors,Automotive (Automotive and Suppliers),United States,165000,2023
+226,Best Western International,Travel & Leisure      ,United States,1000,2023
+227,BHP Group,"Construction, Oil & Gas Operations, Mining and Chemicals",Australia,80000,2023
+228,LG ,Conglomerate,South Korea,34645,2023
+229,Hyundai Motor,Automotive (Automotive and Suppliers),South Korea,292757,2023
+230,Boehringer Ingelheim,Drugs & Biotechnology,Germany,52000,2023
+231,Honeywell International,Aerospace & Defense,United States,97000,2023
+232,Harel Insurance Investments & Financial Services,Insurance,Israel,4940,2023
+233,Advanced Micro Devices,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",United States,25000,2023
+234,Corning,"Construction, Oil & Gas Operations, Mining and Chemicals",United States,58000,2023
+235,Toshiba,Conglomerate,Japan,106648,2023
+236,Air Canada,Transportation and Logistics,Canada,36000,2023
+237,Accor,Travel & Leisure      ,France,300000,2023
+238,Regeneron Pharmaceuticals,"Construction, Oil & Gas Operations, Mining and Chemicals",United States,11851,2023
+239,Murata Manufacturing,"Engineering, Manufacturing",Japan,73164,2023
+240,Goodyear,Automotive (Automotive and Suppliers),United States,74000,2023
+241,Reliance Steel,"Engineering, Manufacturing",United States,14000,2023
+242,Bajaj,Conglomerate,India,36000,2023
+243,Motorola Solutions,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",United States,8950,2023
+244,Astra International,Automotive (Automotive and Suppliers),Indonesia,198200,2023
+245,Ericsson,"Telecommunications Services, Cable Supplier",Sweden,103890,2023
+246,A2A,Utilities,Italy,12500,2023
+247,Fujitsu,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",Japan,124055,2023
+248,Deutsche Lufthansa,Transportation and Logistics,Germany,109509,2023
+249,Deichmann,Retail and Wholesale,Germany,48151,2023
+250,IHH Healthcare,Healthcare & Social,Malaysia,52261,2023
+251,Palfinger,"Engineering, Manufacturing",Austria,12210,2023
+252,KEPCO,Utilities,South Korea,23728,2023
+253,Aditya Birla Group,Conglomerate,India,185000,2023
+254,Hong Leong Group,Business Services & Supplies,Singapore,20000,2023
+255,Merck & Co.,Drugs & Biotechnology,United States,69000,2023
+256,Singapore Airlines,Transportation and Logistics,Singapore,22819,2023
+257,American Airlines Group,Transportation and Logistics,United States,129700,2023
+258,Lloyds Banking Group,Banking and Financial Services,United Kingdom,58000,2023
+259,Nestlé,"Food, Soft Beverages, Alcohol & Tobacco",Switzerland,275000,2023
+260,Ralph Lauren,"Clothing, Shoes, Sports Equipment",United States,23300,2023
+261,NTPC,Utilities,India,18936,2023
+262,Sapporo,"Food, Soft Beverages, Alcohol & Tobacco",Japan,13832,2023
+263,Mapei,"Construction, Oil & Gas Operations, Mining and Chemicals",Italy,11900,2023
+264,Suzuki Motor,Automotive (Automotive and Suppliers),Japan,16267,2023
+265,GOLDBECK,"Construction, Oil & Gas Operations, Mining and Chemicals",Germany,11000,2023
+266,Olympus,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",Japan,31557,2023
+267,Sick,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",Germany,11022,2023
+268,Grupo Argos,"Construction, Oil & Gas Operations, Mining and Chemicals",Colombia,11500,2023
+269,Takeda Pharmaceutical,Drugs & Biotechnology,Japan,49095,2023
+270,Phoenix Contact,"Engineering, Manufacturing",Germany,22000,2023
+271,Power Corp of Canada,Insurance,Canada,31000,2023
+272,Kimberly-Clark,Packaged Goods,United States,45000,2023
+273,Medtronic,Health Care Equipment & Services,Ireland,95000,2023
+274,Sumitomo,Retail and Wholesale,Japan,5223,2023
+275,Ooredoo,Utilities,Qatar,12389,2023
+276,JC Decaux,Media & Advertising,France,11200,2023
+277,Grupo ACS,"Construction, Oil & Gas Operations, Mining and Chemicals",Spain,128721,2023
+278,Ecolab,Business Services & Supplies,United States,47000,2023
+279,Hager,Business Services & Supplies,Germany,12900,2023
+280,Orange,"Telecommunications Services, Cable Supplier",France,136000,2023
+281,Nissan Motor,Automotive (Automotive and Suppliers),Japan,134111,2023
+282,Ackermans & van Haaren,"Construction, Oil & Gas Operations, Mining and Chemicals",Belgium,22749,2023
+283,Alliance Global Group,"Food, Soft Beverages, Alcohol & Tobacco",Philippines,32955,2023
+284,Fnac Darty,Retail and Wholesale,France,25000,2023
+285,Nielsen,Business Services & Supplies,United Kingdom,15000,2023
+286,Groupe Atlantic,"Engineering, Manufacturing",France,9400,2023
+287,Lanxess,"Construction, Oil & Gas Operations, Mining and Chemicals",Germany,13100,2023
+288,Hero Motocorp,Automotive (Automotive and Suppliers),India,9215,2023
+289,Fujifilm Holdings,Conglomerate,Japan,75470,2023
+290,MetLife,Insurance,United States,45348,2023
+291,Chery Automobile,Automotive (Automotive and Suppliers),China,16721,2023
+292,The Estée Lauder Companies,"Construction, Oil & Gas Operations, Mining and Chemicals",United States,60000,2023
+293,Check Point Software,"IT, Internet, Software & Services",Israel,5599,2023
+294,Evonik Industries,"Construction, Oil & Gas Operations, Mining and Chemicals",Germany,30000,2023
+295,Bauhaus,Retail and Wholesale,Germany,15227,2023
+296,Emirates,Transportation and Logistics,United Arab Emirates,85219,2023
+297,Mobile Telecommunications KSC,"Telecommunications Services, Cable Supplier",Kuwait,7400,2023
+298,HII,Aerospace & Defense,United States,43000,2023
+299,Aflac,Insurance,United States,4839,2023
+300,Heraeus,"Engineering, Manufacturing",Germany,17200,2023
+301,AMC Entertainment,Travel & Leisure      ,United States,33694,2023
+302,Unilever,Packaged Goods,United Kingdom,127000,2023
+303,Calzedonia,"Clothing, Shoes, Sports Equipment",Italy,44300,2023
+304,LANDBANK,Banking and Financial Services,Philippines,10000,2023
+305,Intact Financial,Insurance,Canada,26000,2023
+306,Schwarz Gruppe,Retail and Wholesale,Germany,575000,2023
+307,Commonwealth Bank,Banking and Financial Services,Australia,48900,2023
+308,Kawasaki Heavy Industries,"Engineering, Manufacturing",Japan,38254,2023
+309,Richemont,"Clothing, Shoes, Sports Equipment",Switzerland,40000,2023
+310,Axis Bank,Banking and Financial Services,India,92000,2023
+311,Prudential Financial,Banking and Financial Services,United States,39000,2023
+312,MBDA,Aerospace & Defense,France,14000,2023
+313,CF Industries Holdings,"Construction, Oil & Gas Operations, Mining and Chemicals",United States,2700,2023
+314,London Stock Exchange,Banking and Financial Services,United Kingdom,25000,2023
+315,National Bank of Canada,Banking and Financial Services,Canada,29509,2023
+316,Maybank,Banking and Financial Services,Malaysia,42000,2023
+317,HDFC Bank,Banking and Financial Services,India,173222,2023
+318,MGM Resorts,Travel & Leisure      ,United States,75000,2023
+319,FESTO,"Engineering, Manufacturing",Germany,20800,2023
+320,H&R Block,Business Services & Supplies,United States,69900,2023
+321,Paychex,Business Services & Supplies,United States,16000,2023
+322,Leonardo,Aerospace & Defense,Italy,51392,2023
+323,Lowe's,Retail and Wholesale,United States,300000,2023
+324,Bouygues,"Telecommunications Services, Cable Supplier",France,196154,2023
+325,AutoZone,Retail and Wholesale,United States,112000,2023
+326,Givaudan,"Construction, Oil & Gas Operations, Mining and Chemicals",Switzerland,16670,2023
+327,Repsol ,"Construction, Oil & Gas Operations, Mining and Chemicals",Spain,24000,2023
+328,TotalEnergies,"Construction, Oil & Gas Operations, Mining and Chemicals",France,100000,2023
+329,LS Electric,"Engineering, Manufacturing",South Korea,3500,2023
+330,Garmin,"Engineering, Manufacturing",Switzerland,19000,2023
+331,PNC Financial Services,Banking and Financial Services,United States,61000,2023
+332,Polaris Inc.,Automotive (Automotive and Suppliers),United States,16200,2023
+333,State Grid Corporation of China,Utilities,China,NA,2023
+334,Next,"Clothing, Shoes, Sports Equipment",United Kingdom,44000,2023
+335,General Electric,"Engineering, Manufacturing",United States,172000,2023
+336,Chevron Phillips Chemical,"Construction, Oil & Gas Operations, Mining and Chemicals",United States,5000,2023
+337,Live Nation Entertainment,"IT, Internet, Software & Services",United States,44000,2023
+338,Haier Smart Home,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",China,100000,2023
+339,AirBnB,Travel & Leisure      ,United States,6811,2023
+340,D'leteren Group,Conglomerate,Belgium,46570,2023
+341,Micron Technology,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",United States,44000,2023
+342,BBVA,Banking and Financial Services,Spain,119070,2023
+343,Lexmark International,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",United States,8174,2023
+344,BioNTech,Drugs & Biotechnology,Germany,4500,2023
+345,Groupama Group,Insurance,France,31000,2023
+346,Kajima,"Construction, Oil & Gas Operations, Mining and Chemicals",Japan,19400,2023
+347,Ping An Insurance Group,Insurance,China,570000,2023
+348,Adaro Energy,"Construction, Oil & Gas Operations, Mining and Chemicals",Indonesia,10000,2023
+349,Bank of America,Banking and Financial Services,United States,165773,2023
+350,Pgnig Group,"Construction, Oil & Gas Operations, Mining and Chemicals",Poland,25419,2023
+351,Aldi Nord,Retail and Wholesale,Germany,92000,2023
+352,Deutsche Bahn,Transportation and Logistics,Germany,324136,2023
+353,H&M - Hennes & Mauritz,"Clothing, Shoes, Sports Equipment",Sweden,106522,2023
+354,Life Insurance Corporation of India,Banking and Financial Services,India,98463,2023
+355,Amgen,Drugs & Biotechnology,United States,24000,2023
+356,SKF Group,"Engineering, Manufacturing",Sweden,42641,2023
+357,Kubota,"Engineering, Manufacturing",Japan,50352,2023
+358,Carnival Corporation,Travel & Leisure      ,United States,120000,2023
+359,Nordstrom,Retail and Wholesale,United States,60000,2023
+360,Aldi Süd,Retail and Wholesale,Germany,180000,2023
+361,LT Group,Banking and Financial Services,Philippines,14290,2023
+362,Hard Rock International,Travel & Leisure      ,United States,40000,2023
+363,Hellmann Worldwide Logistics,Transportation and Logistics,Germany,13949,2023
+364,BAIC Motor,Automotive (Automotive and Suppliers),China,12000,2023
+365,Petronas Chemicals,Drugs & Biotechnology,Malaysia,50000,2023
+366,Otto Group,Retail and Wholesale,Germany,41186,2023
+367,Warner Bros. Discovery,Media & Advertising,United States,37500,2023
+368,AVL,Automotive (Automotive and Suppliers),Austria,11200,2023
+369,Knauf,"Engineering, Manufacturing",Germany,41500,2023
+370,Shanghai Construction Group,"Construction, Oil & Gas Operations, Mining and Chemicals",China,51350,2023
+371,Foot Locker,Retail and Wholesale,United States,46880,2023
+372,Intersport,Retail and Wholesale,Switzerland,100000,2023
+373,Emerson Electric,"Engineering, Manufacturing",United States,85500,2023
+374,ExxonMobil,"Construction, Oil & Gas Operations, Mining and Chemicals",United States,62000,2023
+375,Mueller,Retail and Wholesale,Germany,35000,2023
+376,Midea Group,"Engineering, Manufacturing",China,166000,2023
+377,Booking Holdings,Travel & Leisure      ,United States,21600,2023
+378,Marubeni,Conglomerate,Japan,45995,2023
+379,Cummins,"Engineering, Manufacturing",United States,73600,2023
+380,Marks & Spencer,Retail and Wholesale,United Kingdom,64261,2023
+381,Marathon Petroleum,"Construction, Oil & Gas Operations, Mining and Chemicals",United States,17800,2023
+382,Geberit,"Engineering, Manufacturing",Switzerland,12000,2023
+383,BCG (Boston Consulting Group),Professional Services,United States,30000,2023
+384,Aviva,Insurance,United Kingdom,23701,2023
+385,Starbucks,Restaurants,United States,402000,2023
+386,Rheinmetall,"Engineering, Manufacturing",Germany,28000,2023
+387,E.ON,Utilities,Germany,72000,2023
+388,Posco,"Construction, Oil & Gas Operations, Mining and Chemicals",South Korea,36128,2023
+389,Hisense Visual Technology,"Engineering, Manufacturing",China,90000,2023
+390,Electronic Arts,Media & Advertising,United States,13400,2023
+391,Oversea-Chinese Banking,Banking and Financial Services,Singapore,31601,2023
+392,Allianz,Insurance,Germany,159253,2023
+393,Atlas Holdings,"Engineering, Manufacturing",United States,50000,2023
+394,Bain & Company,Professional Services,United States,13000,2023
+395,MTN Group,"Telecommunications Services, Cable Supplier",South Africa,19295,2023
+396,BYD Company,Automotive (Automotive and Suppliers),China,418000,2023
+397,KKR,Banking and Financial Services,United States,2500,2023
+398,Dürr Group,"Engineering, Manufacturing",Germany,19000,2023
+399,Fuji Electric,"Engineering, Manufacturing",Japan,27123,2023
+400,Bank of Montreal,Banking and Financial Services,Canada,46722,2023
+401,Bechtel,"Construction, Oil & Gas Operations, Mining and Chemicals",United States,55000,2023
+402,OMV Group,"Construction, Oil & Gas Operations, Mining and Chemicals",Austria,22300,2023
+403,Umdasch Group,"Construction, Oil & Gas Operations, Mining and Chemicals",Austria,8400,2023
+404,Microchip Technology,"Engineering, Manufacturing",United States,22600,2023
+405,Nedbank,Business Services & Supplies,South Africa,25924,2023
+406,BRP,Automotive (Automotive and Suppliers),Canada,23000,2023
+407,Gree Electric Appliances,"Engineering, Manufacturing",China,90000,2023
+408,Ecopetrol,"Construction, Oil & Gas Operations, Mining and Chemicals",Colombia,9770,2023
+409,Kering,"Clothing, Shoes, Sports Equipment",France,47000,2023
+410,Kohler,"Engineering, Manufacturing",United States,40000,2023
+411,Lululemon Athletica,Retail and Wholesale,Canada,34000,2023
+412,Pernod Ricard,"Food, Soft Beverages, Alcohol & Tobacco",France,19480,2023
+413,Grafton Group,Retail and Wholesale,Ireland,11000,2023
+414,Bristol Myers Squibb,Drugs & Biotechnology,United States,34300,2023
+415,Dow,"Construction, Oil & Gas Operations, Mining and Chemicals",United States,37800,2023
+416,Comcast,Media & Advertising,United States,186000,2023
+417,Linde,"Construction, Oil & Gas Operations, Mining and Chemicals",Ireland,65010,2023
+418,NetEase,"IT, Internet, Software & Services",China,31119,2023
+419,H-E-B Grocery Company,Retail and Wholesale,United States,145000,2023
+420,SM Investments,Professional Services,Philippines,140000,2023
+421,Telkom Indonesia,"Telecommunications Services, Cable Supplier",Indonesia,23793,2023
+422,CIBC,Banking and Financial Services,Canada,50000,2023
+423,Bloomberg,"IT, Internet, Software & Services",United States,20000,2023
+424,Brother Industries,"Engineering, Manufacturing",Japan,41653,2023
+425,Mazda Motor,Automotive (Automotive and Suppliers),Japan,48750,2023
+426,HeidelbergCement,"Construction, Oil & Gas Operations, Mining and Chemicals",Germany,51000,2023
+427,China National Heavy Duty Truck Group,Automotive (Automotive and Suppliers),China,27080,2023
+428,Rohde & Schwarz,"Engineering, Manufacturing",Germany,13000,2023
+429,Industrial Bank of Korea,Banking and Financial Services,South Korea,13256,2023
+430,Schneider Electric,"Engineering, Manufacturing",France,135000,2023
+431,Royal Caribbean Group,Travel & Leisure      ,United States,102500,2023
+432,Kakao,"IT, Internet, Software & Services",South Korea,14178,2023
+433,Qihoo 360,"IT, Internet, Software & Services",China,6481,2023
+434,Koç Holding,Conglomerate,Turkey,115000,2023
+435,Nippon Steel ,"Construction, Oil & Gas Operations, Mining and Chemicals",Japan,26570,2023
+436,Cardinal Health,Retail and Wholesale,United States,48000,2023
+437,Keysight Technologies,"Engineering, Manufacturing",United States,15000,2023
+438,Bucher Industries,"Engineering, Manufacturing",Switzerland,14876,2023
+439,CNP Assurances,Insurance,France,5645,2023
+440,MinebeaMitsumi,"Construction, Oil & Gas Operations, Mining and Chemicals",Japan,92821,2023
+441,Applied Materials,"Engineering, Manufacturing",United States,33000,2023
+442,Mitsubishi,Retail and Wholesale,Japan,80728,2023
+443,RBC,Banking and Financial Services,Canada,97000,2023
+444,Vaillant Group,"Engineering, Manufacturing",Germany,17000,2023
+445,ICBC,Banking and Financial Services,China,427587,2023
+446,Amadeus IT Group ,"IT, Internet, Software & Services",Spain,18000,2023
+447,Sembcorp Industries,Professional Services,Singapore,5600,2023
+448,Kingfisher,Retail and Wholesale,United Kingdom,82000,2023
+449,Air Liquide,"Construction, Oil & Gas Operations, Mining and Chemicals",France,67100,2023
+450,Jungheinrich,Transportation and Logistics,Germany,18000,2023
+451,Canadian Natural Resources,"Construction, Oil & Gas Operations, Mining and Chemicals",Canada,10035,2023
+452,BP,"Construction, Oil & Gas Operations, Mining and Chemicals",United Kingdom,67600,2023
+453,Robert Half,Business Services & Supplies,United States,16300,2023
+454,SMA Solar Technology AG,"Engineering, Manufacturing",Germany,3600,2023
+455,Fortis (Canada),Utilities,Canada,9200,2023
+456,Deloitte,Professional Services,United Kingdom,411951,2023
+457,Mapletree Investments,Business Services & Supplies,Singapore,2400,2023
+458,Banco Bradesco,Banking and Financial Services,Brazil,88381,2023
+459,Signa Holding,Professional Services,Austria,46000,2023
+460,AmRest,Restaurants,Spain,45000,2023
+461,Electrolux,"Engineering, Manufacturing",Sweden,51000,2023
+462,Shanghai Tunnel Engineering,"Engineering, Manufacturing",Singapore,15000,2023
+463,Air Products & Chemicals,"Construction, Oil & Gas Operations, Mining and Chemicals",United States,22000,2023
+464,Atlas Copco,"Engineering, Manufacturing",Sweden,45800,2023
+465,Hyundai Green Food,Retail and Wholesale,South Korea,8273,2023
+466,HD HYUNDAI,"Construction, Oil & Gas Operations, Mining and Chemicals",South Korea,12800,2023
+467,Draxlmaier Group,Automotive (Automotive and Suppliers),Germany,74000,2023
+468,Axpo,Utilities,Switzerland,6000,2023
+469,Fast Retailing,Retail and Wholesale,Japan,58505,2023
+470,PKN Orlen,"Construction, Oil & Gas Operations, Mining and Chemicals",Poland,21000,2023
+471,HubSpot,"IT, Internet, Software & Services",United States,7100,2023
+472,James Hardie Industries,"Construction, Oil & Gas Operations, Mining and Chemicals",Ireland,5200,2023
+473,Carrefour,Retail and Wholesale,France,321383,2023
+474,Celltrion Healthcare,Drugs & Biotechnology,South Korea,2172,2023
+475,Groupe BPCE,Banking and Financial Services,France,100000,2023
+476,Skanska,"Construction, Oil & Gas Operations, Mining and Chemicals",Sweden,30000,2023
+477,Recruit,Media & Advertising,Japan,58493,2023
+478,Mitsubishi Heavy Industries,"Engineering, Manufacturing",Japan,77283,2023
+479,Hana Financial Group,Banking and Financial Services,South Korea,22007,2023
+480,Las Vegas Sands,Travel & Leisure      ,United States,35700,2023
+481,Europcar,Travel & Leisure      ,France,8860,2023
+482,Natura &Co,Retail and Wholesale,Brazil,35000,2023
+483,Gilead Sciences,Drugs & Biotechnology,United States,18000,2023
+484,Brose Fahrzeugteile,Automotive (Automotive and Suppliers),Germany,32000,2023
+485,Papa John's International,Restaurants,United States,12000,2023
+486,Standard Industries,"Engineering, Manufacturing",United States,20000,2023
+487,Landesbank Baden-Wuerttemberg,Banking and Financial Services,Germany,10384,2023
+488,Shimizu,"Construction, Oil & Gas Operations, Mining and Chemicals",Japan,10845,2023
+489,Blum Group,"Engineering, Manufacturing",Austria,9300,2023
+490,Five Guys,Restaurants,United States,5000,2023
+491,ICICI Bank,Banking and Financial Services,India,130542,2023
+492,SNCF,Transportation and Logistics,France,276000,2023
+493,Baxter International,Health Care Equipment & Services,United States,60000,2023
+494,CDW,Business Services & Supplies,United States,15000,2023
+495,John Lewis Partnership,Retail and Wholesale,United Kingdom,80000,2023
+496,Seiko Epson,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",Japan,79906,2023
+497,Nice,"Telecommunications Services, Cable Supplier",Israel,NA,2023
+498,Six Flags,Travel & Leisure      ,United States,41450,2023
+499,ByteDance,"IT, Internet, Software & Services",China,150000,2023
+500,Geely,Automotive (Automotive and Suppliers),China,120000,2023
+501,Old Dominion Freight Line,Transportation and Logistics,United States,23000,2023
+502,Asurion,Insurance,United States,25000,2023
+503,DuPont De Nemours,"Construction, Oil & Gas Operations, Mining and Chemicals",United States,23000,2023
+504,Apar Technologies,"IT, Internet, Software & Services",Singapore,2400,2023
+505,Agence France-Presse (AFP),Media & Advertising,France,2400,2023
+506,EGGER,"Engineering, Manufacturing",Austria,11200,2023
+507,CACI International,Professional Services,United States,23000,2023
+508,LES Mousquetaires,Retail and Wholesale,France,150000,2023
+509,Veolia Environnement,Utilities,France,220000,2023
+510,Morgan Stanley,Banking and Financial Services,United States,82000,2023
+511,HCL Technologies,Professional Services,India,223400,2023
+512,Fincantieri,"Engineering, Manufacturing",Italy,20000,2023
+513,Acciona,Conglomerate,Spain,45892,2023
+514,Pandora,Retail and Wholesale,Denmark,32000,2023
+515,Novo Nordisk,Banking and Financial Services,Denmark,55000,2023
+516,Accenture,Professional Services,Ireland,738000,2023
+517,Vodafone,"Telecommunications Services, Cable Supplier",United Kingdom,104000,2023
+518,Micro-Star International,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",Taiwan,13000,2023
+519,Bechtle,"Construction, Oil & Gas Operations, Mining and Chemicals",Germany,14505,2023
+520,EssilorLuxottica,"Clothing, Shoes, Sports Equipment",France,190000,2023
+521,Mango,"Clothing, Shoes, Sports Equipment",Spain,14000,2023
+522,Elbit Systems,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",Israel,18407,2023
+523,Hermès International,Retail and Wholesale,France,19700,2023
+524,Medicover,Health Care Equipment & Services,Sweden ,29000,2023
+525,Ceconomy,Retail and Wholesale,Germany,50000,2023
+526,Eurospin Italia,Retail and Wholesale,Italy,20000,2023
+527,Otis Worldwide,"Engineering, Manufacturing",United States,69000,2023
+528,Gap,"Clothing, Shoes, Sports Equipment",United States,95000,2023
+529,BBK Electronics,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",China,17000,2023
+530,AAC Technologies Holdings,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",Hong Kong,52000,2023
+531,Stellantis,Automotive (Automotive and Suppliers),Netherlands,272367,2023
+532,Raiffeisen Bank International,Banking and Financial Services,Austria,44559,2023
+533,AIA Group,Banking and Financial Services,Hong Kong,23000,2023
+534,Taiwan Semiconductor,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",Taiwan,73090,2023
+535,Levi Strauss & Co,"Clothing, Shoes, Sports Equipment",United States,18000,2023
+536,Align Technology,"Engineering, Manufacturing",United States,23165,2023
+537,Manpower,Business Services & Supplies,United States,30900,2023
+538,Keller Williams Realty,Business Services & Supplies,United States,194453,2023
+539,Munich Re,Banking and Financial Services,Germany,41389,2023
+540,Quest Diagnostics,Drugs & Biotechnology,United States,50000,2023
+541,Lam Research,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",United States,18700,2023
+542,KLA,"IT, Internet, Software & Services",United States,15000,2023
+543,China Communications Construction Company,"Construction, Oil & Gas Operations, Mining and Chemicals",China,136506,2023
+544,Harvey Norman,Retail and Wholesale,Australia,6627,2023
+545,Elevance Health,Insurance,United States,100000,2023
+546,International Airlines Group,Transportation and Logistics,United Kingdom,64734,2023
+547,Porr,"Construction, Oil & Gas Operations, Mining and Chemicals",Austria,20232,2023
+548,Schmitz Cargobull,"Engineering, Manufacturing",Germany,6900,2023
+549,Red Bull,"Food, Soft Beverages, Alcohol & Tobacco",Austria,15779,2023
+550,Sinopec,"Construction, Oil & Gas Operations, Mining and Chemicals",China,374791,2023
+551,FAW Group,Automotive (Automotive and Suppliers),China,118000,2023
+552,DEKRA,Professional Services,Germany,48600,2023
+553,Komatsu,"Engineering, Manufacturing",Japan,64343,2023
+554,LUSH ,Retail and Wholesale,United Kingdom,12704,2023
+555,OMRON,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",Japan,28034,2023
+556,AstraZeneca,Drugs & Biotechnology,United Kingdom,83500,2023
+557,Agilent Technologies,Health Care Equipment & Services,United States,18000,2023
+558,BayWa,"Construction, Oil & Gas Operations, Mining and Chemicals",Germany,24287,2023
+559,Shanghai Huayi Group Corporation,"Construction, Oil & Gas Operations, Mining and Chemicals",China,11690,2023
+560,Jardine Matheson,Conglomerate,China,425000,2023
+561,Shell,"Construction, Oil & Gas Operations, Mining and Chemicals",Netherlands,93000,2023
+562,Generali Group,Insurance,Italy,82000,2023
+563,BOE Technology Group,"Engineering, Manufacturing",China,88343,2023
+564,Deutsche Post,Transportation and Logistics,Germany,600000,2023
+565,BW Group,Transportation and Logistics,Bermuda,12500,2023
+566,Citigroup,Banking and Financial Services,United States,230000,2023
+567,JetBlue Airways,Transportation and Logistics,United States,20901,2023
+568,Artsana,Health Care Equipment & Services,Italy,8500,2023
+569,J Sainsbury,Retail and Wholesale,United Kingdom,111900,2023
+570,Anhui Construction Engineering Group,"Construction, Oil & Gas Operations, Mining and Chemicals",China,18060,2023
+571,Bell Food Group,"Food, Soft Beverages, Alcohol & Tobacco",Switzerland,12000,2023
+572,Credit Agricole,Banking and Financial Services,France,72758,2023
+573,Palo Alto Networks,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",United States,12561,2023
+574,Barclays,Banking and Financial Services,United Kingdom,87400,2023
+575,Dole Food Co. Inc.,"Food, Soft Beverages, Alcohol & Tobacco",Ireland,NA,2023
+576,Korail,Transportation and Logistics,South Korea,10000,2023
+577,Nokia,"Telecommunications Services, Cable Supplier",Finland,86900,2023
+578,Adani Enterprises,Conglomerate,India,23000,2023
+579,Walgreens Boots Alliance,Retail and Wholesale,United States,325000,2023
+580,Diehl,Aerospace & Defense,Germany,16550,2023
+581,Currys,"Telecommunications Services, Cable Supplier",United Kingdom,28000,2023
+582,TCL Technology,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",China,12000,2023
+583,Mann + Hummel,"Engineering, Manufacturing",Germany,21149,2023
+584,Kapsch,"Telecommunications Services, Cable Supplier",Austria,4660,2023
+585,KSB AG,"Engineering, Manufacturing",Germany,15000,2023
+586,Adecco Group,Business Services & Supplies,Switzerland,39000,2023
+587,Mediaset,Media & Advertising,Italy,5000,2023
+588,Grab,Travel & Leisure      ,Singapore,14000,2023
+589,Saint-Gobain,"Construction, Oil & Gas Operations, Mining and Chemicals",France,166000,2023
+590,American Eagle Outfitters,"Clothing, Shoes, Sports Equipment",United States,40000,2023
+591,KDDI,Utilities,Japan,49659,2023
+592,Cinemark Holdings,Travel & Leisure      ,United States,26100,2023
+593,Seagate Technology,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",United States,40000,2023
+594,AbbVie,Drugs & Biotechnology,United States,50000,2023
+595,Colliers International,Professional Services,Canada,18000,2023
+596,NEC,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",Japan,118527,2023
+597,COFRA Group,Retail and Wholesale,Switzerland,60000,2023
+598,Banorte,Banking and Financial Services,Mexico,26455,2023
+599,Accton Technology,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",Taiwan,5484,2023
+600,Fidelity National Financial,Insurance,United States,21759,2023
+601,Cognizant,Professional Services,United States,355300,2023
+602,Amcor,"Engineering, Manufacturing",Australia,44000,2023
+603,Dongfeng Motor Group,Automotive (Automotive and Suppliers),China,119420,2023
+604,Carter's,Retail and Wholesale,United States,15500,2023
+605,Ant Group,Media & Advertising,China,16600,2023
+606,Kone,"Engineering, Manufacturing",Finland,60000,2023
+607,Schroders,Banking and Financial Services,United Kingdom,6119,2023
+608,GS Group,"Construction, Oil & Gas Operations, Mining and Chemicals",South Korea,36000,2023
+609,Marvell Technology,"Semiconductors, Electronics, Electrical Engineering, Technology Hardware & Equipment",United States,6800,2023
+610,SEW-Eurodrive,Automotive (Automotive and Suppliers),Germany,21000,2023
+611,SAIC Motor,Automotive (Automotive and Suppliers),China,215999,2023
+612,PICC,Insurance,China,10000,2023
+613,Thai Beverage,Retail and Wholesale,Thailand,43422,2023
+614,CapitaLand Investment,Professional Services,Singapore,12100,2023
+615,ConocoPhillips,"Construction, Oil & Gas Operations, Mining and Chemicals",United States,9500,2023
+616,Moog,"Engineering, Manufacturing",United States,14000,2023
+617,Allstate,Insurance,United States,54500,2023
+618,Genpact,Professional Services,United States,115000,2023
+619,Sage Group,"IT, Internet, Software & Services",United Kingdom,11000,2023
+620,F5,"IT, Internet, Software & Services",United States,4000,2023
+621,Kirchhoff Automotive,Automotive (Automotive and Suppliers),Germany,8000,2023
+622,General Mills,"Food, Soft Beverages, Alcohol & Tobacco",United States,34000,2023
+623,Modine Manufacturing,Automotive (Automotive and Suppliers),United States,11300,2023
+624,Black Red White,Retail and Wholesale,Poland,5000,2023
+625,Minor International,Travel & Leisure      ,Thailand,75000,2023
+626,Mirae Asset Financial Group,Banking and Financial Services,South Korea,12557,2023
+627,Amica Group,"Engineering, Manufacturing",Poland,3100,2023
+628,Schaeffler,"Engineering, Manufacturing",Germany,84000,2023
+629,Eberspaecher,Automotive (Automotive and Suppliers),Germany,10700,2023
+630,Julius Baer Group,Banking and Financial Services,Switzerland,7185,2023
+631,CLAAS,"Engineering, Manufacturing",Germany,12000,2023
+632,Albemarle,"Construction, Oil & Gas Operations, Mining and Chemicals",United States,7400,2023
+633,Baidu,"IT, Internet, Software & Services",China,41300,2023
+634,Alba Group,Business Services & Supplies,Germany,8700,2023
+635,SoftwareOne,"Engineering, Manufacturing",Switzerland,8900,2023
+636,International Paper,"Construction, Oil & Gas Operations, Mining and Chemicals",United States,39000,2023
+637,Canadian Tire Corporation,Conglomerate,Canada,34606,2023
+638,INEOS,"Construction, Oil & Gas Operations, Mining and Chemicals",United Kingdom,23000,2023
+639,Migros,Retail and Wholesale,Switzerland,97727,2023
+640,DocuSign,"IT, Internet, Software & Services",United States,7336,2023
+641,Banco do Brasil,Banking and Financial Services,Brazil,86000,2023
+642,Illinois Tool Works,"Engineering, Manufacturing",United States,46000,2023
+643,Bank of Ireland,Banking and Financial Services,Ireland,9894,2023
+644,LGT Group,Banking and Financial Services,Liechtenstein,5000,2023
+645,Infosys,Professional Services,India,336000,2023
+646,UnitedHealth Group,Insurance,United States,400000,2023
+647,Pacific Century Group,Conglomerate,Hong Kong,47000,2023
+648,KPMG,Business Services & Supplies,United Kingdom,265000,2023
+649,Larsen & Toubro,Conglomerate,India,55202,2023
+650,BNK Financial Group,Banking and Financial Services,South Korea,7862,2023
+651,Rewe Group,Retail and Wholesale,Germany,384000,2023
+652,Mediclinic International,Healthcare & Social,South Africa,37000,2023
+653,Sea Group,"IT, Internet, Software & Services",Singapore,63800,2023
+654,Rio Tinto,"Construction, Oil & Gas Operations, Mining and Chemicals",United Kingdom,15000,2023
+655,Downer EDI,Business Services & Supplies,Australia,32000,2023
+656,Groupe Lactalis,Retail and Wholesale,France,85000,2023
+657,Owens Corning,"Construction, Oil & Gas Operations, Mining and Chemicals",United States,19000,2023
+658,Ipsen,"Construction, Oil & Gas Operations, Mining and Chemicals",France,5000,2023
+659,Orano,Utilities,France,17000,2023
+660,IAC/InterActiveCorp,Retail and Wholesale,United States,11000,2023
+661,Thermo Fisher Scientific,Health Care Equipment & Services,United States,130000,2023
+662,SingTel,"Telecommunications Services, Cable Supplier",Singapore,24000,2023
+663,NAB - National Australia Bank,Banking and Financial Services,Australia,32000,2023
+664,Carrier Global,"Engineering, Manufacturing",United States,52000,2023
+665,Bühler Group,Banking and Financial Services,Switzerland,12500,2023
+666,Inditex,Retail and Wholesale,Spain,164997,2023
+667,Sasol,"Construction, Oil & Gas Operations, Mining and Chemicals",South Africa,28630,2023
+668,Bilfinger,"Construction, Oil & Gas Operations, Mining and Chemicals",Germany,30000,2023
+669,Kellogg,"Food, Soft Beverages, Alcohol & Tobacco",United States,30000,2023
+670,PricewaterhouseCoopers,Business Services & Supplies,United Kingdom,328000,2023
+671,Sartorius,Drugs & Biotechnology,Germany,15000,2023
+672,Nippon Telegraph and Telephone,"Telecommunications Services, Cable Supplier",Japan,338651,2023
+673,Bureau Veritas,Business Services & Supplies,France,82000,2023
+674,Sika,"Construction, Oil & Gas Operations, Mining and Chemicals",Switzerland,33698,2023
+675,Prudential,Banking and Financial Services,United Kingdom,14681,2023
+676,Qantas Airways,Transportation and Logistics,Australia,26000,2023
+677,Wuerth Group,Retail and Wholesale,Germany,43000,2023
+678,Ajinomoto,"Food, Soft Beverages, Alcohol & Tobacco",Japan,34615,2023
+679,Atlassian,"Engineering, Manufacturing",Australia,8813,2023
+680,PSA International,Transportation and Logistics,Singapore,42000,2023
+681,Anywhere Real Estate Inc.,Business Services & Supplies,United States,8890,2023
+682,JYSK,Retail and Wholesale,Denmark,30000,2023
+683,KT ,"Telecommunications Services, Cable Supplier",South Korea,20544,2023
+684,Sharp,"Engineering, Manufacturing",Japan,45729,2023
+685,ServiceNow,"IT, Internet, Software & Services",United States,17848,2023
+686,William Demant Holding,Business Services & Supplies,Denmark,20500,2023
+687,NN Group,Banking and Financial Services,Netherlands,15000,2023
+688,Bollore Group,"Engineering, Manufacturing",France,56000,2023
+689,Crédit Mutuel,Banking and Financial Services,France,77000,2023
+690,ING Group,Banking and Financial Services,Netherlands,60000,2023
+691,Jacobs Solutions,Professional Services,United States,60000,2023
+692,ICON (Ireland),Drugs & Biotechnology,Ireland,41160,2023
+693,MSC Mediterranean Shipping,Transportation and Logistics,Switzerland,180000,2023
+694,Hanwha,Conglomerate,South Korea,4927,2023
+695,Nexity,Business Services & Supplies,France,8500,2023
+696,Norwegian Cruise Line,Transportation and Logistics,Bermuda,38900,2023
+697,Keppel,Conglomerate,Singapore,17238,2023
+698,Howmet Aerospace,Aerospace & Defense,United States,21400,2023
+699,Magna International,Automotive (Automotive and Suppliers),Canada,174000,2023
+700,s.Oliver,"Clothing, Shoes, Sports Equipment",Germany,7000,2023
