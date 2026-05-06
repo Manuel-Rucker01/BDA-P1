@@ -1,0 +1,511 @@
+2026-05-06 22:38:14,080 - INFO - ================================================================================
+2026-05-06 22:38:14,080 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-06 22:38:14,080 - INFO - ================================================================================
+2026-05-06 22:38:14,080 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-06 22:38:14,080 - INFO - Initializing Spark session...
+2026-05-06 22:38:16,563 - INFO - Spark session initialized successfully
+2026-05-06 22:38:16,563 - INFO - 
+[2/5] Preparing TrustedZone database...
+2026-05-06 22:38:16,563 - INFO - Preparing DuckDB database at /Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/TrustedZone.duckdb...
+2026-05-06 22:38:16,580 - INFO - Database prepared successfully - existing tables cleared
+2026-05-06 22:38:16,580 - INFO - 
+[3/5] Extracting and applying Denial Constraints (Spark-based)...
+2026-05-06 22:38:16,580 - INFO - 
+Extracting and filtering data using Spark architecture...
+2026-05-06 22:38:16,588 - INFO -   Reading data from FormattedZone...
+2026-05-06 22:38:16,698 - INFO -   NASDAQ: 3426 rows
+2026-05-06 22:38:16,698 - INFO -   Company History: 481133 rows
+2026-05-06 22:38:16,698 - INFO -   Exchange: 71 rows
+2026-05-06 22:38:16,698 - INFO -   S&P 500: 98 rows
+2026-05-06 22:38:16,698 - INFO -   Forbes Employers: 700 rows
+2026-05-06 22:38:16,698 - INFO - 
+Defining Denial Constraints with Spark SQL...
+2026-05-06 22:38:17,287 - ERROR - Error extracting and filtering data: 'DataFrame' object has no attribute 'iteritems'
+2026-05-06 22:38:17,479 - ERROR - 
+================================================================================
+2026-05-06 22:38:17,479 - ERROR - PIPELINE EXECUTION FAILED!
+2026-05-06 22:38:17,479 - ERROR - ================================================================================
+2026-05-06 22:38:17,479 - ERROR - Error: 'DataFrame' object has no attribute 'iteritems'
+Traceback (most recent call last):
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 366, in main
+    cleaned_data, metrics = extract_and_filter_data(formatted_db_path, spark)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 109, in extract_and_filter_data
+    spark.createDataFrame(nasdaq_pd).createOrReplaceTempView("nasdaq_raw")
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 891, in createDataFrame
+    return super(SparkSession, self).createDataFrame(  # type: ignore[call-overload]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/pandas/conversion.py", line 436, in createDataFrame
+    converted_data = self._convert_from_pandas(data, schema, timezone)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/pandas/conversion.py", line 474, in _convert_from_pandas
+    for column, series in pdf.iteritems():
+                          ^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pandas/core/generic.py", line 6206, in __getattr__
+    return object.__getattribute__(self, name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'DataFrame' object has no attribute 'iteritems'. Did you mean: 'isetitem'?
+2026-05-06 22:38:17,494 - INFO - Closing down clientserver connection
+2026-05-06 22:39:17,155 - INFO - ================================================================================
+2026-05-06 22:39:17,155 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-06 22:39:17,155 - INFO - ================================================================================
+2026-05-06 22:39:17,155 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-06 22:39:17,155 - INFO - Initializing Spark session...
+2026-05-06 22:39:19,646 - INFO - Spark session initialized successfully
+2026-05-06 22:39:19,646 - INFO - 
+[2/5] Preparing TrustedZone database...
+2026-05-06 22:39:19,646 - INFO - Preparing DuckDB database at /Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/TrustedZone.duckdb...
+2026-05-06 22:39:19,658 - INFO - Database prepared successfully - existing tables cleared
+2026-05-06 22:39:19,658 - INFO - 
+[3/5] Extracting and applying Denial Constraints (Spark-based)...
+2026-05-06 22:39:19,658 - INFO - 
+Extracting and filtering data using Spark architecture...
+2026-05-06 22:39:19,668 - INFO -   Reading data from FormattedZone...
+2026-05-06 22:39:19,789 - INFO -   NASDAQ: 3426 rows
+2026-05-06 22:39:19,789 - INFO -   Company History: 481133 rows
+2026-05-06 22:39:19,789 - INFO -   Exchange: 71 rows
+2026-05-06 22:39:19,789 - INFO -   S&P 500: 98 rows
+2026-05-06 22:39:19,789 - INFO -   Forbes Employers: 700 rows
+2026-05-06 22:39:19,789 - INFO - 
+Defining Denial Constraints with Spark SQL...
+2026-05-06 22:39:20,399 - ERROR - Error extracting and filtering data: field Sector: Can not merge type <class 'pyspark.sql.types.StringType'> and <class 'pyspark.sql.types.DoubleType'>
+2026-05-06 22:39:20,560 - ERROR - 
+================================================================================
+2026-05-06 22:39:20,560 - ERROR - PIPELINE EXECUTION FAILED!
+2026-05-06 22:39:20,560 - ERROR - ================================================================================
+2026-05-06 22:39:20,560 - ERROR - Error: field Sector: Can not merge type <class 'pyspark.sql.types.StringType'> and <class 'pyspark.sql.types.DoubleType'>
+Traceback (most recent call last):
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 366, in main
+    cleaned_data, metrics = extract_and_filter_data(formatted_db_path, spark)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 109, in extract_and_filter_data
+    spark.createDataFrame(nasdaq_pd).createOrReplaceTempView("nasdaq_raw")
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 891, in createDataFrame
+    return super(SparkSession, self).createDataFrame(  # type: ignore[call-overload]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/pandas/conversion.py", line 437, in createDataFrame
+    return self._create_dataframe(converted_data, schema, samplingRatio, verifySchema)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 936, in _create_dataframe
+    rdd, struct = self._createFromLocal(map(prepare, data), schema)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 631, in _createFromLocal
+    struct = self._inferSchemaFromList(data, names=schema)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 517, in _inferSchemaFromList
+    schema = reduce(
+             ^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/types.py", line 1385, in _merge_type
+    f.name, _merge_type(f.dataType, nfs.get(f.name, NullType()), name=new_name(f.name))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/types.py", line 1378, in _merge_type
+    raise TypeError(new_msg("Can not merge type %s and %s" % (type(a), type(b))))
+TypeError: field Sector: Can not merge type <class 'pyspark.sql.types.StringType'> and <class 'pyspark.sql.types.DoubleType'>
+2026-05-06 22:39:20,568 - INFO - Closing down clientserver connection
+2026-05-06 22:42:22,516 - INFO - ================================================================================
+2026-05-06 22:42:22,516 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-06 22:42:22,516 - INFO - ================================================================================
+2026-05-06 22:42:22,516 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-06 22:42:22,516 - INFO - Initializing Spark session...
+2026-05-06 22:42:25,010 - INFO - Spark session initialized successfully
+2026-05-06 22:42:25,011 - INFO - 
+[2/5] Preparing TrustedZone database...
+2026-05-06 22:42:25,011 - INFO - Preparing DuckDB database at /Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/TrustedZone.duckdb...
+2026-05-06 22:42:25,024 - INFO - Database prepared successfully - existing tables cleared
+2026-05-06 22:42:25,025 - INFO - 
+[3/5] Extracting and applying Denial Constraints (Spark-based)...
+2026-05-06 22:42:25,025 - INFO - 
+Extracting and filtering data using Spark architecture...
+2026-05-06 22:42:25,035 - INFO -   Reading data from FormattedZone...
+2026-05-06 22:42:25,175 - INFO -   NASDAQ: 3426 rows
+2026-05-06 22:42:25,176 - INFO -   Company History: 481133 rows
+2026-05-06 22:42:25,176 - INFO -   Exchange: 71 rows
+2026-05-06 22:42:25,176 - INFO -   S&P 500: 98 rows
+2026-05-06 22:42:25,176 - INFO -   Forbes Employers: 700 rows
+2026-05-06 22:42:25,176 - INFO - 
+Defining Denial Constraints with Spark SQL...
+2026-05-06 22:42:25,793 - ERROR - Error extracting and filtering data: field Sector: Can not merge type <class 'pyspark.sql.types.StringType'> and <class 'pyspark.sql.types.DoubleType'>
+2026-05-06 22:42:25,927 - ERROR - 
+================================================================================
+2026-05-06 22:42:25,928 - ERROR - PIPELINE EXECUTION FAILED!
+2026-05-06 22:42:25,928 - ERROR - ================================================================================
+2026-05-06 22:42:25,928 - ERROR - Error: field Sector: Can not merge type <class 'pyspark.sql.types.StringType'> and <class 'pyspark.sql.types.DoubleType'>
+Traceback (most recent call last):
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 377, in main
+    cleaned_data, metrics = extract_and_filter_data(formatted_db_path, spark)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 120, in extract_and_filter_data
+    spark.createDataFrame(nasdaq_pd).createOrReplaceTempView("nasdaq_raw")
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 891, in createDataFrame
+    return super(SparkSession, self).createDataFrame(  # type: ignore[call-overload]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/pandas/conversion.py", line 437, in createDataFrame
+    return self._create_dataframe(converted_data, schema, samplingRatio, verifySchema)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 936, in _create_dataframe
+    rdd, struct = self._createFromLocal(map(prepare, data), schema)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 631, in _createFromLocal
+    struct = self._inferSchemaFromList(data, names=schema)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 517, in _inferSchemaFromList
+    schema = reduce(
+             ^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/types.py", line 1385, in _merge_type
+    f.name, _merge_type(f.dataType, nfs.get(f.name, NullType()), name=new_name(f.name))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/types.py", line 1378, in _merge_type
+    raise TypeError(new_msg("Can not merge type %s and %s" % (type(a), type(b))))
+TypeError: field Sector: Can not merge type <class 'pyspark.sql.types.StringType'> and <class 'pyspark.sql.types.DoubleType'>
+2026-05-06 22:42:25,935 - INFO - Closing down clientserver connection
+2026-05-06 22:43:03,228 - INFO - ================================================================================
+2026-05-06 22:43:03,229 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-06 22:43:03,229 - INFO - ================================================================================
+2026-05-06 22:43:03,229 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-06 22:43:03,229 - INFO - Initializing Spark session...
+2026-05-06 22:43:05,727 - INFO - Spark session initialized successfully
+2026-05-06 22:43:05,728 - INFO - 
+[2/5] Preparing TrustedZone database...
+2026-05-06 22:43:05,728 - INFO - Preparing DuckDB database at /Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/TrustedZone.duckdb...
+2026-05-06 22:43:05,740 - INFO - Database prepared successfully - existing tables cleared
+2026-05-06 22:43:05,740 - INFO - 
+[3/5] Extracting and applying Denial Constraints (Spark-based)...
+2026-05-06 22:43:05,740 - INFO - 
+Extracting and filtering data using Spark architecture...
+2026-05-06 22:43:05,749 - INFO -   Reading data from FormattedZone...
+2026-05-06 22:43:05,888 - INFO -   NASDAQ: 3426 rows
+2026-05-06 22:43:05,888 - INFO -   Company History: 481133 rows
+2026-05-06 22:43:05,888 - INFO -   Exchange: 71 rows
+2026-05-06 22:43:05,888 - INFO -   S&P 500: 98 rows
+2026-05-06 22:43:05,888 - INFO -   Forbes Employers: 700 rows
+2026-05-06 22:43:05,888 - INFO - 
+Defining Denial Constraints with Spark SQL...
+2026-05-06 22:43:06,497 - ERROR - Error extracting and filtering data: field Sector: Can not merge type <class 'pyspark.sql.types.StringType'> and <class 'pyspark.sql.types.DoubleType'>
+2026-05-06 22:43:06,641 - ERROR - 
+================================================================================
+2026-05-06 22:43:06,641 - ERROR - PIPELINE EXECUTION FAILED!
+2026-05-06 22:43:06,641 - ERROR - ================================================================================
+2026-05-06 22:43:06,641 - ERROR - Error: field Sector: Can not merge type <class 'pyspark.sql.types.StringType'> and <class 'pyspark.sql.types.DoubleType'>
+Traceback (most recent call last):
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 377, in main
+    cleaned_data, metrics = extract_and_filter_data(formatted_db_path, spark)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 120, in extract_and_filter_data
+    spark.createDataFrame(nasdaq_pd).createOrReplaceTempView("nasdaq_raw")
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 891, in createDataFrame
+    return super(SparkSession, self).createDataFrame(  # type: ignore[call-overload]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/pandas/conversion.py", line 437, in createDataFrame
+    return self._create_dataframe(converted_data, schema, samplingRatio, verifySchema)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 936, in _create_dataframe
+    rdd, struct = self._createFromLocal(map(prepare, data), schema)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 631, in _createFromLocal
+    struct = self._inferSchemaFromList(data, names=schema)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 517, in _inferSchemaFromList
+    schema = reduce(
+             ^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/types.py", line 1385, in _merge_type
+    f.name, _merge_type(f.dataType, nfs.get(f.name, NullType()), name=new_name(f.name))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/types.py", line 1378, in _merge_type
+    raise TypeError(new_msg("Can not merge type %s and %s" % (type(a), type(b))))
+TypeError: field Sector: Can not merge type <class 'pyspark.sql.types.StringType'> and <class 'pyspark.sql.types.DoubleType'>
+2026-05-06 22:43:06,648 - INFO - Closing down clientserver connection
+2026-05-06 22:44:14,574 - INFO - ================================================================================
+2026-05-06 22:44:14,574 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-06 22:44:14,574 - INFO - ================================================================================
+2026-05-06 22:44:14,574 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-06 22:44:14,574 - INFO - Initializing Spark session...
+2026-05-06 22:44:17,046 - INFO - Spark session initialized successfully
+2026-05-06 22:44:17,046 - INFO - 
+[2/5] Preparing TrustedZone database...
+2026-05-06 22:44:17,046 - INFO - Preparing DuckDB database at /Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/TrustedZone.duckdb...
+2026-05-06 22:44:17,059 - INFO - Database prepared successfully - existing tables cleared
+2026-05-06 22:44:17,060 - INFO - 
+[3/5] Extracting and applying Denial Constraints (Spark-based)...
+2026-05-06 22:44:17,060 - INFO - 
+Extracting and filtering data using Spark architecture...
+2026-05-06 22:44:17,069 - INFO -   Reading data from FormattedZone...
+2026-05-06 22:44:17,181 - INFO -   NASDAQ: 3426 rows
+2026-05-06 22:44:17,181 - INFO -   Company History: 481133 rows
+2026-05-06 22:44:17,181 - INFO -   Exchange: 71 rows
+2026-05-06 22:44:17,182 - INFO -   S&P 500: 98 rows
+2026-05-06 22:44:17,182 - INFO -   Forbes Employers: 700 rows
+2026-05-06 22:44:17,182 - INFO - 
+Defining Denial Constraints with Spark SQL...
+2026-05-06 22:44:17,783 - ERROR - Error extracting and filtering data: field Sector: Can not merge type <class 'pyspark.sql.types.StringType'> and <class 'pyspark.sql.types.DoubleType'>
+2026-05-06 22:44:17,963 - ERROR - 
+================================================================================
+2026-05-06 22:44:17,963 - ERROR - PIPELINE EXECUTION FAILED!
+2026-05-06 22:44:17,963 - ERROR - ================================================================================
+2026-05-06 22:44:17,963 - ERROR - Error: field Sector: Can not merge type <class 'pyspark.sql.types.StringType'> and <class 'pyspark.sql.types.DoubleType'>
+Traceback (most recent call last):
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 371, in main
+    cleaned_data, metrics = extract_and_filter_data(formatted_db_path, spark)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 114, in extract_and_filter_data
+    spark.createDataFrame(nasdaq_pd).createOrReplaceTempView("nasdaq_raw")
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 891, in createDataFrame
+    return super(SparkSession, self).createDataFrame(  # type: ignore[call-overload]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/pandas/conversion.py", line 437, in createDataFrame
+    return self._create_dataframe(converted_data, schema, samplingRatio, verifySchema)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 936, in _create_dataframe
+    rdd, struct = self._createFromLocal(map(prepare, data), schema)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 631, in _createFromLocal
+    struct = self._inferSchemaFromList(data, names=schema)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 517, in _inferSchemaFromList
+    schema = reduce(
+             ^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/types.py", line 1385, in _merge_type
+    f.name, _merge_type(f.dataType, nfs.get(f.name, NullType()), name=new_name(f.name))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/types.py", line 1378, in _merge_type
+    raise TypeError(new_msg("Can not merge type %s and %s" % (type(a), type(b))))
+TypeError: field Sector: Can not merge type <class 'pyspark.sql.types.StringType'> and <class 'pyspark.sql.types.DoubleType'>
+2026-05-06 22:44:17,969 - INFO - Closing down clientserver connection
+2026-05-06 22:46:01,264 - INFO - ================================================================================
+2026-05-06 22:46:01,265 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-06 22:46:01,265 - INFO - ================================================================================
+2026-05-06 22:46:01,265 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-06 22:46:01,265 - INFO - Initializing Spark session...
+2026-05-06 22:46:03,751 - INFO - Spark session initialized successfully
+2026-05-06 22:46:03,751 - INFO - 
+[2/5] Preparing TrustedZone database...
+2026-05-06 22:46:03,751 - INFO - Preparing DuckDB database at /Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/TrustedZone.duckdb...
+2026-05-06 22:46:03,764 - INFO - Database prepared successfully - existing tables cleared
+2026-05-06 22:46:03,765 - INFO - 
+[3/5] Extracting and applying Denial Constraints (Spark-based)...
+2026-05-06 22:46:03,765 - INFO - 
+Extracting and filtering data using Spark architecture...
+2026-05-06 22:46:03,775 - INFO -   Reading data from FormattedZone...
+2026-05-06 22:46:03,898 - INFO -   NASDAQ: 3426 rows
+2026-05-06 22:46:03,898 - INFO -   Company History: 481133 rows
+2026-05-06 22:46:03,898 - INFO -   Exchange: 71 rows
+2026-05-06 22:46:03,898 - INFO -   S&P 500: 98 rows
+2026-05-06 22:46:03,898 - INFO -   Forbes Employers: 700 rows
+2026-05-06 22:46:03,898 - INFO - 
+Defining Denial Constraints with Spark SQL...
+2026-05-06 22:46:04,517 - ERROR - Error extracting and filtering data: field Sector: Can not merge type <class 'pyspark.sql.types.StringType'> and <class 'pyspark.sql.types.DoubleType'>
+2026-05-06 22:46:04,666 - ERROR - 
+================================================================================
+2026-05-06 22:46:04,666 - ERROR - PIPELINE EXECUTION FAILED!
+2026-05-06 22:46:04,666 - ERROR - ================================================================================
+2026-05-06 22:46:04,666 - ERROR - Error: field Sector: Can not merge type <class 'pyspark.sql.types.StringType'> and <class 'pyspark.sql.types.DoubleType'>
+Traceback (most recent call last):
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 365, in main
+    cleaned_data, metrics = extract_and_filter_data(formatted_db_path, spark)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 115, in extract_and_filter_data
+    spark.createDataFrame(nasdaq_pd).createOrReplaceTempView("nasdaq_raw")
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 891, in createDataFrame
+    return super(SparkSession, self).createDataFrame(  # type: ignore[call-overload]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/pandas/conversion.py", line 437, in createDataFrame
+    return self._create_dataframe(converted_data, schema, samplingRatio, verifySchema)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 936, in _create_dataframe
+    rdd, struct = self._createFromLocal(map(prepare, data), schema)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 631, in _createFromLocal
+    struct = self._inferSchemaFromList(data, names=schema)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 517, in _inferSchemaFromList
+    schema = reduce(
+             ^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/types.py", line 1385, in _merge_type
+    f.name, _merge_type(f.dataType, nfs.get(f.name, NullType()), name=new_name(f.name))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/types.py", line 1378, in _merge_type
+    raise TypeError(new_msg("Can not merge type %s and %s" % (type(a), type(b))))
+TypeError: field Sector: Can not merge type <class 'pyspark.sql.types.StringType'> and <class 'pyspark.sql.types.DoubleType'>
+2026-05-06 22:46:04,672 - INFO - Closing down clientserver connection
+2026-05-06 22:49:32,855 - INFO - ================================================================================
+2026-05-06 22:49:32,855 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-06 22:49:32,855 - INFO - ================================================================================
+2026-05-06 22:49:32,855 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-06 22:49:32,855 - INFO - Initializing Spark session...
+2026-05-06 22:49:35,340 - INFO - Spark session initialized successfully
+2026-05-06 22:49:35,341 - INFO - 
+[2/5] Preparing TrustedZone database...
+2026-05-06 22:49:35,341 - INFO - Preparing DuckDB database at /Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/TrustedZone.duckdb...
+2026-05-06 22:49:35,352 - INFO - Database prepared successfully - existing tables cleared
+2026-05-06 22:49:35,352 - INFO - 
+[3/5] Extracting and applying Denial Constraints (Spark-based)...
+2026-05-06 22:49:35,352 - INFO - 
+Extracting and filtering data using Spark architecture...
+2026-05-06 22:49:35,362 - INFO -   Reading data from FormattedZone...
+2026-05-06 22:49:35,500 - INFO -   NASDAQ: 3426 rows
+2026-05-06 22:49:35,500 - INFO -   Company History: 481133 rows
+2026-05-06 22:49:35,500 - INFO -   Exchange: 71 rows
+2026-05-06 22:49:35,500 - INFO -   S&P 500: 98 rows
+2026-05-06 22:49:35,500 - INFO -   Forbes Employers: 700 rows
+2026-05-06 22:49:35,500 - INFO - 
+Defining Denial Constraints with Spark SQL...
+2026-05-06 22:49:36,119 - ERROR - Error extracting and filtering data: field Sector: Can not merge type <class 'pyspark.sql.types.StringType'> and <class 'pyspark.sql.types.DoubleType'>
+2026-05-06 22:49:36,249 - ERROR - 
+================================================================================
+2026-05-06 22:49:36,249 - ERROR - PIPELINE EXECUTION FAILED!
+2026-05-06 22:49:36,249 - ERROR - ================================================================================
+2026-05-06 22:49:36,249 - ERROR - Error: field Sector: Can not merge type <class 'pyspark.sql.types.StringType'> and <class 'pyspark.sql.types.DoubleType'>
+Traceback (most recent call last):
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 364, in main
+    cleaned_data, metrics = extract_and_filter_data(formatted_db_path, spark)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 114, in extract_and_filter_data
+    spark.createDataFrame(nasdaq_pd).createOrReplaceTempView("nasdaq_raw")
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 891, in createDataFrame
+    return super(SparkSession, self).createDataFrame(  # type: ignore[call-overload]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/pandas/conversion.py", line 437, in createDataFrame
+    return self._create_dataframe(converted_data, schema, samplingRatio, verifySchema)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 936, in _create_dataframe
+    rdd, struct = self._createFromLocal(map(prepare, data), schema)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 631, in _createFromLocal
+    struct = self._inferSchemaFromList(data, names=schema)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/session.py", line 517, in _inferSchemaFromList
+    schema = reduce(
+             ^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/types.py", line 1385, in _merge_type
+    f.name, _merge_type(f.dataType, nfs.get(f.name, NullType()), name=new_name(f.name))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/.venv/lib/python3.12/site-packages/pyspark/sql/types.py", line 1378, in _merge_type
+    raise TypeError(new_msg("Can not merge type %s and %s" % (type(a), type(b))))
+TypeError: field Sector: Can not merge type <class 'pyspark.sql.types.StringType'> and <class 'pyspark.sql.types.DoubleType'>
+2026-05-06 22:49:36,255 - INFO - Closing down clientserver connection
+2026-05-06 22:52:06,783 - INFO - ================================================================================
+2026-05-06 22:52:06,783 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-06 22:52:06,783 - INFO - ================================================================================
+2026-05-06 22:52:06,783 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-06 22:52:06,783 - INFO - Initializing Spark session...
+2026-05-06 22:52:08,878 - INFO - Spark session initialized successfully
+2026-05-06 22:52:08,879 - INFO - 
+[2/5] Preparing TrustedZone database...
+2026-05-06 22:52:08,879 - INFO - Preparing DuckDB database at /Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/TrustedZone.duckdb...
+2026-05-06 22:52:08,888 - INFO - Database prepared successfully - existing tables cleared
+2026-05-06 22:52:08,888 - INFO - 
+[3/5] Extracting and applying Denial Constraints (Spark-based)...
+2026-05-06 22:52:08,888 - INFO - 
+Extracting and filtering data using Spark architecture...
+2026-05-06 22:52:08,896 - INFO -   Reading data from FormattedZone...
+2026-05-06 22:52:08,997 - INFO -   NASDAQ: 3426 rows
+2026-05-06 22:52:08,997 - INFO -   Company History: 481133 rows
+2026-05-06 22:52:08,997 - INFO -   Exchange: 71 rows
+2026-05-06 22:52:08,997 - INFO -   S&P 500: 98 rows
+2026-05-06 22:52:08,997 - INFO -   Forbes Employers: 700 rows
+2026-05-06 22:52:08,997 - INFO - 
+Defining Denial Constraints with Spark SQL...
+2026-05-06 22:52:11,759 - INFO -   Defining constraints for all datasets in Spark SQL
+2026-05-06 22:52:11,897 - INFO - 
+Applying Denial Constraints using Pandas execution...
+2026-05-06 22:52:11,897 - INFO -   Applying NASDAQ constraints...
+2026-05-06 22:52:11,898 - INFO -   Applying Company History constraints...
+2026-05-06 22:52:11,922 - INFO -   Applying Exchange constraints...
+2026-05-06 22:52:11,922 - INFO -   Applying S&P 500 constraints...
+2026-05-06 22:52:11,923 - INFO -   Applying Forbes Employers constraints...
+2026-05-06 22:52:11,924 - INFO - 
+Constraints applied successfully!
+2026-05-06 22:52:11,924 - INFO -   Nasdaq: 3426 rows after filtering (0.00% removed)
+2026-05-06 22:52:11,924 - INFO -   Company History: 481063 rows after filtering (0.01% removed)
+2026-05-06 22:52:11,924 - INFO -   Exchange: 71 rows after filtering (0.00% removed)
+2026-05-06 22:52:11,924 - INFO -   Sp500 Companies: 98 rows after filtering (0.00% removed)
+2026-05-06 22:52:11,924 - INFO -   Forbes Employers: 700 rows after filtering (0.00% removed)
+2026-05-06 22:52:11,924 - INFO - 
+[4/5] Writing cleaned data to TrustedZone...
+2026-05-06 22:52:11,924 - INFO - 
+Writing cleaned data to TrustedZone DuckDB...
+2026-05-06 22:52:11,931 - INFO -   Writing Nasdaq data...
+2026-05-06 22:52:11,938 - INFO -   Nasdaq: 3426 rows written
+2026-05-06 22:52:11,938 - INFO -   Writing Company History data...
+2026-05-06 22:52:12,134 - INFO -   Company_History: 481063 rows written
+2026-05-06 22:52:12,134 - INFO -   Writing Exchange data...
+2026-05-06 22:52:12,137 - INFO -   Exchange: 71 rows written
+2026-05-06 22:52:12,137 - INFO -   Writing Sp500 Companies data...
+2026-05-06 22:52:12,138 - INFO -   Sp500_Companies: 98 rows written
+2026-05-06 22:52:12,138 - INFO -   Writing Forbes Employers data...
+2026-05-06 22:52:12,139 - INFO -   Forbes_Employers: 700 rows written
+2026-05-06 22:52:12,139 - INFO -   Writing data quality metrics...
+2026-05-06 22:52:12,170 - INFO - Data successfully written to Trusted Zone!
+2026-05-06 22:52:12,170 - INFO - 
+[5/5] Validating and verifying TrustedZone...
+2026-05-06 22:52:12,179 - INFO - 
+Validating cleaned data...
+2026-05-06 22:52:12,180 - INFO -   Nasdaq data validation passed
+2026-05-06 22:52:12,181 - INFO -   Company_History data validation passed
+2026-05-06 22:52:12,186 - ERROR - Error validating cleaned data: Catalog Error: Table with name us_exchange does not exist!
+Did you mean "exchange"?
+
+LINE 1: SELECT COUNT(*) FROM us_exchange WHERE Date IS NULL
+                             ^
+2026-05-06 22:52:12,187 - INFO - 
+Verifying TrustedZone database integrity...
+2026-05-06 22:52:12,197 - ERROR - Missing tables: {'us_exchange'}
+2026-05-06 22:52:12,437 - INFO - Spark session stopped
+2026-05-06 22:52:12,437 - INFO - 
+================================================================================
+2026-05-06 22:52:12,437 - INFO - PIPELINE EXECUTION COMPLETED SUCCESSFULLY!
+2026-05-06 22:52:12,437 - INFO - ================================================================================
+2026-05-06 22:52:12,437 - INFO - 
+TrustedZone database created at: /Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/TrustedZone.duckdb
+2026-05-06 22:52:12,437 - INFO - Processing Engine: Apache Spark
+2026-05-06 22:52:12,437 - INFO - Validation passed: False
+2026-05-06 22:52:12,437 - INFO - Database verified: False
+2026-05-06 22:52:12,437 - INFO - 
+Denial Constraints Applied:
+2026-05-06 22:52:12,437 - INFO - {
+  "nasdaq": [
+    "Symbol NOT NULL",
+    "Name NOT NULL",
+    "LastSale >= 0 OR NULL",
+    "MarketCap >= 0 OR NULL",
+    "IPOyear <= 2026"
+  ],
+  "company_history": [
+    "Date NOT NULL",
+    "High >= Low",
+    "Volume >= 0",
+    "Open >= 0 OR NULL",
+    "Close >= 0 OR NULL"
+  ],
+  "exchange": [
+    "Date NOT NULL",
+    "EUR > 0",
+    "JPY > 0"
+  ],
+  "sp500_companies": [
+    "Ticker NOT NULL",
+    "Name NOT NULL",
+    "MarketCap >= 0 OR NULL",
+    "Employees >= 0 OR NULL"
+  ],
+  "forbes_employers": [
+    "company NOT NULL",
+    "rank > 0",
+    "publish_year <= 2026 OR NULL"
+  ]
+}
+2026-05-06 22:52:12,438 - INFO - Closing down clientserver connection

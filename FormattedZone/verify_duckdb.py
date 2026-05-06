@@ -15,13 +15,29 @@ for table in tables:
     count = con.execute(f"SELECT COUNT(*) FROM {table[0]}").fetchone()[0]
     print(f"  - {table[0]}: {count} rows")
 
-print("\nSample data from nasdaq:")
+print("\n" + "="*80)
+print("Sample data from nasdaq:")
+print("="*80)
 print(con.execute("SELECT * FROM nasdaq LIMIT 2").df())
 
-print("\nSample data from company_history:")
+print("\n" + "="*80)
+print("Sample data from company_history:")
+print("="*80)
 print(con.execute("SELECT * FROM company_history LIMIT 2").df())
 
-print("\nSample data from us_exchange:")
+print("\n" + "="*80)
+print("Sample data from us_exchange:")
+print("="*80)
 print(con.execute("SELECT * FROM us_exchange LIMIT 2").df())
+
+print("\n" + "="*80)
+print("Sample data from sp500_companies:")
+print("="*80)
+print(con.execute("SELECT * FROM sp500_companies LIMIT 2").df())
+
+print("\n" + "="*80)
+print("Sample data from forbes_employers:")
+print("="*80)
+print(con.execute("SELECT * FROM forbes_employers LIMIT 2").df())
 
 con.close()
