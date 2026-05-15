@@ -21,11 +21,9 @@ from typing import Tuple, Dict, Any
 import duckdb
 import pandas as pd
 
-# Pandas 2.0+ compatibility fix
 pd.DataFrame.iteritems = pd.DataFrame.items 
 
 from pyspark.sql import SparkSession
-# Importamos los tipos explícitos de Spark
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType, BooleanType
 
 logging.basicConfig(
@@ -73,10 +71,6 @@ def initialize_spark() -> SparkSession:
 
 
 def convert_to_spark_with_schema(spark: SparkSession, pandas_df: pd.DataFrame) -> Any:
-    """
-    BULLETPROOF FIX: Forces an explicit schema on PySpark to completely bypass 
-    the inferencer that crashes on mixed String/Double types.
-    """
     fields = []
     clean_df = pandas_df.copy()
     
@@ -88,13 +82,10 @@ def convert_to_spark_with_schema(spark: SparkSession, pandas_df: pd.DataFrame) -
         elif pd.api.types.is_bool_dtype(dtype):
             fields.append(StructField(col_name, BooleanType(), True))
         else:
-            # Force to StringType in Spark
             fields.append(StructField(col_name, StringType(), True))
-            # Safely replace Pandas NaN with native Python None for Spark
             clean_df[col_name] = clean_df[col_name].where(pd.notna(clean_df[col_name]), None)
             clean_df[col_name] = clean_df[col_name].apply(lambda x: str(x) if x is not None else None)
 
-    # Create DataFrame using the explicitly defined schema
     schema = StructType(fields)
     return spark.createDataFrame(clean_df, schema=schema)
 
@@ -127,7 +118,6 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
         
         logger.info("\nDefining Denial Constraints with Spark SQL...")
         
-        # Load data into Spark using explicit schemas
         convert_to_spark_with_schema(spark, nasdaq_pd).createOrReplaceTempView("nasdaq_raw")
         convert_to_spark_with_schema(spark, company_history_pd).createOrReplaceTempView("company_history_raw")
         convert_to_spark_with_schema(spark, exchange_pd).createOrReplaceTempView("us_exchange_raw")
@@ -149,6 +139,12 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
             AND High >= Low AND Volume >= 0
             AND (Open >= 0 OR Open IS NULL)
             AND (Close >= 0 OR Close IS NULL)
+            AND Company IN (
+                SELECT Company 
+                FROM company_history_raw 
+                GROUP BY Company 
+                HAVING COUNT(*) > 1
+            )
         """).createOrReplaceTempView("company_history_constraints")
         
         spark.sql("""
@@ -181,7 +177,11 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
         ].copy()
         
         logger.info("  Applying Company History constraints...")
+        company_counts = company_history_pd['Company'].value_counts()
+        valid_companies = company_counts[company_counts > 1].index
+
         company_history_clean = company_history_pd[
+            (company_history_pd['Company'].isin(valid_companies)) &
             (company_history_pd['Date'].notna()) &
             (company_history_pd['High'] >= company_history_pd['Low']) &
             (company_history_pd['Volume'] >= 0) &
@@ -250,7 +250,7 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
             "removal_rate": removal_rate,
             "denial_constraints": {
                 "nasdaq": ["Symbol NOT NULL", "Name NOT NULL", "LastSale >= 0 OR NULL", "MarketCap >= 0 OR NULL", "IPOyear <= 2026"],
-                "company_history": ["Date NOT NULL", "High >= Low", "Volume >= 0", "Open >= 0 OR NULL", "Close >= 0 OR NULL"],
+                "company_history": ["Date NOT NULL", "High >= Low", "Volume >= 0", "Open >= 0 OR NULL", "Close >= 0 OR NULL", "Company record count > 1"],
                 "exchange": ["Date NOT NULL", "EUR > 0", "JPY > 0"],
                 "sp500_companies": ["Ticker NOT NULL", "Name NOT NULL", "MarketCap >= 0 OR NULL", "Employees >= 0 OR NULL"],
                 "forbes_employers": ["company NOT NULL", "rank > 0", "publish_year <= 2026 OR NULL"]
