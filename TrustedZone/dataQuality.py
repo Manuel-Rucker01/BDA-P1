@@ -36,6 +36,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Canonical set of seven parent acquirers covered by the Kaggle dataset
+CANONICAL_ACQUIRERS = {
+    "Microsoft", "Google", "IBM", "HP",
+    "Apple", "Amazon", "Facebook", "Twitter"
+}
+
 
 def prepare_trusted_database(db_path: str) -> None:
     logger.info(f"Preparing DuckDB database at {db_path}...")
@@ -46,6 +52,7 @@ def prepare_trusted_database(db_path: str) -> None:
         connection.execute("DROP TABLE IF EXISTS us_exchange")
         connection.execute("DROP TABLE IF EXISTS sp500_companies")
         connection.execute("DROP TABLE IF EXISTS forbes_employers")
+        connection.execute("DROP TABLE IF EXISTS company_acquisitions")
         connection.execute("DROP TABLE IF EXISTS data_quality_metrics")
         connection.close()
         logger.info("Database prepared successfully - existing tables cleared")
@@ -101,20 +108,23 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
         exchange_pd = con.execute("SELECT * FROM us_exchange").df()
         sp500_pd = con.execute("SELECT * FROM sp500_companies").df()
         forbes_pd = con.execute("SELECT * FROM forbes_employers").df()
+        acquisitions_pd = con.execute("SELECT * FROM company_acquisitions").df()
         
         raw_counts = {
             "nasdaq": len(nasdaq_pd),
             "company_history": len(company_history_pd),
-            "exchange": len(exchange_pd),
+            "us_exchange": len(exchange_pd),
             "sp500_companies": len(sp500_pd),
-            "forbes_employers": len(forbes_pd)
+            "forbes_employers": len(forbes_pd),
+            "company_acquisitions": len(acquisitions_pd)
         }
         
         logger.info(f"  NASDAQ: {raw_counts['nasdaq']} rows")
         logger.info(f"  Company History: {raw_counts['company_history']} rows")
-        logger.info(f"  Exchange: {raw_counts['exchange']} rows")
+        logger.info(f"  Exchange: {raw_counts['us_exchange']} rows")
         logger.info(f"  S&P 500: {raw_counts['sp500_companies']} rows")
         logger.info(f"  Forbes Employers: {raw_counts['forbes_employers']} rows")
+        logger.info(f"  Company Acquisitions: {raw_counts['company_acquisitions']} rows")
         
         logger.info("\nDefining Denial Constraints with Spark SQL...")
         
@@ -123,6 +133,7 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
         convert_to_spark_with_schema(spark, exchange_pd).createOrReplaceTempView("us_exchange_raw")
         convert_to_spark_with_schema(spark, sp500_pd).createOrReplaceTempView("sp500_raw")
         convert_to_spark_with_schema(spark, forbes_pd).createOrReplaceTempView("forbes_raw")
+        convert_to_spark_with_schema(spark, acquisitions_pd).createOrReplaceTempView("acquisitions_raw")
         
         logger.info("  Defining constraints for all datasets in Spark SQL")
         spark.sql("""
@@ -164,6 +175,15 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
             WHERE company IS NOT NULL AND rank > 0
             AND (publish_year <= 2026 OR publish_year IS NULL)
         """).createOrReplaceTempView("forbes_constraints")
+
+        spark.sql("""
+            SELECT * FROM acquisitions_raw
+            WHERE `Parent Company` IS NOT NULL AND `Acquired Company` IS NOT NULL
+            AND `Parent Company` IN ('Microsoft','Google','IBM','HP','Apple','Amazon','Facebook','Twitter')
+            AND (`Acquisition Year` <= 2026 OR `Acquisition Year` IS NULL)
+            AND (`Acquisition Year` >= 1900 OR `Acquisition Year` IS NULL)
+            AND (`Acquisition Price` >= 0 OR `Acquisition Price` IS NULL)
+        """).createOrReplaceTempView("acquisitions_constraints")
         
         logger.info("\nApplying Denial Constraints using Pandas execution...")
         
@@ -210,15 +230,35 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
             (forbes_pd['rank'] > 0) &
             ((forbes_pd['publish_year'] <= 2026) | (forbes_pd['publish_year'].isna()))
         ].copy()
+
+        logger.info("  Applying Company Acquisitions constraints...")
+        # Coerce numeric columns: source CSV may contain non-numeric placeholders
+        # (e.g. "-", "Undisclosed"), which pandas keeps as strings. errors='coerce'
+        # turns unparseable values into NaN so the >= / <= / IS NULL predicates work.
+        acquisitions_pd['Acquisition Year'] = pd.to_numeric(
+            acquisitions_pd['Acquisition Year'], errors='coerce'
+        )
+        acquisitions_pd['Acquisition Price'] = pd.to_numeric(
+            acquisitions_pd['Acquisition Price'], errors='coerce'
+        )
+        acquisitions_clean = acquisitions_pd[
+            (acquisitions_pd['Parent Company'].notna()) &
+            (acquisitions_pd['Acquired Company'].notna()) &
+            (acquisitions_pd['Parent Company'].isin(CANONICAL_ACQUIRERS)) &
+            ((acquisitions_pd['Acquisition Year'] <= 2026) | (acquisitions_pd['Acquisition Year'].isna())) &
+            ((acquisitions_pd['Acquisition Year'] >= 1900) | (acquisitions_pd['Acquisition Year'].isna())) &
+            ((acquisitions_pd['Acquisition Price'] >= 0) | (acquisitions_pd['Acquisition Price'].isna()))
+        ].copy()
         
         con.close()
         
         clean_counts = {
             "nasdaq": len(nasdaq_clean),
             "company_history": len(company_history_clean),
-            "exchange": len(exchange_clean),
+            "us_exchange": len(exchange_clean),
             "sp500_companies": len(sp500_clean),
-            "forbes_employers": len(forbes_clean)
+            "forbes_employers": len(forbes_clean),
+            "company_acquisitions": len(acquisitions_clean)
         }
         
         rows_removed = {k: raw_counts[k] - clean_counts[k] for k in raw_counts}
@@ -238,9 +278,10 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
         cleaned_data = {
             "nasdaq": nasdaq_clean,
             "company_history": company_history_clean,
-            "exchange": exchange_clean,
+            "us_exchange": exchange_clean,
             "sp500_companies": sp500_clean,
-            "forbes_employers": forbes_clean
+            "forbes_employers": forbes_clean,
+            "company_acquisitions": acquisitions_clean
         }
         
         metrics = {
@@ -251,9 +292,16 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
             "denial_constraints": {
                 "nasdaq": ["Symbol NOT NULL", "Name NOT NULL", "LastSale >= 0 OR NULL", "MarketCap >= 0 OR NULL", "IPOyear <= 2026"],
                 "company_history": ["Date NOT NULL", "High >= Low", "Volume >= 0", "Open >= 0 OR NULL", "Close >= 0 OR NULL", "Company record count > 1"],
-                "exchange": ["Date NOT NULL", "EUR > 0", "JPY > 0"],
+                "us_exchange": ["Date NOT NULL", "EUR > 0", "JPY > 0"],
                 "sp500_companies": ["Ticker NOT NULL", "Name NOT NULL", "MarketCap >= 0 OR NULL", "Employees >= 0 OR NULL"],
-                "forbes_employers": ["company NOT NULL", "rank > 0", "publish_year <= 2026 OR NULL"]
+                "forbes_employers": ["company NOT NULL", "rank > 0", "publish_year <= 2026 OR NULL"],
+                "company_acquisitions": [
+                    "Parent Company NOT NULL",
+                    "Acquired Company NOT NULL",
+                    "Parent Company IN canonical acquirer set",
+                    "Acquisition Year BETWEEN 1900 AND 2026 OR NULL",
+                    "Acquisition Price >= 0 OR NULL"
+                ]
             },
             "processing_engine": "Apache Spark (with Pandas execution)",
             "spark_architecture": "Spark SQL used for constraint definitions and schema management"
@@ -276,7 +324,8 @@ def validate_cleaned_data(connection) -> bool:
             ("company_history", "Date IS NULL"),
             ("us_exchange", "Date IS NULL"),
             ("sp500_companies", "Ticker IS NULL OR Name IS NULL"),
-            ("forbes_employers", "company IS NULL OR rank IS NULL")
+            ("forbes_employers", "company IS NULL OR rank IS NULL"),
+            ("company_acquisitions", '"Parent Company" IS NULL OR "Acquired Company" IS NULL')
         ]
         
         for table, condition in datasets_to_check:
@@ -334,7 +383,7 @@ def verify_trusted_zone_database(trusted_db_path: str) -> bool:
         tables = connection.execute("SELECT table_name FROM information_schema.tables").fetchall()
         table_names = [table[0] for table in tables]
         
-        required_tables = {"nasdaq", "company_history", "us_exchange", "sp500_companies", "forbes_employers", "data_quality_metrics"}
+        required_tables = {"nasdaq", "company_history", "us_exchange", "sp500_companies", "forbes_employers", "company_acquisitions", "data_quality_metrics"}
         missing_tables = required_tables - set(table_names)
         
         if missing_tables:

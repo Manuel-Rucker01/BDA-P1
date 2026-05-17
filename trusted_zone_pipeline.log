@@ -1,0 +1,450 @@
+2026-05-17 23:07:10,012 - INFO - ================================================================================
+2026-05-17 23:07:10,013 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-17 23:07:10,013 - INFO - ================================================================================
+2026-05-17 23:07:10,013 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-17 23:07:10,013 - INFO - Initializing Spark session...
+2026-05-17 23:07:41,986 - INFO - Spark session initialized successfully
+2026-05-17 23:07:41,987 - INFO - 
+[2/5] Preparing TrustedZone database...
+2026-05-17 23:07:41,987 - INFO - Preparing DuckDB database at /Users/yufengchen/Desktop/BDA-P1/TrustedZone/TrustedZone.duckdb...
+2026-05-17 23:07:41,996 - INFO - Database prepared successfully - existing tables cleared
+2026-05-17 23:07:41,996 - INFO - 
+[3/5] Extracting and applying Denial Constraints (Spark-based)...
+2026-05-17 23:07:41,996 - INFO - 
+Extracting and filtering data using Spark architecture...
+2026-05-17 23:07:42,002 - INFO -   Reading data from FormattedZone...
+2026-05-17 23:07:42,076 - INFO -   NASDAQ: 3426 rows
+2026-05-17 23:07:42,076 - INFO -   Company History: 481133 rows
+2026-05-17 23:07:42,076 - INFO -   Exchange: 71 rows
+2026-05-17 23:07:42,076 - INFO -   S&P 500: 98 rows
+2026-05-17 23:07:42,076 - INFO -   Forbes Employers: 700 rows
+2026-05-17 23:07:42,076 - INFO -   Company Acquisitions: 1455 rows
+2026-05-17 23:07:42,076 - INFO - 
+Defining Denial Constraints with Spark SQL...
+2026-05-17 23:07:43,501 - INFO -   Defining constraints for all datasets in Spark SQL
+2026-05-17 23:07:43,699 - ERROR - Error extracting and filtering data: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column, variable, or function parameter with name `ParentCompany` cannot be resolved. Did you mean one of the following? [`Parent Company`, `Acquired Company`, `Category`, `Country`, `Business`]. SQLSTATE: 42703; line 3 pos 18;
+'Project [*]
++- 'Filter (((isnotnull('ParentCompany) AND isnotnull('AcquiredCompany)) AND 'ParentCompany IN (Microsoft,Google,IBM,HP,Apple,Amazon,Facebook,Twitter)) AND (((('AcquisitionYear <= 2026) OR isnull('AcquisitionYear)) AND (('AcquisitionYear >= 1900) OR isnull('AcquisitionYear))) AND (('AcquisitionPrice >= 0) OR isnull('AcquisitionPrice))))
+   +- SubqueryAlias acquisitions_raw
+      +- View (`acquisitions_raw`, [ID#65L, Parent Company#66, Acquisition Year#67, Acquisition Month#68, Acquired Company#69, Business#70, Country#71, Acquisition Price#72, Category#73, Derived Products#74])
+         +- LocalRelation [ID#65L, Parent Company#66, Acquisition Year#67, Acquisition Month#68, Acquired Company#69, Business#70, Country#71, Acquisition Price#72, Category#73, Derived Products#74]
+
+2026-05-17 23:07:43,843 - ERROR - 
+================================================================================
+2026-05-17 23:07:43,843 - ERROR - PIPELINE EXECUTION FAILED!
+2026-05-17 23:07:43,843 - ERROR - ================================================================================
+2026-05-17 23:07:43,844 - ERROR - Error: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column, variable, or function parameter with name `ParentCompany` cannot be resolved. Did you mean one of the following? [`Parent Company`, `Acquired Company`, `Category`, `Country`, `Business`]. SQLSTATE: 42703; line 3 pos 18;
+'Project [*]
++- 'Filter (((isnotnull('ParentCompany) AND isnotnull('AcquiredCompany)) AND 'ParentCompany IN (Microsoft,Google,IBM,HP,Apple,Amazon,Facebook,Twitter)) AND (((('AcquisitionYear <= 2026) OR isnull('AcquisitionYear)) AND (('AcquisitionYear >= 1900) OR isnull('AcquisitionYear))) AND (('AcquisitionPrice >= 0) OR isnull('AcquisitionPrice))))
+   +- SubqueryAlias acquisitions_raw
+      +- View (`acquisitions_raw`, [ID#65L, Parent Company#66, Acquisition Year#67, Acquisition Month#68, Acquired Company#69, Business#70, Country#71, Acquisition Price#72, Category#73, Derived Products#74])
+         +- LocalRelation [ID#65L, Parent Company#66, Acquisition Year#67, Acquisition Month#68, Acquired Company#69, Business#70, Country#71, Acquisition Price#72, Category#73, Derived Products#74]
+Traceback (most recent call last):
+  File "/Users/yufengchen/Desktop/BDA-P1/TrustedZone/dataQuality.py", line 421, in main
+    cleaned_data, metrics = extract_and_filter_data(formatted_db_path, spark)
+                            ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yufengchen/Desktop/BDA-P1/TrustedZone/dataQuality.py", line 179, in extract_and_filter_data
+    spark.sql("""
+    ~~~~~~~~~^^^^
+        SELECT * FROM acquisitions_raw
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+        AND (AcquisitionPrice >= 0 OR AcquisitionPrice IS NULL)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    """).createOrReplaceTempView("acquisitions_constraints")
+    ^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pyspark/sql/session.py", line 1816, in sql
+    return DataFrame(self._jsparkSession.sql(sqlQuery, litArgs), self)
+                     ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/py4j/java_gateway.py", line 1362, in __call__
+    return_value = get_return_value(
+        answer, self.gateway_client, self.target_id, self.name)
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pyspark/errors/exceptions/captured.py", line 269, in deco
+    raise converted from None
+pyspark.errors.exceptions.captured.AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column, variable, or function parameter with name `ParentCompany` cannot be resolved. Did you mean one of the following? [`Parent Company`, `Acquired Company`, `Category`, `Country`, `Business`]. SQLSTATE: 42703; line 3 pos 18;
+'Project [*]
++- 'Filter (((isnotnull('ParentCompany) AND isnotnull('AcquiredCompany)) AND 'ParentCompany IN (Microsoft,Google,IBM,HP,Apple,Amazon,Facebook,Twitter)) AND (((('AcquisitionYear <= 2026) OR isnull('AcquisitionYear)) AND (('AcquisitionYear >= 1900) OR isnull('AcquisitionYear))) AND (('AcquisitionPrice >= 0) OR isnull('AcquisitionPrice))))
+   +- SubqueryAlias acquisitions_raw
+      +- View (`acquisitions_raw`, [ID#65L, Parent Company#66, Acquisition Year#67, Acquisition Month#68, Acquired Company#69, Business#70, Country#71, Acquisition Price#72, Category#73, Derived Products#74])
+         +- LocalRelation [ID#65L, Parent Company#66, Acquisition Year#67, Acquisition Month#68, Acquired Company#69, Business#70, Country#71, Acquisition Price#72, Category#73, Derived Products#74]
+
+2026-05-17 23:07:43,847 - INFO - Closing down clientserver connection
+2026-05-17 23:11:01,538 - INFO - ================================================================================
+2026-05-17 23:11:01,538 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-17 23:11:01,538 - INFO - ================================================================================
+2026-05-17 23:11:01,538 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-17 23:11:01,538 - INFO - Initializing Spark session...
+2026-05-17 23:11:33,401 - INFO - Spark session initialized successfully
+2026-05-17 23:11:33,401 - INFO - 
+[2/5] Preparing TrustedZone database...
+2026-05-17 23:11:33,401 - INFO - Preparing DuckDB database at /Users/yufengchen/Desktop/BDA-P1/TrustedZone/TrustedZone.duckdb...
+2026-05-17 23:11:33,408 - INFO - Database prepared successfully - existing tables cleared
+2026-05-17 23:11:33,409 - INFO - 
+[3/5] Extracting and applying Denial Constraints (Spark-based)...
+2026-05-17 23:11:33,409 - INFO - 
+Extracting and filtering data using Spark architecture...
+2026-05-17 23:11:33,415 - INFO -   Reading data from FormattedZone...
+2026-05-17 23:11:33,467 - INFO -   NASDAQ: 3426 rows
+2026-05-17 23:11:33,467 - INFO -   Company History: 481133 rows
+2026-05-17 23:11:33,467 - INFO -   Exchange: 71 rows
+2026-05-17 23:11:33,467 - INFO -   S&P 500: 98 rows
+2026-05-17 23:11:33,467 - INFO -   Forbes Employers: 700 rows
+2026-05-17 23:11:33,467 - INFO -   Company Acquisitions: 1455 rows
+2026-05-17 23:11:33,467 - INFO - 
+Defining Denial Constraints with Spark SQL...
+2026-05-17 23:11:34,817 - INFO -   Defining constraints for all datasets in Spark SQL
+2026-05-17 23:11:34,978 - ERROR - Error extracting and filtering data: 
+[PARSE_SYNTAX_ERROR] Syntax error at or near 'Company'. SQLSTATE: 42601 (line 3, pos 25)
+
+== SQL ==
+
+            SELECT * FROM acquisitions_raw
+            WHERE Parent Company IS NOT NULL AND AcquiredCompany IS NOT NULL
+-------------------------^^^
+            AND Parent Company IN ('Microsoft','Google','IBM','HP','Apple','Amazon','Facebook','Twitter')
+            AND (AcquisitionYear <= 2026 OR AcquisitionYear IS NULL)
+            AND (AcquisitionYear >= 1900 OR AcquisitionYear IS NULL)
+            AND (AcquisitionPrice >= 0 OR AcquisitionPrice IS NULL)
+        
+
+2026-05-17 23:11:35,299 - ERROR - 
+================================================================================
+2026-05-17 23:11:35,299 - ERROR - PIPELINE EXECUTION FAILED!
+2026-05-17 23:11:35,299 - ERROR - ================================================================================
+2026-05-17 23:11:35,301 - ERROR - Error: 
+[PARSE_SYNTAX_ERROR] Syntax error at or near 'Company'. SQLSTATE: 42601 (line 3, pos 25)
+
+== SQL ==
+
+            SELECT * FROM acquisitions_raw
+            WHERE Parent Company IS NOT NULL AND AcquiredCompany IS NOT NULL
+-------------------------^^^
+            AND Parent Company IN ('Microsoft','Google','IBM','HP','Apple','Amazon','Facebook','Twitter')
+            AND (AcquisitionYear <= 2026 OR AcquisitionYear IS NULL)
+            AND (AcquisitionYear >= 1900 OR AcquisitionYear IS NULL)
+            AND (AcquisitionPrice >= 0 OR AcquisitionPrice IS NULL)
+        
+Traceback (most recent call last):
+  File "/Users/yufengchen/Desktop/BDA-P1/TrustedZone/dataQuality.py", line 421, in main
+    cleaned_data, metrics = extract_and_filter_data(formatted_db_path, spark)
+                            ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yufengchen/Desktop/BDA-P1/TrustedZone/dataQuality.py", line 179, in extract_and_filter_data
+    spark.sql("""
+    ~~~~~~~~~^^^^
+        SELECT * FROM acquisitions_raw
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+        AND (AcquisitionPrice >= 0 OR AcquisitionPrice IS NULL)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    """).createOrReplaceTempView("acquisitions_constraints")
+    ^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pyspark/sql/session.py", line 1816, in sql
+    return DataFrame(self._jsparkSession.sql(sqlQuery, litArgs), self)
+                     ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/py4j/java_gateway.py", line 1362, in __call__
+    return_value = get_return_value(
+        answer, self.gateway_client, self.target_id, self.name)
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pyspark/errors/exceptions/captured.py", line 269, in deco
+    raise converted from None
+pyspark.errors.exceptions.captured.ParseException: 
+[PARSE_SYNTAX_ERROR] Syntax error at or near 'Company'. SQLSTATE: 42601 (line 3, pos 25)
+
+== SQL ==
+
+            SELECT * FROM acquisitions_raw
+            WHERE Parent Company IS NOT NULL AND AcquiredCompany IS NOT NULL
+-------------------------^^^
+            AND Parent Company IN ('Microsoft','Google','IBM','HP','Apple','Amazon','Facebook','Twitter')
+            AND (AcquisitionYear <= 2026 OR AcquisitionYear IS NULL)
+            AND (AcquisitionYear >= 1900 OR AcquisitionYear IS NULL)
+            AND (AcquisitionPrice >= 0 OR AcquisitionPrice IS NULL)
+        
+
+2026-05-17 23:11:35,311 - INFO - Closing down clientserver connection
+2026-05-17 23:15:26,234 - INFO - ================================================================================
+2026-05-17 23:15:26,234 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-17 23:15:26,234 - INFO - ================================================================================
+2026-05-17 23:15:26,234 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-17 23:15:26,234 - INFO - Initializing Spark session...
+2026-05-17 23:15:58,033 - INFO - Spark session initialized successfully
+2026-05-17 23:15:58,033 - INFO - 
+[2/5] Preparing TrustedZone database...
+2026-05-17 23:15:58,033 - INFO - Preparing DuckDB database at /Users/yufengchen/Desktop/BDA-P1/TrustedZone/TrustedZone.duckdb...
+2026-05-17 23:15:58,039 - INFO - Database prepared successfully - existing tables cleared
+2026-05-17 23:15:58,040 - INFO - 
+[3/5] Extracting and applying Denial Constraints (Spark-based)...
+2026-05-17 23:15:58,040 - INFO - 
+Extracting and filtering data using Spark architecture...
+2026-05-17 23:15:58,045 - INFO -   Reading data from FormattedZone...
+2026-05-17 23:15:58,093 - INFO -   NASDAQ: 3426 rows
+2026-05-17 23:15:58,093 - INFO -   Company History: 481133 rows
+2026-05-17 23:15:58,093 - INFO -   Exchange: 71 rows
+2026-05-17 23:15:58,093 - INFO -   S&P 500: 98 rows
+2026-05-17 23:15:58,093 - INFO -   Forbes Employers: 700 rows
+2026-05-17 23:15:58,093 - INFO -   Company Acquisitions: 1455 rows
+2026-05-17 23:15:58,093 - INFO - 
+Defining Denial Constraints with Spark SQL...
+2026-05-17 23:15:59,466 - INFO -   Defining constraints for all datasets in Spark SQL
+2026-05-17 23:15:59,642 - INFO - 
+Applying Denial Constraints using Pandas execution...
+2026-05-17 23:15:59,642 - INFO -   Applying NASDAQ constraints...
+2026-05-17 23:15:59,643 - INFO -   Applying Company History constraints...
+2026-05-17 23:15:59,668 - INFO -   Applying Exchange constraints...
+2026-05-17 23:15:59,668 - INFO -   Applying S&P 500 constraints...
+2026-05-17 23:15:59,669 - INFO -   Applying Forbes Employers constraints...
+2026-05-17 23:15:59,669 - INFO -   Applying Company Acquisitions constraints...
+2026-05-17 23:15:59,669 - ERROR - Error extracting and filtering data: Invalid comparison between dtype=str and int
+2026-05-17 23:15:59,922 - ERROR - 
+================================================================================
+2026-05-17 23:15:59,922 - ERROR - PIPELINE EXECUTION FAILED!
+2026-05-17 23:15:59,922 - ERROR - ================================================================================
+2026-05-17 23:15:59,922 - ERROR - Error: Invalid comparison between dtype=str and int
+Traceback (most recent call last):
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/arrays/arrow/array.py", line 944, in _cmp_method
+    result = pc_func(self._pa_array, self._box_pa(other))
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pyarrow/compute.py", line 254, in wrapper
+    return func.call(args, None, memory_pool)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "pyarrow/_compute.pyx", line 399, in pyarrow._compute.Function.call
+  File "pyarrow/error.pxi", line 155, in pyarrow.lib.pyarrow_internal_check_status
+  File "pyarrow/error.pxi", line 92, in pyarrow.lib.check_status
+pyarrow.lib.ArrowNotImplementedError: Function 'less_equal' has no kernel matching input types (large_string, int64)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/arrays/arrow/array.py", line 951, in _cmp_method
+    result[valid] = op(np_array[valid], other)
+                    ~~^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: '<=' not supported between instances of 'str' and 'int'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/yufengchen/Desktop/BDA-P1/TrustedZone/dataQuality.py", line 421, in main
+    cleaned_data, metrics = extract_and_filter_data(formatted_db_path, spark)
+                            ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yufengchen/Desktop/BDA-P1/TrustedZone/dataQuality.py", line 239, in extract_and_filter_data
+    ((acquisitions_pd['Acquisition Year'] <= 2026) | (acquisitions_pd['Acquisition Year'].isna())) &
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/ops/common.py", line 85, in new_method
+    return method(self, other)
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/arraylike.py", line 54, in __le__
+    return self._cmp_method(other, operator.le)
+           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/series.py", line 6735, in _cmp_method
+    res_values = ops.comparison_op(lvalues, rvalues, op)
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/ops/array_ops.py", line 341, in comparison_op
+    res_values = op(lvalues, rvalues)
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/ops/common.py", line 85, in new_method
+    return method(self, other)
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/arraylike.py", line 54, in __le__
+    return self._cmp_method(other, operator.le)
+           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/arrays/string_arrow.py", line 583, in _cmp_method
+    result = super()._cmp_method(other, op)
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/arrays/arrow/array.py", line 953, in _cmp_method
+    result = ops.invalid_comparison(self, other, op)
+  File "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages/pandas/core/ops/invalid.py", line 55, in invalid_comparison
+    raise TypeError(f"Invalid comparison between dtype={left.dtype} and {typ}")
+TypeError: Invalid comparison between dtype=str and int
+2026-05-17 23:15:59,931 - INFO - Closing down clientserver connection
+2026-05-17 23:18:29,827 - INFO - ================================================================================
+2026-05-17 23:18:29,827 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-17 23:18:29,827 - INFO - ================================================================================
+2026-05-17 23:18:29,827 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-17 23:18:29,827 - INFO - Initializing Spark session...
+2026-05-17 23:19:01,672 - INFO - Spark session initialized successfully
+2026-05-17 23:19:01,672 - INFO - 
+[2/5] Preparing TrustedZone database...
+2026-05-17 23:19:01,672 - INFO - Preparing DuckDB database at /Users/yufengchen/Desktop/BDA-P1/TrustedZone/TrustedZone.duckdb...
+2026-05-17 23:19:01,679 - INFO - Database prepared successfully - existing tables cleared
+2026-05-17 23:19:01,680 - INFO - 
+[3/5] Extracting and applying Denial Constraints (Spark-based)...
+2026-05-17 23:19:01,680 - INFO - 
+Extracting and filtering data using Spark architecture...
+2026-05-17 23:19:01,686 - INFO -   Reading data from FormattedZone...
+2026-05-17 23:19:01,736 - INFO -   NASDAQ: 3426 rows
+2026-05-17 23:19:01,736 - INFO -   Company History: 481133 rows
+2026-05-17 23:19:01,736 - INFO -   Exchange: 71 rows
+2026-05-17 23:19:01,736 - INFO -   S&P 500: 98 rows
+2026-05-17 23:19:01,736 - INFO -   Forbes Employers: 700 rows
+2026-05-17 23:19:01,736 - INFO -   Company Acquisitions: 1455 rows
+2026-05-17 23:19:01,736 - INFO - 
+Defining Denial Constraints with Spark SQL...
+2026-05-17 23:19:03,080 - INFO -   Defining constraints for all datasets in Spark SQL
+2026-05-17 23:19:03,271 - INFO - 
+Applying Denial Constraints using Pandas execution...
+2026-05-17 23:19:03,271 - INFO -   Applying NASDAQ constraints...
+2026-05-17 23:19:03,272 - INFO -   Applying Company History constraints...
+2026-05-17 23:19:03,295 - INFO -   Applying Exchange constraints...
+2026-05-17 23:19:03,295 - INFO -   Applying S&P 500 constraints...
+2026-05-17 23:19:03,296 - INFO -   Applying Forbes Employers constraints...
+2026-05-17 23:19:03,296 - INFO -   Applying Company Acquisitions constraints...
+2026-05-17 23:19:03,299 - INFO - 
+Constraints applied successfully!
+2026-05-17 23:19:03,299 - INFO -   Nasdaq: 3426 rows after filtering (0.00% removed)
+2026-05-17 23:19:03,299 - INFO -   Company History: 481027 rows after filtering (0.02% removed)
+2026-05-17 23:19:03,299 - INFO -   Exchange: 71 rows after filtering (0.00% removed)
+2026-05-17 23:19:03,299 - INFO -   Sp500 Companies: 98 rows after filtering (0.00% removed)
+2026-05-17 23:19:03,299 - INFO -   Forbes Employers: 700 rows after filtering (0.00% removed)
+2026-05-17 23:19:03,299 - INFO -   Company Acquisitions: 891 rows after filtering (38.76% removed)
+2026-05-17 23:19:03,299 - INFO - 
+[4/5] Writing cleaned data to TrustedZone...
+2026-05-17 23:19:03,299 - INFO - 
+Writing cleaned data to TrustedZone DuckDB...
+2026-05-17 23:19:03,304 - INFO -   Writing Nasdaq data...
+2026-05-17 23:19:03,309 - INFO -   Nasdaq: 3426 rows written
+2026-05-17 23:19:03,309 - INFO -   Writing Company History data...
+2026-05-17 23:19:03,434 - INFO -   Company_History: 481027 rows written
+2026-05-17 23:19:03,434 - INFO -   Writing Exchange data...
+2026-05-17 23:19:03,436 - ERROR - Error writing to DuckDB: Catalog Error: Table with name "exchange" already exists!
+2026-05-17 23:19:03,556 - ERROR - 
+================================================================================
+2026-05-17 23:19:03,557 - ERROR - PIPELINE EXECUTION FAILED!
+2026-05-17 23:19:03,557 - ERROR - ================================================================================
+2026-05-17 23:19:03,557 - ERROR - Error: Catalog Error: Table with name "exchange" already exists!
+Traceback (most recent call last):
+  File "/Users/yufengchen/Desktop/BDA-P1/TrustedZone/dataQuality.py", line 433, in main
+    write_to_trusted_zone(trusted_db_path, cleaned_data, metrics)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yufengchen/Desktop/BDA-P1/TrustedZone/dataQuality.py", line 357, in write_to_trusted_zone
+    connection.execute(f"CREATE TABLE {name} AS SELECT * FROM df")
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_duckdb.CatalogException: Catalog Error: Table with name "exchange" already exists!
+2026-05-17 23:19:03,558 - INFO - Closing down clientserver connection
+2026-05-17 23:22:33,307 - INFO - ================================================================================
+2026-05-17 23:22:33,307 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-17 23:22:33,307 - INFO - ================================================================================
+2026-05-17 23:22:33,308 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-17 23:22:33,308 - INFO - Initializing Spark session...
+2026-05-17 23:23:05,187 - INFO - Spark session initialized successfully
+2026-05-17 23:23:05,188 - INFO - 
+[2/5] Preparing TrustedZone database...
+2026-05-17 23:23:05,188 - INFO - Preparing DuckDB database at /Users/yufengchen/Desktop/BDA-P1/TrustedZone/TrustedZone.duckdb...
+2026-05-17 23:23:05,195 - INFO - Database prepared successfully - existing tables cleared
+2026-05-17 23:23:05,195 - INFO - 
+[3/5] Extracting and applying Denial Constraints (Spark-based)...
+2026-05-17 23:23:05,195 - INFO - 
+Extracting and filtering data using Spark architecture...
+2026-05-17 23:23:05,201 - INFO -   Reading data from FormattedZone...
+2026-05-17 23:23:05,252 - INFO -   NASDAQ: 3426 rows
+2026-05-17 23:23:05,252 - INFO -   Company History: 481133 rows
+2026-05-17 23:23:05,252 - INFO -   Exchange: 71 rows
+2026-05-17 23:23:05,252 - INFO -   S&P 500: 98 rows
+2026-05-17 23:23:05,252 - INFO -   Forbes Employers: 700 rows
+2026-05-17 23:23:05,252 - INFO -   Company Acquisitions: 1455 rows
+2026-05-17 23:23:05,252 - INFO - 
+Defining Denial Constraints with Spark SQL...
+2026-05-17 23:23:06,644 - INFO -   Defining constraints for all datasets in Spark SQL
+2026-05-17 23:23:06,815 - INFO - 
+Applying Denial Constraints using Pandas execution...
+2026-05-17 23:23:06,815 - INFO -   Applying NASDAQ constraints...
+2026-05-17 23:23:06,816 - INFO -   Applying Company History constraints...
+2026-05-17 23:23:06,840 - INFO -   Applying Exchange constraints...
+2026-05-17 23:23:06,840 - INFO -   Applying S&P 500 constraints...
+2026-05-17 23:23:06,840 - INFO -   Applying Forbes Employers constraints...
+2026-05-17 23:23:06,841 - INFO -   Applying Company Acquisitions constraints...
+2026-05-17 23:23:06,844 - INFO - 
+Constraints applied successfully!
+2026-05-17 23:23:06,844 - INFO -   Nasdaq: 3426 rows after filtering (0.00% removed)
+2026-05-17 23:23:06,844 - INFO -   Company History: 481027 rows after filtering (0.02% removed)
+2026-05-17 23:23:06,844 - INFO -   Us Exchange: 71 rows after filtering (0.00% removed)
+2026-05-17 23:23:06,844 - INFO -   Sp500 Companies: 98 rows after filtering (0.00% removed)
+2026-05-17 23:23:06,844 - INFO -   Forbes Employers: 700 rows after filtering (0.00% removed)
+2026-05-17 23:23:06,844 - INFO -   Company Acquisitions: 891 rows after filtering (38.76% removed)
+2026-05-17 23:23:06,845 - INFO - 
+[4/5] Writing cleaned data to TrustedZone...
+2026-05-17 23:23:06,845 - INFO - 
+Writing cleaned data to TrustedZone DuckDB...
+2026-05-17 23:23:06,849 - INFO -   Writing Nasdaq data...
+2026-05-17 23:23:06,854 - INFO -   Nasdaq: 3426 rows written
+2026-05-17 23:23:06,854 - INFO -   Writing Company History data...
+2026-05-17 23:23:06,977 - INFO -   Company_History: 481027 rows written
+2026-05-17 23:23:06,978 - INFO -   Writing Us Exchange data...
+2026-05-17 23:23:06,980 - INFO -   Us_Exchange: 71 rows written
+2026-05-17 23:23:06,980 - INFO -   Writing Sp500 Companies data...
+2026-05-17 23:23:06,981 - INFO -   Sp500_Companies: 98 rows written
+2026-05-17 23:23:06,981 - INFO -   Writing Forbes Employers data...
+2026-05-17 23:23:06,982 - INFO -   Forbes_Employers: 700 rows written
+2026-05-17 23:23:06,982 - INFO -   Writing Company Acquisitions data...
+2026-05-17 23:23:06,983 - INFO -   Company_Acquisitions: 891 rows written
+2026-05-17 23:23:06,983 - INFO -   Writing data quality metrics...
+2026-05-17 23:23:07,009 - INFO - Data successfully written to Trusted Zone!
+2026-05-17 23:23:07,009 - INFO - 
+[5/5] Validating and verifying TrustedZone...
+2026-05-17 23:23:07,014 - INFO - 
+Validating cleaned data...
+2026-05-17 23:23:07,014 - INFO -   Nasdaq data validation passed
+2026-05-17 23:23:07,015 - INFO -   Company_History data validation passed
+2026-05-17 23:23:07,015 - INFO -   Us_Exchange data validation passed
+2026-05-17 23:23:07,015 - INFO -   Sp500_Companies data validation passed
+2026-05-17 23:23:07,015 - INFO -   Forbes_Employers data validation passed
+2026-05-17 23:23:07,015 - INFO -   Company_Acquisitions data validation passed
+2026-05-17 23:23:07,016 - INFO - 
+Verifying TrustedZone database integrity...
+2026-05-17 23:23:07,022 - INFO -   sp500_companies: 98 rows
+2026-05-17 23:23:07,023 - INFO -   company_history: 481027 rows
+2026-05-17 23:23:07,023 - INFO -   nasdaq: 3426 rows
+2026-05-17 23:23:07,023 - INFO -   us_exchange: 71 rows
+2026-05-17 23:23:07,023 - INFO -   company_acquisitions: 891 rows
+2026-05-17 23:23:07,023 - INFO -   forbes_employers: 700 rows
+2026-05-17 23:23:07,024 - INFO - TrustedZone database verification passed
+2026-05-17 23:23:07,565 - INFO - Spark session stopped
+2026-05-17 23:23:07,565 - INFO - 
+================================================================================
+2026-05-17 23:23:07,566 - INFO - PIPELINE EXECUTION COMPLETED SUCCESSFULLY!
+2026-05-17 23:23:07,566 - INFO - ================================================================================
+2026-05-17 23:23:07,566 - INFO - 
+TrustedZone database created at: /Users/yufengchen/Desktop/BDA-P1/TrustedZone/TrustedZone.duckdb
+2026-05-17 23:23:07,566 - INFO - Processing Engine: Apache Spark
+2026-05-17 23:23:07,566 - INFO - Validation passed: True
+2026-05-17 23:23:07,566 - INFO - Database verified: True
+2026-05-17 23:23:07,566 - INFO - 
+Denial Constraints Applied:
+2026-05-17 23:23:07,566 - INFO - {
+  "nasdaq": [
+    "Symbol NOT NULL",
+    "Name NOT NULL",
+    "LastSale >= 0 OR NULL",
+    "MarketCap >= 0 OR NULL",
+    "IPOyear <= 2026"
+  ],
+  "company_history": [
+    "Date NOT NULL",
+    "High >= Low",
+    "Volume >= 0",
+    "Open >= 0 OR NULL",
+    "Close >= 0 OR NULL",
+    "Company record count > 1"
+  ],
+  "us_exchange": [
+    "Date NOT NULL",
+    "EUR > 0",
+    "JPY > 0"
+  ],
+  "sp500_companies": [
+    "Ticker NOT NULL",
+    "Name NOT NULL",
+    "MarketCap >= 0 OR NULL",
+    "Employees >= 0 OR NULL"
+  ],
+  "forbes_employers": [
+    "company NOT NULL",
+    "rank > 0",
+    "publish_year <= 2026 OR NULL"
+  ],
+  "company_acquisitions": [
+    "Parent Company NOT NULL",
+    "Acquired Company NOT NULL",
+    "Parent Company IN canonical acquirer set",
+    "Acquisition Year BETWEEN 1900 AND 2026 OR NULL",
+    "Acquisition Price >= 0 OR NULL"
+  ]
+}
+2026-05-17 23:23:07,570 - INFO - Closing down clientserver connection

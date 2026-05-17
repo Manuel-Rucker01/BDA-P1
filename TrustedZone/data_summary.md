@@ -14,7 +14,7 @@ A critical aspect of the Trusted Zone storage is the strict enforcement of data 
 
 ## Stored Entities
 
-The DuckDB database contains six specific tables. Five of these represent the core business data, and one serves as an operational metadata registry.
+The DuckDB database contains seven specific tables. Six of these represent the core business data, and one serves as an operational metadata registry.
 
 ### 1. `nasdaq`
 Contains the curated catalog of NASDAQ-listed companies.
@@ -46,7 +46,13 @@ Contains the ranking data from the Forbes World's Best Employers list.
 * **Key Attributes:** `industries`, `country_territory`, `employees`, `publish_year`
 * **Integrity Rules Applied:** All records have a valid rank greater than zero, and the publication year cannot exceed the current temporal bounds.
 
-### 6. `data_quality_metrics`
+### 6. `company_acquisitions`
+Records the historical mergers and acquisitions carried out by seven of the largest technology corporations (Microsoft, Google, IBM, HP, Apple, Amazon, and Facebook/Twitter).
+* **Primary Identifier:** `ParentCompany` and `AcquiredCompany`
+* **Key Attributes:** `AcquisitionYear`, `AcquisitionMonth`, `Business`, `Country`, `AcquisitionPrice`, `Derived Products`, `Category`
+* **Integrity Rules Applied:** Acquisition years are bounded between the founding year of the parent company and the current year. The acquisition price, when present, is verified to be non-negative, and the `ParentCompany` field is restricted to the canonical set of seven acquirers to prevent foreign-key drift when joining against the `nasdaq` and `sp500_companies` tables.
+
+### 7. `data_quality_metrics`
 This operational table does not store financial data. Instead, it acts as an immutable audit log for the data quality pipeline. 
 * **Structure:** `metric_name` (VARCHAR), `metric_value` (JSON String), `timestamp` (TIMESTAMP).
 * **Purpose:** It stores the exact row counts, the number of records removed by the Denial Constraints, and the removal rates for each pipeline execution. This allows data engineers to trace back exactly how much data was filtered out before it reached the Exploitation Zone.
