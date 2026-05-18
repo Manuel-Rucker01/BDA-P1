@@ -70,6 +70,9 @@ STRUCTURAL_RELATIONS = {
     FIN_ONTO.locatedInRegion,
     FIN_ONTO.partOfSubRegion,
     FIN_ONTO.sharesBorderWith,
+    # Acquisition edges (added in P2 via company_acquisitions dataset)
+    FIN_ONTO.madeAcquisition,
+    FIN_ONTO.acquisitionCountry,
 }
 
 

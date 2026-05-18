@@ -10,6 +10,7 @@ Queries:
   Q2 - Companies with high volatility in geopolitically tense countries (cross-graph)
   Q3 - Intra-sector peer identification (structural graph similarity)
   Q4 - Country economic profile enrichment for US-headquartered sectors
+  Q5 - Acquisition volume and total spend per acquiring company
 """
 
 import os
@@ -153,6 +154,29 @@ ORDER BY DESC(?mega_cap_count)
 """
 
 
+# ── Q5 ────────────────────────────────────────────────────────────────────────
+# For each acquiring company: total number of acquisitions, number with a known
+# price, and total spend.  Gives a quick M&A activity fingerprint per ticker.
+
+Q5 = f"""
+PREFIX fin: <{FIN_ONTO}>
+PREFIX ent: <{FIN_ENT}>
+
+SELECT ?ticker
+       (COUNT(?acq) AS ?total_acquisitions)
+       (COUNT(?price) AS ?priced_acquisitions)
+       (SUM(?price) AS ?total_spend_usd)
+WHERE {{
+    ?company a fin:Company ;
+             fin:madeAcquisition ?acq .
+    OPTIONAL {{ ?acq fin:acquisitionPrice ?price }}
+    BIND(STRAFTER(STR(?company), "{FIN_ENT}") AS ?ticker)
+}}
+GROUP BY ?ticker
+ORDER BY DESC(?total_acquisitions)
+"""
+
+
 def run_query(graph, label, sparql, max_rows=20):
     print(f"\n{'='*60}")
     print(f"  {label}")
@@ -187,6 +211,11 @@ def main():
         combined,
         "Q4: Mega-cap US companies per sector with US GDP context",
         Q4,
+    )
+    run_query(
+        fin_g,
+        "Q5: Acquisition activity per company (count + total spend)",
+        Q5,
     )
 
 
