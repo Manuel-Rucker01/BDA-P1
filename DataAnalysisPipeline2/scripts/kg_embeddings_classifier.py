@@ -14,9 +14,7 @@ Pipeline:
   5. Train and evaluate a RandomForest classifier and compare against the
      tabular baseline from stock_prediction_random_forest.py.
 
-When the ownership subgraph (being added by the third team member) is merged
-into financial_knowledge_graph.ttl, the TransE model will automatically learn
-richer representations without any code change — just re-run this script.
+
 """
 
 import os
@@ -44,11 +42,11 @@ EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "Exploit
 FIN_KG_PATH = os.path.join(EXPLOITATION_DIR, "financial_knowledge_graph.ttl")
 DB_PATH = os.path.join(EXPLOITATION_DIR, "ExploitationZone.duckdb")
 
-EMBED_DIM = 64
-TRANSE_LR = 0.01
-TRANSE_EPOCHS = 100
+EMBED_DIM = 128
+TRANSE_LR = 0.001
+TRANSE_EPOCHS = 500
 TRANSE_BATCH = 512
-TRANSE_MARGIN = 1.0
+TRANSE_MARGIN = 0.5
 
 SEED = 42
 random.seed(SEED)
@@ -137,6 +135,13 @@ def train_transe(triples, ent2id, rel2id):
         (ent2id[h], rel2id[r], ent2id[t]) for h, r, t in triples
     ]
 
+    # --- CONFIGURACIÓN DE EARLY STOPPING ---
+    patience = 15
+    best_loss = float('inf')
+    patience_counter = 0
+    # ---------------------------------------
+
+
     for epoch in range(1, TRANSE_EPOCHS + 1):
         random.shuffle(triple_ids)
         total_loss = 0.0
@@ -166,6 +171,18 @@ def train_transe(triples, ent2id, rel2id):
 
         if epoch % 20 == 0:
             print(f"  Epoch {epoch:>3}/{TRANSE_EPOCHS}  loss={total_loss:.4f}")
+        # --- LÓGICA DE DETENCIÓN TEMPRANA ---
+        if total_loss < best_loss:
+            best_loss = total_loss
+            patience_counter = 0  # Resetea si seguimos mejorando
+            # Opcional: guardar los mejores pesos aquí
+            # torch.save(model.state_dict(), 'best_transe.pt')
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                print(f"  -> Early Stopping activado en la época {epoch}. La pérdida no mejora.")
+                break
+
 
     print("  -> TransE training complete.")
     return model
@@ -195,20 +212,37 @@ def extract_company_embeddings(model, ent2id):
 def load_observation_features(db_path: str):
     print("\n[4/5] Loading per-observation features from DuckDB...")
     conn = duckdb.connect(db_path, read_only=True)
+   # Modifica la consulta en load_observation_features:
     df = conn.execute("""
-        SELECT Symbol AS ticker,
-               Date,
-               target_7d_up,
-               company_close,
-               company_volume,
-               eur_rate,
-               jpy_rate,
-               MarketCap
+        SELECT 
+            Symbol AS ticker,
+            Date,
+            target_7d_up,
+            
+            -- 1. Variables Base Escalables
+            LOG(NULLIF(MarketCap, 0)) AS log_market_cap,
+            eur_rate,
+            jpy_rate,
+            
+            -- 2. Indicadores de Precio y Tendencia (Momentum)
+            (company_close - LAG(company_close, 1) OVER (PARTITION BY Symbol ORDER BY Date)) / 
+                NULLIF(LAG(company_close, 1) OVER (PARTITION BY Symbol ORDER BY Date), 0) AS daily_return,
+                
+            (company_close - AVG(company_close) OVER (PARTITION BY Symbol ORDER BY Date ROWS BETWEEN 5 PRECEDING AND CURRENT ROW)) / 
+                NULLIF(AVG(company_close) OVER (PARTITION BY Symbol ORDER BY Date ROWS BETWEEN 5 PRECEDING AND CURRENT ROW), 0) AS price_vs_ma5,
+            
+            -- 3. Indicadores de Volumen y Volatilidad Líquida
+            company_volume / NULLIF(AVG(company_volume) OVER (PARTITION BY Symbol ORDER BY Date ROWS BETWEEN 5 PRECEDING AND CURRENT ROW), 0) AS volume_ratio,
+            
+            STDDEV(company_close) OVER (PARTITION BY Symbol ORDER BY Date ROWS BETWEEN 10 PRECEDING AND CURRENT ROW) AS rolling_volatility_10d
+            
         FROM master_dataset
         WHERE target_7d_up IS NOT NULL
+        ORDER BY Symbol, Date
     """).df()
     conn.close()
     print(f"  -> Loaded {len(df)} observations for {df['ticker'].nunique()} tickers")
+    
     return df
 
 
@@ -216,18 +250,29 @@ def build_feature_matrix(df_obs, company_embeddings):
     print("\n[5/5] Building feature matrix...")
     embed_cols = [f"emb_{i}" for i in range(EMBED_DIM)]
 
-    # Convert embedding dict to DataFrame
+    # Convertir diccionario de embeddings a DataFrame de Pandas
     emb_df = pd.DataFrame.from_dict(
         company_embeddings, orient="index", columns=embed_cols
     ).reset_index().rename(columns={"index": "ticker"})
 
+    # Cruzar los datos de DuckDB con los Embeddings del grafo
     merged = df_obs.merge(emb_df, on="ticker", how="inner")
-    print(f"  -> {len(merged)} observations after embedding join "
-          f"({len(df_obs) - len(merged)} dropped — no structural data)")
+    print(f"  -> {len(merged)} observations after embedding join")
 
-    tabular_features = ["company_close", "company_volume", "eur_rate", "jpy_rate", "MarketCap"]
-    all_features = tabular_features + embed_cols
+    # --- SELECCIÓN AUTOMÁTICA REAL ---
+    # Identificamos las columnas de control que NO van al modelo
+    control_cols = {"ticker", "Date", "target_7d_up"}
+    
+    # Recorremos el dataframe cruzado (merged) y nos quedamos con:
+    # 1. Las columnas numéricas nuevas calculadas en tu SELECT de DuckDB.
+    # 2. Las columnas emb_0, emb_1... del Grafo.
+    all_features = [col for col in merged.columns if col not in control_cols]
+    
+    print(f"  -> Total features used for training: {len(all_features)}")
+    print(f"  -> Tabular/Graph columns found: {all_features[:5]}... + {len(embed_cols)} embeddings")
+    # ----------------------------------
 
+    # Extraer matrices para Scikit-Learn rellenando nulos del LAG
     X = merged[all_features].fillna(0).values
     y = merged["target_7d_up"].values
     return X, y, merged
@@ -254,12 +299,17 @@ def train_and_evaluate(X, y, merged_df):
     X_test = scaler.transform(X_test)
 
     clf = RandomForestClassifier(
-        n_estimators=100, max_depth=12, min_samples_leaf=5,
-        random_state=SEED, n_jobs=-1
+        n_estimators=150, max_depth=25, min_samples_leaf=2,
+        random_state=SEED, n_jobs=-1, class_weight="balanced",
     )
     print(f"Training on {len(X_train)} records (tabular + {EMBED_DIM}-dim KG embedding)...")
     clf.fit(X_train, y_train)
-    y_pred = clf.predict(X_test)
+    # Reemplaza la sección de predicción en train_and_evaluate por esto:
+    y_prob = clf.predict_proba(X_test)[:, 1]  # Probabilidades de que sea Clase 1
+
+    # Cambia el umbral de decisión (puedes probar entre 0.40 y 0.45)
+    custom_threshold = 0.45  
+    y_pred = (y_prob >= custom_threshold).astype(int)
 
     print(f"\nAccuracy: {accuracy_score(y_test, y_pred):.4f}")
     print("\nClassification Report:")
