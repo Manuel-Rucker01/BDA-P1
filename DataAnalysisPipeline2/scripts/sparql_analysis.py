@@ -11,6 +11,8 @@ Queries:
   Q3 - Intra-sector peer identification (structural graph similarity)
   Q4 - Country economic profile enrichment for US-headquartered sectors
   Q5 - Acquisition volume and total spend per acquiring company
+  Q6 - Large-cap companies in high-volatility sectors that have made NO acquisitions
+  Q7 - Top-3 most-acquisitive companies per sector
 """
 
 import os
@@ -176,6 +178,79 @@ GROUP BY ?ticker
 ORDER BY DESC(?total_acquisitions)
 """
 
+Q6 = f"""
+PREFIX fin: <{FIN_ONTO}>
+ 
+SELECT ?ticker ?sector
+WHERE {{
+    # The candidate companies: large- or mega-cap, in a sector flagged below.
+    ?company a fin:Company ;
+             fin:operatesInSector ?sectorNode ;
+             fin:hasSize          ?sizeNode .
+    FILTER(STRAFTER(STR(?sizeNode), "Size_") IN ("Large_Cap", "Mega_Cap"))
+ 
+    # Sector-level filter via a correlated subquery: keep sectors that have at
+    # least one high-volatility company in them.
+    {{
+        SELECT DISTINCT ?sectorNode WHERE {{
+            ?peer fin:operatesInSector    ?sectorNode ;
+                  fin:hasVolatilityProfile ?volNode .
+            FILTER(STRAFTER(STR(?volNode), "Volatility_") = "High_Volatility")
+        }}
+    }}
+ 
+    # Anti-join: no acquisitions on record for this company.
+    FILTER NOT EXISTS {{ ?company fin:madeAcquisition ?anyAcq }}
+ 
+    BIND(STRAFTER(STR(?company),    "{FIN_ENT}") AS ?ticker)
+    BIND(STRAFTER(STR(?sectorNode), "Sector_")   AS ?sector)
+}}
+ORDER BY ?sector ?ticker
+LIMIT 200
+"""
+
+Q7 = f"""
+PREFIX fin: <{FIN_ONTO}>
+ 
+SELECT ?sector ?ticker ?n_acquisitions
+WHERE {{
+    {{
+        # Per-company acquisition counts.
+        SELECT ?sectorNode ?company (COUNT(?acq) AS ?n_acquisitions)
+        WHERE {{
+            ?company a fin:Company ;
+                     fin:operatesInSector ?sectorNode ;
+                     fin:madeAcquisition  ?acq .
+        }}
+        GROUP BY ?sectorNode ?company
+    }}
+ 
+    # Keep rows where there are FEWER than 3 same-sector companies with more
+    # acquisitions. Equivalent to "rank in top 3".
+    FILTER NOT EXISTS {{
+        SELECT ?sectorNode ?company WHERE {{
+            {{
+                SELECT ?sectorNode ?other (COUNT(?a2) AS ?other_count)
+                WHERE {{
+                    ?other a fin:Company ;
+                           fin:operatesInSector ?sectorNode ;
+                           fin:madeAcquisition  ?a2 .
+                }}
+                GROUP BY ?sectorNode ?other
+            }}
+            FILTER(?other != ?company)
+            FILTER(?other_count > ?n_acquisitions)
+        }}
+        GROUP BY ?sectorNode ?company
+        HAVING(COUNT(?other) >= 3)
+    }}
+ 
+    BIND(STRAFTER(STR(?company),    "{FIN_ENT}") AS ?ticker)
+    BIND(STRAFTER(STR(?sectorNode), "Sector_")   AS ?sector)
+}}
+ORDER BY ?sector DESC(?n_acquisitions)
+"""
+
 
 def run_query(graph, label, sparql, max_rows=20):
     print(f"\n{'='*60}")
@@ -216,6 +291,14 @@ def main():
         fin_g,
         "Q5: Acquisition activity per company (count + total spend)",
         Q5,
+    )
+    run_query(
+        fin_g,
+        "Q6: Large/mega-cap companies in high-volatility sectors with NO acquisitions",
+        Q6,
+    )
+    run_query(
+        fin_g, "Q7: Top-3 most acquisitive companies per sector", Q7
     )
 
 
