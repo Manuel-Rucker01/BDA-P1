@@ -130,27 +130,35 @@ def extract_structural_triples(kg_path: str):
 
 class RotatE(nn.Module):
     """
-    RotatE (Sun et al. 2019): entities live in a complex space, each relation is
-    a rotation in that space. For a triple (h, r, t):
-        score = -|| h ∘ r − t ||
-    where ∘ is element-wise complex multiplication and r has unit modulus.
-    Relation embeddings are parameterised by phases in [-π, π] — guaranteed unit
-    modulus by construction.
+    RotatE (Sun et al. 2019) integrated with a Relational Graph Convolutional Network (R-GCN)
+    refiner. Entities live in a complex space, and are refined by propagating messages over
+    the semantic graph relations via R-GCN before the RotatE scoring distance is computed:
+        score = -|| h_refined ∘ r − t_refined ||
     """
-    def __init__(self, n_entities: int, n_relations: int, dim: int):
+    def __init__(self, n_entities: int, n_relations: int, dim: int, edge_index_list):
         super().__init__()
         self.dim = dim
         # Entities: 2 * dim real values = `dim` complex numbers
         self.ent_emb = nn.Embedding(n_entities, 2 * dim)
         # Relations: stored as phases, dim real values each
         self.rel_phase = nn.Embedding(n_relations, dim)
+        
+        # R-GCN Refiner
+        from rgcn_layer import RGCNRefiner
+        self.refiner = RGCNRefiner(n_entities, n_relations, 2 * dim, 2 * dim)
+        self.edge_index_list = edge_index_list
+        
         bound = 6 / dim**0.5
         nn.init.uniform_(self.ent_emb.weight, -bound, bound)
         nn.init.uniform_(self.rel_phase.weight, -np.pi, np.pi)
 
+    def get_refined_embeddings(self):
+        return self.refiner(self.ent_emb.weight, self.edge_index_list)
+
     def forward(self, h_idx, r_idx, t_idx):
-        h = self.ent_emb(h_idx)
-        t = self.ent_emb(t_idx)
+        refined_emb = self.get_refined_embeddings()
+        h = refined_emb[h_idx]
+        t = refined_emb[t_idx]
         phase = self.rel_phase(r_idx)
 
         h_re, h_im = torch.chunk(h, 2, dim=-1)
@@ -171,9 +179,11 @@ class RotatE(nn.Module):
 
 def train_rotate(triples, ent2id, rel2id):
     print("\n[2/5] Training RotatE model with self-adversarial negative sampling...")
+    from rgcn_layer import build_rgcn_adjacencies
     n_ent = len(ent2id)
     n_rel = len(rel2id)
-    model = RotatE(n_ent, n_rel, EMBED_DIM).to(DEVICE)
+    edge_index_list = build_rgcn_adjacencies(triples, ent2id, rel2id, n_ent, n_rel, DEVICE)
+    model = RotatE(n_ent, n_rel, EMBED_DIM, edge_index_list).to(DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=ROTATE_LR)
 
     h_all = torch.tensor([ent2id[h] for h, _, _ in triples], device=DEVICE)
@@ -256,7 +266,9 @@ def extract_company_embeddings(model, ent2id):
     model.eval()
     company_prefix = str(FIN_ENT)
     results = {}
-    weights = model.ent_emb.weight.detach().cpu().numpy()
+    with torch.no_grad():
+        refined_weights = model.get_refined_embeddings()
+    weights = refined_weights.detach().cpu().numpy()
     embed_dim_real = weights.shape[1]  # 2 * EMBED_DIM
     for uri, idx in ent2id.items():
         local = uri.replace(company_prefix, "")
@@ -419,9 +431,8 @@ def load_observation_features(db_path: str):
 
 
 def load_macro_features(macro_ttl_path: str):
-    """Read GDP and GDP growth per country from the macroeconomic graph and
-    return a dict {country_name: {gdp_usd, gdp_growth_pct}}. Used to attach
-    macroeconomic context to each ticker via its HQ country."""
+    """Read GDP, growth, inflation, and trade per country from the macroeconomic graph and
+    return a DataFrame of features. Used to attach macroeconomic context to each ticker via its HQ country."""
     from rdflib import Graph as RdfGraph, Namespace
     g = RdfGraph()
     g.parse(macro_ttl_path, format="turtle")
@@ -435,11 +446,15 @@ def load_macro_features(macro_ttl_path: str):
         country = str(s).replace(str(macro_ent), "").replace("_", " ")
         gdp = g.value(s, macro_onto.gdpUSD)
         growth = g.value(s, macro_onto.gdpGrowthPercent)
-        if gdp is not None or growth is not None:
+        inflation = g.value(s, macro_onto.inflationPercent)
+        trade = g.value(s, macro_onto.tradePercentOfGDP)
+        if gdp is not None or growth is not None or inflation is not None or trade is not None:
             rows.append({
                 "country": country,
                 "gdp_usd": float(gdp) if gdp is not None else None,
                 "gdp_growth_pct": float(growth) if growth is not None else None,
+                "inflation_pct": float(inflation) if inflation is not None else None,
+                "trade_pct": float(trade) if trade is not None else None,
             })
     return pd.DataFrame(rows)
 
@@ -704,6 +719,17 @@ def evaluate_all(feature_sets, y, merged_df):
                 "time_s": 0.0,
             })
             print(f"  [{feat_name:>17}] SoftVote_Ensemble   acc={soft_acc:.4f}  f1={soft_f1:.4f}  auc={soft_auc:.4f}  (mix of {mix_models})")
+            
+            # Export predictions for backtesting on the combined feature set
+            if feat_name == "tabular+embedding":
+                try:
+                    test_df = merged_df[test_mask].copy()
+                    test_df["pred_proba"] = soft_proba
+                    pred_out_path = os.path.join(EXPLOITATION_DIR, "test_predictions.parquet")
+                    test_df[["ticker", "Date", "company_close", "target_7d_up", "pred_proba"]].to_parquet(pred_out_path, index=False)
+                    print(f"  -> [EXPORT] Saved SoftVote_Ensemble predictions to {pred_out_path} for backtesting")
+                except Exception as e:
+                    print(f"  -> [WARN] Could not export predictions: {e}")
             
             # B. Rank-Average Ensemble (Percentile Rank Average)
             # Extremely robust to model calibration and scale shifts in financial datasets!
