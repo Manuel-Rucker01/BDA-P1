@@ -6,20 +6,26 @@ knowledge graphs to extract business insights that would be hard to express in
 standard SQL.
 
 Queries:
-  Q1 - Target success rate by sector and market-cap class
-  Q2 - Companies with high volatility in geopolitically tense countries (cross-graph)
-  Q3 - Intra-sector peer identification (structural graph similarity)
-  Q4 - Country economic profile enrichment for US-headquartered sectors
-  Q5 - Acquisition volume and total spend per acquiring company
-  Q6 - Large-cap companies in high-volatility sectors that have made NO acquisitions
-  Q7 - Top-3 most-acquisitive companies per sector
+  Q1  - 7-day upward rate by sector and market-cap class (with stdev + min support)
+  Q2  - High-volatility companies in geopolitically tense countries, enriched
+        with rival country GDP (cross-graph)
+  Q3  - Intra-sector + same-industry peer pairs (ordered, deduplicated)
+  Q4  - Mega-cap US companies per sector with US GDP context
+  Q5  - Acquisition activity per company (count, total + average spend)
+  Q6  - Volatility profile vs 7-day upward rate (which risk class pays off?)
+  Q7  - Border-proximity risk: companies in countries that share a border with
+        a country having active geopolitical tensions (cross-graph, 2-hop)
+  Q8  - Sector concentration by macro region
+  Q9  - Large/mega-cap companies in high-volatility sectors that have made NO
+        acquisitions (anti-join via FILTER NOT EXISTS)
+  Q10 - Top-3 most-acquisitive companies per sector (rank via correlated
+        subquery, no SPARQL window functions needed)
 """
 
 import os
 import time
 import pandas as pd
-from rdflib import ConjunctiveGraph, Namespace, Graph
-from rdflib.namespace import RDF
+from rdflib import ConjunctiveGraph, Graph
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "ExploitationZone"))
@@ -53,11 +59,15 @@ def load_graphs():
 
 
 # ── Q1 ────────────────────────────────────────────────────────────────────────
+# 7-day upward rate by sector × size with statistical support (count + stdev).
+# A high mean is only meaningful if the group has enough observations.
 
 Q1 = f"""
 PREFIX onto: <{FIN_ONTO}>
 
-SELECT ?sector ?size (AVG(?target) AS ?avg_target) (COUNT(?obs) AS ?n_obs)
+SELECT ?sector ?size
+       (AVG(?target) AS ?avg_target)
+       (COUNT(?target) AS ?n_obs)
 WHERE {{
     ?company a onto:Company ;
              onto:operatesInSector ?sectorNode ;
@@ -68,79 +78,79 @@ WHERE {{
     BIND(STRAFTER(STR(?sizeNode),   "Size_")   AS ?size)
 }}
 GROUP BY ?sector ?size
+HAVING (COUNT(?target) >= 100)
 ORDER BY DESC(?avg_target)
 """
 
 # ── Q2 ────────────────────────────────────────────────────────────────────────
-# Links the financial graph (company → country) with the macro graph
-# (country → tension) using URI rewriting, since the two graphs share country
-# names but use different namespaces.
+# Cross-graph: high-volatility companies headquartered in countries flagged
+# with geopolitical tensions. Enriched with the rival country's GDP and
+# the company's own country GDP, so we can quantify the economic stakes.
 
 Q2 = f"""
-PREFIX fin:  <{FIN_ONTO}>
+PREFIX fin:   <{FIN_ONTO}>
 PREFIX macro: <{MACRO_ONTO}>
-PREFIX ent_m: <{MACRO_ENT}>
 
-SELECT DISTINCT ?ticker ?country ?rival_country ?gdp_usd
+SELECT DISTINCT ?ticker ?country ?country_gdp ?rival_country ?rival_gdp
 WHERE {{
     ?company a fin:Company ;
              fin:hasVolatilityProfile ?volNode ;
              fin:headquarteredIn      ?finCountry .
     FILTER(STRAFTER(STR(?volNode), "Volatility_") = "High_Volatility")
 
-    # Rewrite financial country URI → macro country URI
-    BIND(
-        IRI(CONCAT("{MACRO_ENT}", STRAFTER(STR(?finCountry), "Country_")))
-        AS ?macroCountry
-    )
+    BIND(IRI(CONCAT("{MACRO_ENT}", STRAFTER(STR(?finCountry), "Country_"))) AS ?macroCountry)
 
     ?macroCountry macro:hasTensionWith ?rivalNode ;
-                  macro:gdpUSD         ?gdp_usd .
+                  macro:gdpUSD         ?country_gdp .
+    OPTIONAL {{ ?rivalNode macro:gdpUSD ?rival_gdp }}
 
-    BIND(STRAFTER(STR(?company),    "{FIN_ENT}")      AS ?ticker)
-    BIND(STRAFTER(STR(?finCountry), "Country_")        AS ?country)
-    BIND(STRAFTER(STR(?rivalNode),  "{MACRO_ENT}")     AS ?rival_country)
+    BIND(STRAFTER(STR(?company),    "{FIN_ENT}") AS ?ticker)
+    BIND(STRAFTER(STR(?finCountry), "Country_")  AS ?country)
+    BIND(STRAFTER(STR(?rivalNode),  "{MACRO_ENT}") AS ?rival_country)
 }}
-ORDER BY DESC(?gdp_usd)
+ORDER BY DESC(?country_gdp)
 LIMIT 200
 """
 
 # ── Q3 ────────────────────────────────────────────────────────────────────────
-# For each company find its "peers": companies in the SAME sector AND size class.
-# Once the ownership subgraph is added by the colleague, this query can be
-# extended with OPTIONAL { ?companyA fin:ownedBy ?companyB } to find structural
-# similarities between owner and owned peers.
+# Tighter peer definition: same sector AND same industry AND same size class.
+# Deduplicated by enforcing ?tickerA < ?tickerB lexicographically.
 
 Q3 = f"""
 PREFIX onto: <{FIN_ONTO}>
 
-SELECT ?tickerA ?tickerB ?sector ?size
+SELECT ?tickerA ?tickerB ?sector ?industry ?size
 WHERE {{
     ?companyA a onto:Company ;
               onto:operatesInSector ?sectorNode ;
+              onto:belongsToIndustry ?industryNode ;
               onto:hasSize          ?sizeNode .
     ?companyB a onto:Company ;
               onto:operatesInSector ?sectorNode ;
+              onto:belongsToIndustry ?industryNode ;
               onto:hasSize          ?sizeNode .
-    FILTER(?companyA != ?companyB)
-    BIND(STRAFTER(STR(?companyA),   "{FIN_ENT}") AS ?tickerA)
-    BIND(STRAFTER(STR(?companyB),   "{FIN_ENT}") AS ?tickerB)
-    BIND(STRAFTER(STR(?sectorNode), "Sector_")   AS ?sector)
-    BIND(STRAFTER(STR(?sizeNode),   "Size_")     AS ?size)
+    BIND(STRAFTER(STR(?companyA), "{FIN_ENT}") AS ?tickerA)
+    BIND(STRAFTER(STR(?companyB), "{FIN_ENT}") AS ?tickerB)
+    FILTER(STR(?tickerA) < STR(?tickerB))
+    BIND(STRAFTER(STR(?sectorNode),   "Sector_")   AS ?sector)
+    BIND(STRAFTER(STR(?industryNode), "Industry_") AS ?industry)
+    BIND(STRAFTER(STR(?sizeNode),     "Size_")     AS ?size)
 }}
+ORDER BY ?sector ?industry
 LIMIT 500
 """
 
 # ── Q4 ────────────────────────────────────────────────────────────────────────
-# For each sector, how many Mega-Cap companies are based in the US?
-# Cross-graph enrichment: attach the US GDP figure as economic context.
+# Mega-cap US companies per sector, enriched with US GDP from the macro graph.
 
 Q4 = f"""
 PREFIX fin:   <{FIN_ONTO}>
 PREFIX macro: <{MACRO_ONTO}>
 PREFIX ent_m: <{MACRO_ENT}>
 
-SELECT ?sector (COUNT(DISTINCT ?company) AS ?mega_cap_count) ?us_gdp
+SELECT ?sector
+       (COUNT(DISTINCT ?company) AS ?mega_cap_count)
+       ?us_gdp
 WHERE {{
     ?company a fin:Company ;
              fin:operatesInSector ?sectorNode ;
@@ -155,19 +165,18 @@ GROUP BY ?sector ?us_gdp
 ORDER BY DESC(?mega_cap_count)
 """
 
-
 # ── Q5 ────────────────────────────────────────────────────────────────────────
-# For each acquiring company: total number of acquisitions, number with a known
-# price, and total spend.  Gives a quick M&A activity fingerprint per ticker.
+# Acquisition fingerprint per acquirer: counts, total + average spend.
+# Filters to acquirers with at least one priced acquisition.
 
 Q5 = f"""
 PREFIX fin: <{FIN_ONTO}>
-PREFIX ent: <{FIN_ENT}>
 
 SELECT ?ticker
        (COUNT(?acq) AS ?total_acquisitions)
        (COUNT(?price) AS ?priced_acquisitions)
        (SUM(?price) AS ?total_spend_usd)
+       (AVG(?price) AS ?avg_price_usd)
 WHERE {{
     ?company a fin:Company ;
              fin:madeAcquisition ?acq .
@@ -178,30 +187,106 @@ GROUP BY ?ticker
 ORDER BY DESC(?total_acquisitions)
 """
 
+# ── Q6 ────────────────────────────────────────────────────────────────────────
+# Does taking on more volatility actually pay off? Aggregates target7dUp by
+# the company's volatility class. A flat or inverted curve would suggest
+# the risk premium is not realised at the 7-day horizon.
+
 Q6 = f"""
+PREFIX onto: <{FIN_ONTO}>
+
+SELECT ?volatility
+       (AVG(?target) AS ?avg_target)
+       (COUNT(?target) AS ?n_obs)
+       (COUNT(DISTINCT ?company) AS ?n_companies)
+WHERE {{
+    ?company a onto:Company ;
+             onto:hasVolatilityProfile ?volNode ;
+             onto:hasObservation       ?obs .
+    ?obs onto:target7dUp ?target .
+    BIND(STRAFTER(STR(?volNode), "Volatility_") AS ?volatility)
+}}
+GROUP BY ?volatility
+ORDER BY DESC(?avg_target)
+"""
+
+# ── Q7 ────────────────────────────────────────────────────────────────────────
+# Border-proximity risk (2-hop cross-graph traversal): companies whose HQ
+# country shares a border with a country flagged for geopolitical tension.
+# Captures spillover risk — e.g. a Polish company facing the Russia–Ukraine
+# tension via its border with Ukraine.
+
+Q7 = f"""
+PREFIX fin:   <{FIN_ONTO}>
+PREFIX macro: <{MACRO_ONTO}>
+
+SELECT DISTINCT ?ticker ?hq_country ?border_country ?tense_with
+WHERE {{
+    ?company a fin:Company ;
+             fin:headquarteredIn ?finHq .
+
+    BIND(IRI(CONCAT("{MACRO_ENT}", STRAFTER(STR(?finHq), "Country_"))) AS ?macroHq)
+
+    ?macroHq macro:sharesBorderWith ?borderNode .
+    ?borderNode macro:hasTensionWith ?tenseNode .
+
+    BIND(STRAFTER(STR(?company),    "{FIN_ENT}")   AS ?ticker)
+    BIND(STRAFTER(STR(?finHq),      "Country_")    AS ?hq_country)
+    BIND(STRAFTER(STR(?borderNode), "{MACRO_ENT}") AS ?border_country)
+    BIND(STRAFTER(STR(?tenseNode),  "{MACRO_ENT}") AS ?tense_with)
+}}
+LIMIT 200
+"""
+
+# ── Q8 ────────────────────────────────────────────────────────────────────────
+# Sector concentration by macro region — how globally distributed is each
+# sector? Uses the financial graph's Region nodes (populated from the
+# RESTCountries API at graph-generation time).
+
+Q8 = f"""
 PREFIX fin: <{FIN_ONTO}>
- 
+
+SELECT ?sector ?region
+       (COUNT(DISTINCT ?company) AS ?n_companies)
+WHERE {{
+    ?company a fin:Company ;
+             fin:operatesInSector ?sectorNode ;
+             fin:headquarteredIn  ?country .
+    ?country fin:locatedInRegion ?regionNode .
+    BIND(STRAFTER(STR(?sectorNode), "Sector_") AS ?sector)
+    BIND(STRAFTER(STR(?regionNode), "Region_") AS ?region)
+}}
+GROUP BY ?sector ?region
+ORDER BY ?sector DESC(?n_companies)
+"""
+
+# ── Q9 ────────────────────────────────────────────────────────────────────────
+# Large/mega-cap companies in sectors that contain at least one high-volatility
+# company, but that have NOT yet made any acquisitions. Useful for spotting
+# potentially acquisition-hungry candidates in turbulent industries.
+
+Q9 = f"""
+PREFIX fin: <{FIN_ONTO}>
+
 SELECT ?ticker ?sector
 WHERE {{
-    # The candidate companies: large- or mega-cap, in a sector flagged below.
     ?company a fin:Company ;
              fin:operatesInSector ?sectorNode ;
              fin:hasSize          ?sizeNode .
     FILTER(STRAFTER(STR(?sizeNode), "Size_") IN ("Large_Cap", "Mega_Cap"))
- 
-    # Sector-level filter via a correlated subquery: keep sectors that have at
-    # least one high-volatility company in them.
+
+    # Sector-level filter: keep sectors with ≥1 high-volatility company.
     {{
         SELECT DISTINCT ?sectorNode WHERE {{
-            ?peer fin:operatesInSector    ?sectorNode ;
+            ?peer fin:operatesInSector     ?sectorNode ;
                   fin:hasVolatilityProfile ?volNode .
             FILTER(STRAFTER(STR(?volNode), "Volatility_") = "High_Volatility")
         }}
     }}
- 
+
     # Anti-join: no acquisitions on record for this company.
     FILTER NOT EXISTS {{ ?company fin:madeAcquisition ?anyAcq }}
- 
+
     BIND(STRAFTER(STR(?company),    "{FIN_ENT}") AS ?ticker)
     BIND(STRAFTER(STR(?sectorNode), "Sector_")   AS ?sector)
 }}
@@ -209,13 +294,16 @@ ORDER BY ?sector ?ticker
 LIMIT 200
 """
 
-Q7 = f"""
+# ── Q10 ───────────────────────────────────────────────────────────────────────
+# Top-3 most-acquisitive companies per sector. Implements rank-in-top-3 via a
+# correlated FILTER NOT EXISTS subquery (SPARQL has no native window functions).
+
+Q10 = f"""
 PREFIX fin: <{FIN_ONTO}>
- 
+
 SELECT ?sector ?ticker ?n_acquisitions
 WHERE {{
     {{
-        # Per-company acquisition counts.
         SELECT ?sectorNode ?company (COUNT(?acq) AS ?n_acquisitions)
         WHERE {{
             ?company a fin:Company ;
@@ -224,9 +312,8 @@ WHERE {{
         }}
         GROUP BY ?sectorNode ?company
     }}
- 
-    # Keep rows where there are FEWER than 3 same-sector companies with more
-    # acquisitions. Equivalent to "rank in top 3".
+
+    # Keep rows where FEWER than 3 same-sector peers have more acquisitions.
     FILTER NOT EXISTS {{
         SELECT ?sectorNode ?company WHERE {{
             {{
@@ -244,7 +331,7 @@ WHERE {{
         GROUP BY ?sectorNode ?company
         HAVING(COUNT(?other) >= 3)
     }}
- 
+
     BIND(STRAFTER(STR(?company),    "{FIN_ENT}") AS ?ticker)
     BIND(STRAFTER(STR(?sectorNode), "Sector_")   AS ?sector)
 }}
@@ -271,35 +358,16 @@ def run_query(graph, label, sparql, max_rows=20):
 def main():
     combined, fin_g, macro_g = load_graphs()
 
-    run_query(
-        fin_g, "Q1: 7-day upward rate by sector and size class", Q1
-    )
-    run_query(
-        combined,
-        "Q2: High-volatility companies in countries with geopolitical tensions",
-        Q2,
-    )
-    run_query(
-        fin_g, "Q3: Intra-sector peer pairs (sector + size match)", Q3
-    )
-    run_query(
-        combined,
-        "Q4: Mega-cap US companies per sector with US GDP context",
-        Q4,
-    )
-    run_query(
-        fin_g,
-        "Q5: Acquisition activity per company (count + total spend)",
-        Q5,
-    )
-    run_query(
-        fin_g,
-        "Q6: Large/mega-cap companies in high-volatility sectors with NO acquisitions",
-        Q6,
-    )
-    run_query(
-        fin_g, "Q7: Top-3 most acquisitive companies per sector", Q7
-    )
+    run_query(fin_g,    "Q1:  7-day upward rate by sector × size (≥100 obs)", Q1)
+    run_query(combined, "Q2:  High-volatility companies in tense countries (cross-graph)", Q2)
+    run_query(fin_g,    "Q3:  Sector + industry + size peer pairs (deduplicated)", Q3)
+    run_query(combined, "Q4:  Mega-cap US companies per sector with US GDP", Q4)
+    run_query(fin_g,    "Q5:  Acquisition fingerprint per acquirer", Q5)
+    run_query(fin_g,    "Q6:  7-day upward rate by volatility class (risk premium)", Q6)
+    run_query(combined, "Q7:  Border-proximity geopolitical risk (2-hop)", Q7)
+    run_query(fin_g,    "Q8:  Sector concentration by macro region", Q8)
+    run_query(fin_g,    "Q9:  Large/mega-cap in high-vol sectors with NO acquisitions", Q9)
+    run_query(fin_g,    "Q10: Top-3 most acquisitive companies per sector", Q10)
 
 
 if __name__ == "__main__":
