@@ -48,6 +48,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "ExploitationZone"))
 FIN_KG_PATH = os.path.join(EXPLOITATION_DIR, "financial_knowledge_graph.ttl")
+MACRO_KG_PATH = os.path.join(EXPLOITATION_DIR, "macroeconomic_graph.ttl")
 DB_PATH = os.path.join(EXPLOITATION_DIR, "ExploitationZone.duckdb")
 EMBED_OUT_PATH = os.path.join(EXPLOITATION_DIR, "company_embeddings.parquet")
 
@@ -279,54 +280,184 @@ def extract_company_embeddings(model, ent2id):
 
 # ── Step 4: Join with DuckDB observation data ─────────────────────────────────
 
+def compute_rsi(series, period=14):
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1/period, min_periods=period).mean()
+    avg_loss = loss.ewm(alpha=1/period, min_periods=period).mean()
+    rs = avg_gain / avg_loss.replace(0, 1e-9)
+    return 100 - (100 / (1 + rs))
+
+def compute_macd(series, span_fast=12, span_slow=26):
+    ema_fast = series.ewm(span=span_fast, adjust=False).mean()
+    ema_slow = series.ewm(span=span_slow, adjust=False).mean()
+    return ema_fast - ema_slow
+
+def compute_macd_signal(macd_series, span_signal=9):
+    return macd_series.ewm(span=span_signal, adjust=False).mean()
+
 def load_observation_features(db_path: str):
+    """Per-observation feature builder. Every feature is *strictly past* — uses
+    only ROWS BETWEEN N PRECEDING AND CURRENT ROW and PARTITION BY Date for
+    cross-sectional rank, so there is no leak from the LEAD(close, 7)
+    that builds target_7d_up."""
     print("\n[4/5] Loading per-observation features from DuckDB...")
     conn = duckdb.connect(db_path, read_only=True)
     df = conn.execute("""
         WITH base AS (
             SELECT
-                Symbol AS ticker, Date, target_7d_up, Sector,
+                Symbol AS ticker, Date, target_7d_up, Sector, Industry,
                 LOG(NULLIF(MarketCap, 0)) AS log_market_cap,
                 eur_rate, jpy_rate, company_close, company_volume,
 
-                -- Lagged price / momentum
+                -- 1-day return (reversal signal)
                 (company_close - LAG(company_close, 1) OVER (PARTITION BY Symbol ORDER BY Date)) /
                     NULLIF(LAG(company_close, 1) OVER (PARTITION BY Symbol ORDER BY Date), 0) AS daily_return,
 
+                -- Multi-window cumulative returns (momentum signal)
+                (company_close - LAG(company_close, 5)  OVER (PARTITION BY Symbol ORDER BY Date)) /
+                    NULLIF(LAG(company_close, 5)  OVER (PARTITION BY Symbol ORDER BY Date), 0) AS return_5d,
+                (company_close - LAG(company_close, 10) OVER (PARTITION BY Symbol ORDER BY Date)) /
+                    NULLIF(LAG(company_close, 10) OVER (PARTITION BY Symbol ORDER BY Date), 0) AS return_10d,
+                (company_close - LAG(company_close, 20) OVER (PARTITION BY Symbol ORDER BY Date)) /
+                    NULLIF(LAG(company_close, 20) OVER (PARTITION BY Symbol ORDER BY Date), 0) AS return_20d,
+                (company_close - LAG(company_close, 50) OVER (PARTITION BY Symbol ORDER BY Date)) /
+                    NULLIF(LAG(company_close, 50) OVER (PARTITION BY Symbol ORDER BY Date), 0) AS return_50d,
+
+                -- Price vs short / long moving averages
                 (company_close - AVG(company_close) OVER (PARTITION BY Symbol ORDER BY Date
                     ROWS BETWEEN 5 PRECEDING AND CURRENT ROW)) /
                     NULLIF(AVG(company_close) OVER (PARTITION BY Symbol ORDER BY Date
                     ROWS BETWEEN 5 PRECEDING AND CURRENT ROW), 0) AS price_vs_ma5,
+                (company_close - AVG(company_close) OVER (PARTITION BY Symbol ORDER BY Date
+                    ROWS BETWEEN 20 PRECEDING AND CURRENT ROW)) /
+                    NULLIF(AVG(company_close) OVER (PARTITION BY Symbol ORDER BY Date
+                    ROWS BETWEEN 20 PRECEDING AND CURRENT ROW), 0) AS price_vs_ma20,
 
+                -- Stochastic-style position-in-range: where in the past 20-day
+                -- high-low band is today's close? 0 = at the low, 1 = at the
+                -- high.
+                (company_close - MIN(company_close) OVER (PARTITION BY Symbol ORDER BY Date
+                    ROWS BETWEEN 20 PRECEDING AND CURRENT ROW)) /
+                    NULLIF(MAX(company_close) OVER (PARTITION BY Symbol ORDER BY Date
+                    ROWS BETWEEN 20 PRECEDING AND CURRENT ROW)
+                         - MIN(company_close) OVER (PARTITION BY Symbol ORDER BY Date
+                    ROWS BETWEEN 20 PRECEDING AND CURRENT ROW), 0) AS stoch_20d,
+
+                -- Volume features
                 company_volume / NULLIF(AVG(company_volume) OVER (PARTITION BY Symbol ORDER BY Date
                     ROWS BETWEEN 5 PRECEDING AND CURRENT ROW), 0) AS volume_ratio,
 
+                -- Multi-window rolling volatility
                 STDDEV(company_close) OVER (PARTITION BY Symbol ORDER BY Date
-                    ROWS BETWEEN 10 PRECEDING AND CURRENT ROW) AS rolling_volatility_10d
+                    ROWS BETWEEN 5 PRECEDING AND CURRENT ROW)  AS rolling_volatility_5d,
+                STDDEV(company_close) OVER (PARTITION BY Symbol ORDER BY Date
+                    ROWS BETWEEN 10 PRECEDING AND CURRENT ROW) AS rolling_volatility_10d,
+                STDDEV(company_close) OVER (PARTITION BY Symbol ORDER BY Date
+                    ROWS BETWEEN 20 PRECEDING AND CURRENT ROW) AS rolling_volatility_20d,
+
+                -- Calendar features (DuckDB EXTRACT)
+                EXTRACT(DOW   FROM Date) AS day_of_week,
+                EXTRACT(MONTH FROM Date) AS month_of_year
             FROM master_dataset
             WHERE target_7d_up IS NOT NULL
+        ),
+        enriched AS (
+            SELECT
+                base.*,
+                -- Volatility-adjusted return: pure-alpha proxy, removes the
+                -- mechanical scaling of vol with return.
+                daily_return / NULLIF(rolling_volatility_10d, 0) AS vol_adjusted_return,
+
+                -- Volume z-score on a 20-day window
+                (company_volume - AVG(company_volume) OVER (PARTITION BY ticker ORDER BY Date
+                    ROWS BETWEEN 20 PRECEDING AND CURRENT ROW)) /
+                    NULLIF(STDDEV(company_volume) OVER (PARTITION BY ticker ORDER BY Date
+                    ROWS BETWEEN 20 PRECEDING AND CURRENT ROW), 0) AS volume_zscore_20d,
+
+                -- Cross-sectional sector momentum (same Date, same Sector)
+                AVG(daily_return) OVER (PARTITION BY Sector, Date) AS sector_daily_return,
+                AVG(return_5d)    OVER (PARTITION BY Sector, Date) AS sector_return_5d,
+
+                -- Cross-sectional ranks WITHIN each Date — robust to scale
+                -- shifts and often dominates raw values for stock prediction.
+                -- PERCENT_RANK is in [0, 1], 0 = lowest, 1 = highest.
+                PERCENT_RANK() OVER (PARTITION BY Date ORDER BY daily_return)    AS rank_daily_return,
+                PERCENT_RANK() OVER (PARTITION BY Date ORDER BY return_5d)       AS rank_return_5d,
+                PERCENT_RANK() OVER (PARTITION BY Date ORDER BY return_20d)      AS rank_return_20d,
+                PERCENT_RANK() OVER (PARTITION BY Date ORDER BY rolling_volatility_10d) AS rank_volatility,
+                PERCENT_RANK() OVER (PARTITION BY Date ORDER BY volume_ratio)    AS rank_volume_ratio
+            FROM base
         )
-        SELECT
-            base.*,
-
-            -- Volatility-adjusted return: pure-alpha proxy, removes the
-            -- mechanical scaling of vol with return.
-            daily_return / NULLIF(rolling_volatility_10d, 0) AS vol_adjusted_return,
-
-            -- Volume z-score on a 20-day window
-            (company_volume - AVG(company_volume) OVER (PARTITION BY ticker ORDER BY Date
-                ROWS BETWEEN 20 PRECEDING AND CURRENT ROW)) /
-                NULLIF(STDDEV(company_volume) OVER (PARTITION BY ticker ORDER BY Date
-                ROWS BETWEEN 20 PRECEDING AND CURRENT ROW), 0) AS volume_zscore_20d,
-
-            -- Sector momentum: average daily_return across same-sector peers
-            -- on the same date (uses only same-day data, no future leak).
-            AVG(daily_return) OVER (PARTITION BY Sector, Date) AS sector_daily_return
-        FROM base
-        ORDER BY ticker, Date
+        SELECT * FROM enriched ORDER BY ticker, Date
     """).df()
     conn.close()
+
+    # --- Pandas-based advanced technical indicators ---
+    print("  -> Computing advanced technical indicators (RSI-14, MACD, BB Width, Lags)...")
+    df = df.sort_values(["ticker", "Date"]).reset_index(drop=True)
+    
+    df['rsi_14'] = df.groupby('ticker')['company_close'].transform(lambda x: compute_rsi(x, 14)).fillna(50)
+    
+    df['macd'] = df.groupby('ticker')['company_close'].transform(lambda x: compute_macd(x, 12, 26)).fillna(0)
+    df['macd_signal'] = df.groupby('ticker')['macd'].transform(lambda x: compute_macd_signal(x, 9)).fillna(0)
+    
+    df['bb_mean'] = df.groupby('ticker')['company_close'].transform(lambda x: x.rolling(window=20, min_periods=1).mean())
+    df['bb_std'] = df.groupby('ticker')['company_close'].transform(lambda x: x.rolling(window=20, min_periods=1).std())
+    df['bb_width'] = (4 * df['bb_std']) / df['bb_mean'].replace(0, 1e-9)
+    df['bb_width'] = df['bb_width'].fillna(0)
+    df = df.drop(columns=['bb_mean', 'bb_std'])
+    
+    # Lagged features (daily_return and volume_ratio lags)
+    for lag in [1, 2, 5]:
+        df[f'daily_return_lag_{lag}'] = df.groupby('ticker')['daily_return'].shift(lag).fillna(0)
+        df[f'volume_ratio_lag_{lag}'] = df.groupby('ticker')['volume_ratio'].shift(lag).fillna(1.0)
+
     print(f"  -> Loaded {len(df)} observations for {df['ticker'].nunique()} tickers")
+    return df
+
+
+def load_macro_features(macro_ttl_path: str):
+    """Read GDP and GDP growth per country from the macroeconomic graph and
+    return a dict {country_name: {gdp_usd, gdp_growth_pct}}. Used to attach
+    macroeconomic context to each ticker via its HQ country."""
+    from rdflib import Graph as RdfGraph, Namespace
+    g = RdfGraph()
+    g.parse(macro_ttl_path, format="turtle")
+    macro_onto = Namespace("http://bda.upc.edu/macro/ontology#")
+    macro_ent = Namespace("http://bda.upc.edu/macro/resource/")
+
+    rows = []
+    for s in set(g.subjects()):
+        if not str(s).startswith(str(macro_ent)):
+            continue
+        country = str(s).replace(str(macro_ent), "").replace("_", " ")
+        gdp = g.value(s, macro_onto.gdpUSD)
+        growth = g.value(s, macro_onto.gdpGrowthPercent)
+        if gdp is not None or growth is not None:
+            rows.append({
+                "country": country,
+                "gdp_usd": float(gdp) if gdp is not None else None,
+                "gdp_growth_pct": float(growth) if growth is not None else None,
+            })
+    return pd.DataFrame(rows)
+
+
+def attach_macro_features(df_obs, db_path: str, macro_ttl_path: str):
+    """Join GDP and GDP growth onto each row via the TrustedZone `companies`
+    table (which carries each ticker's resolved HQ country)."""
+    conn = duckdb.connect(os.path.abspath(os.path.join(
+        os.path.dirname(db_path), "..", "TrustedZone", "TrustedZone.duckdb")),
+        read_only=True)
+    companies = conn.execute("SELECT Symbol AS ticker, country FROM companies").df()
+    conn.close()
+    macro = load_macro_features(macro_ttl_path)
+
+    df = df_obs.merge(companies, on="ticker", how="left")
+    df = df.merge(macro, on="country", how="left")
+    # Drop the country string — categorical, encoded indirectly via gdp
+    df = df.drop(columns=["country"])
     return df
 
 
@@ -351,13 +482,16 @@ def build_feature_matrices(df_obs, company_embeddings, embed_dim_real):
           f"variance retained = {pca.explained_variance_ratio_.sum():.3f}")
 
     merged = df_obs.merge(emb_df_reduced, on="ticker", how="inner")
+    # STRICT TEMPORAL ALIGNMENT BUG FIX: Sort by Date to align all datasets before extracting arrays
+    merged = merged.sort_values("Date").reset_index(drop=True)
     print(f"  -> {len(merged)} observations after embedding join "
           f"({len(df_obs) - len(merged)} dropped — no structural data)")
 
-    control_cols = {"ticker", "Date", "target_7d_up", "Sector",
+    control_cols = {"ticker", "Date", "target_7d_up", "Sector", "Industry",
                     "company_close", "company_volume"}
     tabular_cols = [c for c in merged.columns
-                    if c not in control_cols and c not in pca_cols]
+                    if c not in control_cols and c not in pca_cols
+                    and pd.api.types.is_numeric_dtype(merged[c])]
 
     X_tab = merged[tabular_cols].fillna(0).values.astype(np.float32)
     X_emb = merged[pca_cols].fillna(0).values.astype(np.float32)
@@ -390,16 +524,19 @@ def make_base_models():
     }
     try:
         from catboost import CatBoostClassifier
+        # Reduced depth to 4 to prevent overfitting on noisy stock data
         models["CatBoost"] = CatBoostClassifier(
-            iterations=500, depth=8, learning_rate=0.05,
+            iterations=1000, depth=4, learning_rate=0.02,
             random_seed=SEED, verbose=0, auto_class_weights="Balanced",
         )
     except ImportError:
         print("  [skip] catboost not installed")
     try:
         from xgboost import XGBClassifier
+        # Reduced max_depth to 4 and added subsampling to control variance
         models["XGBoost"] = XGBClassifier(
-            n_estimators=500, max_depth=8, learning_rate=0.05,
+            n_estimators=1000, max_depth=4, learning_rate=0.02,
+            subsample=0.8, colsample_bytree=0.8,
             random_state=SEED, n_jobs=-1, eval_metric="logloss",
             tree_method="hist",
         )
@@ -407,9 +544,11 @@ def make_base_models():
         print("  [skip] xgboost not installed")
     try:
         from lightgbm import LGBMClassifier
+        # Reduced num_leaves/max_depth and added bagging/subsampling
         models["LightGBM"] = LGBMClassifier(
-            n_estimators=500, max_depth=-1, num_leaves=63,
-            learning_rate=0.05, random_state=SEED, n_jobs=-1,
+            n_estimators=1000, max_depth=4, num_leaves=15,
+            learning_rate=0.02, subsample=0.8, colsample_bytree=0.8,
+            random_state=SEED, n_jobs=-1,
             class_weight="balanced", verbose=-1,
         )
     except ImportError:
@@ -435,50 +574,109 @@ def make_stacking_model(base_models):
     )
 
 
-def _eval_one(model, X_train_s, y_train, X_test_s, y_test):
-    model.fit(X_train_s, y_train)
-    y_pred = model.predict(X_test_s)
-    if hasattr(model, "predict_proba"):
-        y_proba = model.predict_proba(X_test_s)[:, 1]
+def fit_with_early_stopping(model, X_train_s, y_train, model_name):
+    # For early stopping on boosting models, split training into 90% train and 10% validation temporally
+    val_split = int(len(X_train_s) * 0.9)
+    X_tr, X_val = X_train_s[:val_split], X_train_s[val_split:]
+    y_tr, y_val = y_train[:val_split], y_train[val_split:]
+    
+    if model_name == "CatBoost":
+        model.fit(X_tr, y_tr, eval_set=(X_val, y_val), early_stopping_rounds=50, verbose=0)
+    elif model_name == "XGBoost":
+        try:
+            model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], early_stopping_rounds=50, verbose=False)
+        except TypeError:
+            try:
+                import xgboost as xgb
+                model.fit(
+                    X_tr, y_tr, 
+                    eval_set=[(X_val, y_val)], 
+                    callbacks=[xgb.callback.EarlyStopping(rounds=50, save_best=True)], 
+                    verbose=False
+                )
+            except Exception:
+                model.fit(X_train_s, y_train)
+    elif model_name == "LightGBM":
+        try:
+            import lightgbm
+            model.fit(
+                X_tr, y_tr, 
+                eval_set=[(X_val, y_val)], 
+                callbacks=[lightgbm.early_stopping(stopping_rounds=50, verbose=False)]
+            )
+        except Exception:
+            model.fit(X_train_s, y_train)
     else:
-        y_proba = y_pred.astype(float)
-    return (
-        accuracy_score(y_test, y_pred),
-        f1_score(y_test, y_pred, average="binary", zero_division=0),
-        roc_auc_score(y_test, y_proba) if len(np.unique(y_test)) > 1 else float("nan"),
-    )
+        # Standard fit for RF, MLP
+        model.fit(X_train_s, y_train)
 
 
 def evaluate_all(feature_sets, y, merged_df):
     print("\n" + "=" * 72)
-    print("  Multi-Model Comparison (Tabular vs KG-Embedding vs Combined)")
+    print("  Multi-Model Comparison with Advanced Ensembling & Leakage Prevention")
     print("=" * 72)
 
+    # 1. TEMPORAL split WITH EMBARGO (leakage prevention)
+    # Target 7d horizon means we must discard the first 7 days of the test set
     merged_df = merged_df.sort_values("Date").reset_index(drop=True)
-    split = int(len(merged_df) * 0.8)
-    y_train, y_test = y[:split], y[split:]
-    print(f"Train: {len(y_train)}  Test: {len(y_test)}  "
-          f"Test positive rate: {y_test.mean():.3f}")
+    
+    # 80/20 index split point
+    split_idx = int(len(merged_df) * 0.8)
+    split_date = merged_df.iloc[split_idx]["Date"]
+    split_date_dt = pd.to_datetime(split_date)
+    
+    # Embargo date: split_date + 7 days
+    embargo_date = split_date_dt + pd.Timedelta(days=7)
+    
+    # Define masks
+    train_mask = merged_df["Date"] < split_date
+    test_mask = pd.to_datetime(merged_df["Date"]) >= embargo_date
+    
+    print(f"Split Date: {split_date}  -> Test Embargo Date: {embargo_date.strftime('%Y-%m-%d')}")
+    print(f"Initial split counts - Train: {train_mask.sum()}  Test (Un-embargoed): {len(merged_df) - train_mask.sum()}")
+    print(f"Final split counts   - Train: {train_mask.sum()}  Test (With 7d Embargo): {test_mask.sum()}  "
+          f"(Dropped {len(merged_df) - train_mask.sum() - test_mask.sum()} overlapping boundary rows)")
 
     results = []
 
     for feat_name, X_full in feature_sets.items():
-        X_train, X_test = X_full[:split], X_full[split:]
+        X_train = X_full[train_mask]
+        X_test = X_full[test_mask]
+        y_train = y[train_mask]
+        y_test = y[test_mask]
+        
         scaler = StandardScaler()
         X_train_s = scaler.fit_transform(X_train)
         X_test_s = scaler.transform(X_test)
 
         base_models = make_base_models()
-        # Add a stacking ensemble — only meaningful with enough base learners
+        # Add standard Stack ensemble
         stack = make_stacking_model(base_models)
         if stack is not None:
             base_models["Stack"] = stack
 
+        # Store test probability predictions for custom ensembles
+        test_probas = {}
+
         for model_name, model in base_models.items():
             t0 = time.time()
             try:
-                acc, f1, auc = _eval_one(model, X_train_s, y_train, X_test_s, y_test)
+                # Fit model (boosting models use early stopping via temporal validation)
+                fit_with_early_stopping(model, X_train_s, y_train, model_name)
+                
+                # Predict
+                y_pred = model.predict(X_test_s)
+                if hasattr(model, "predict_proba"):
+                    y_proba = model.predict_proba(X_test_s)[:, 1]
+                    test_probas[model_name] = y_proba
+                else:
+                    y_proba = y_pred.astype(float)
+                
+                acc = accuracy_score(y_test, y_pred)
+                f1 = f1_score(y_test, y_pred, average="binary", zero_division=0)
+                auc = roc_auc_score(y_test, y_proba) if len(np.unique(y_test)) > 1 else float("nan")
                 elapsed = time.time() - t0
+                
                 results.append({
                     "feature_set": feat_name, "model": model_name,
                     "accuracy": acc, "f1": f1, "roc_auc": auc,
@@ -488,6 +686,41 @@ def evaluate_all(feature_sets, y, merged_df):
                       f"acc={acc:.4f}  f1={f1:.4f}  auc={auc:.4f}  ({elapsed:.1f}s)")
             except Exception as e:
                 print(f"  [{feat_name:>17}] {model_name:<13}  FAILED: {e}")
+
+        # --- 2. Advanced Ensemble Mixtures ---
+        # Only mix if we have at least 2 successful boosting models/RandomForest
+        mix_models = [m for m in ["CatBoost", "XGBoost", "LightGBM", "RandomForest"] if m in test_probas]
+        if len(mix_models) >= 2:
+            # A. Soft-Voting (Raw Probability Average)
+            soft_proba = np.mean([test_probas[m] for m in mix_models], axis=0)
+            soft_pred = (soft_proba >= 0.5).astype(int)
+            soft_acc = accuracy_score(y_test, soft_pred)
+            soft_f1 = f1_score(y_test, soft_pred, average="binary", zero_division=0)
+            soft_auc = roc_auc_score(y_test, soft_proba)
+            
+            results.append({
+                "feature_set": feat_name, "model": "SoftVote_Ensemble",
+                "accuracy": soft_acc, "f1": soft_f1, "roc_auc": soft_auc,
+                "time_s": 0.0,
+            })
+            print(f"  [{feat_name:>17}] SoftVote_Ensemble   acc={soft_acc:.4f}  f1={soft_f1:.4f}  auc={soft_auc:.4f}  (mix of {mix_models})")
+            
+            # B. Rank-Average Ensemble (Percentile Rank Average)
+            # Extremely robust to model calibration and scale shifts in financial datasets!
+            rank_matrix = np.column_stack([pd.Series(test_probas[m]).rank(pct=True).values for m in mix_models])
+            rank_avg = np.mean(rank_matrix, axis=1)
+            # Threshold rank at median (0.5) to make binary prediction
+            rank_pred = (rank_avg >= 0.5).astype(int)
+            rank_acc = accuracy_score(y_test, rank_pred)
+            rank_f1 = f1_score(y_test, rank_pred, average="binary", zero_division=0)
+            rank_auc = roc_auc_score(y_test, rank_avg)
+            
+            results.append({
+                "feature_set": feat_name, "model": "RankAvg_Ensemble",
+                "accuracy": rank_acc, "f1": rank_f1, "roc_auc": rank_auc,
+                "time_s": 0.0,
+            })
+            print(f"  [{feat_name:>17}] RankAvg_Ensemble    acc={rank_acc:.4f}  f1={rank_f1:.4f}  auc={rank_auc:.4f}  (mix of {mix_models})")
 
     print("\n" + "=" * 72)
     print("Summary (sorted by ROC-AUC):")
@@ -510,6 +743,7 @@ def main():
     model = train_rotate(triples, ent2id, rel2id)
     company_embeddings, embed_dim_real = extract_company_embeddings(model, ent2id)
     df_obs = load_observation_features(DB_PATH)
+    df_obs = attach_macro_features(df_obs, DB_PATH, MACRO_KG_PATH)
     feature_sets, y, merged = build_feature_matrices(df_obs, company_embeddings, embed_dim_real)
     evaluate_all(feature_sets, y, merged)
 
