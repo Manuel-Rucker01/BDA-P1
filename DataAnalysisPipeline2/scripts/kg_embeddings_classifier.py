@@ -448,13 +448,15 @@ def load_macro_features(macro_ttl_path: str):
         growth = g.value(s, macro_onto.gdpGrowthPercent)
         inflation = g.value(s, macro_onto.inflationPercent)
         trade = g.value(s, macro_onto.tradePercentOfGDP)
-        if gdp is not None or growth is not None or inflation is not None or trade is not None:
+        interest = g.value(s, macro_onto.interestRatePercent)
+        if gdp is not None or growth is not None or inflation is not None or trade is not None or interest is not None:
             rows.append({
                 "country": country,
                 "gdp_usd": float(gdp) if gdp is not None else None,
                 "gdp_growth_pct": float(growth) if growth is not None else None,
                 "inflation_pct": float(inflation) if inflation is not None else None,
                 "trade_pct": float(trade) if trade is not None else None,
+                "interest_rate_pct": float(interest) if interest is not None else None,
             })
     return pd.DataFrame(rows)
 
@@ -520,7 +522,7 @@ def build_feature_matrices(df_obs, company_embeddings, embed_dim_real):
     }
     print(f"  -> Tabular cols ({len(tabular_cols)}): {tabular_cols}")
     print(f"  -> KG-PCA cols ({len(pca_cols)}): {pca_cols}")
-    return feature_sets, y, merged
+    return feature_sets, y, merged, pca, tabular_cols, pca_cols
 
 
 # ── Step 6: Multi-model comparison + stacking ─────────────────────────────────
@@ -626,7 +628,7 @@ def fit_with_early_stopping(model, X_train_s, y_train, model_name):
         model.fit(X_train_s, y_train)
 
 
-def evaluate_all(feature_sets, y, merged_df):
+def evaluate_all(feature_sets, y, merged_df, pca=None, tabular_cols=None, pca_cols=None, company_embeddings=None):
     print("\n" + "=" * 72)
     print("  Multi-Model Comparison with Advanced Ensembling & Leakage Prevention")
     print("=" * 72)
@@ -730,6 +732,25 @@ def evaluate_all(feature_sets, y, merged_df):
                     print(f"  -> [EXPORT] Saved SoftVote_Ensemble predictions to {pred_out_path} for backtesting")
                 except Exception as e:
                     print(f"  -> [WARN] Could not export predictions: {e}")
+                
+                # Pickle best model ensemble, scaler, PCA, and metadata
+                try:
+                    import pickle
+                    best_model_path = os.path.join(EXPLOITATION_DIR, "best_model.pkl")
+                    serial_data = {
+                        "trained_models": base_models,
+                        "mix_models": mix_models,
+                        "scaler": scaler,
+                        "pca": pca,
+                        "tabular_cols": tabular_cols,
+                        "pca_cols": pca_cols,
+                        "company_embeddings": company_embeddings,
+                    }
+                    with open(best_model_path, "wb") as f:
+                        pickle.dump(serial_data, f)
+                    print(f"  -> [EXPORT] Saved best ensemble model & metadata to {best_model_path}")
+                except Exception as e:
+                    print(f"  -> [WARN] Could not pickle best ensemble model: {e}")
             
             # B. Rank-Average Ensemble (Percentile Rank Average)
             # Extremely robust to model calibration and scale shifts in financial datasets!
@@ -770,8 +791,8 @@ def main():
     company_embeddings, embed_dim_real = extract_company_embeddings(model, ent2id)
     df_obs = load_observation_features(DB_PATH)
     df_obs = attach_macro_features(df_obs, DB_PATH, MACRO_KG_PATH)
-    feature_sets, y, merged = build_feature_matrices(df_obs, company_embeddings, embed_dim_real)
-    evaluate_all(feature_sets, y, merged)
+    feature_sets, y, merged, pca, tabular_cols, pca_cols = build_feature_matrices(df_obs, company_embeddings, embed_dim_real)
+    evaluate_all(feature_sets, y, merged, pca=pca, tabular_cols=tabular_cols, pca_cols=pca_cols, company_embeddings=company_embeddings)
 
 
 if __name__ == "__main__":

@@ -448,3 +448,635 @@ Denial Constraints Applied:
   ]
 }
 2026-05-17 23:23:07,570 - INFO - Closing down clientserver connection
+2026-05-21 23:36:05,862 - INFO - ================================================================================
+2026-05-21 23:36:05,862 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-21 23:36:05,862 - INFO - ================================================================================
+2026-05-21 23:36:05,863 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-21 23:36:05,863 - INFO - Initializing Spark session...
+2026-05-21 23:36:06,603 - ERROR - Error initializing Spark: [JAVA_GATEWAY_EXITED] Java gateway process exited before sending its port number.
+2026-05-21 23:36:06,603 - ERROR - 
+================================================================================
+2026-05-21 23:36:06,603 - ERROR - PIPELINE EXECUTION FAILED!
+2026-05-21 23:36:06,603 - ERROR - ================================================================================
+2026-05-21 23:36:06,603 - ERROR - Error: [JAVA_GATEWAY_EXITED] Java gateway process exited before sending its port number.
+Traceback (most recent call last):
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 464, in main
+    spark = initialize_spark()
+            ^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 73, in initialize_spark
+    .getOrCreate()
+     ^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/.pyenv/versions/3.12.9/lib/python3.12/site-packages/pyspark/sql/session.py", line 557, in getOrCreate
+    sc = SparkContext.getOrCreate(sparkConf)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/.pyenv/versions/3.12.9/lib/python3.12/site-packages/pyspark/core/context.py", line 542, in getOrCreate
+    SparkContext(conf=conf or SparkConf())
+  File "/Users/manuelruckerabella/.pyenv/versions/3.12.9/lib/python3.12/site-packages/pyspark/core/context.py", line 206, in __init__
+    SparkContext._ensure_initialized(self, gateway=gateway, conf=conf)
+  File "/Users/manuelruckerabella/.pyenv/versions/3.12.9/lib/python3.12/site-packages/pyspark/core/context.py", line 463, in _ensure_initialized
+    SparkContext._gateway = gateway or launch_gateway(conf)
+                                       ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/.pyenv/versions/3.12.9/lib/python3.12/site-packages/pyspark/java_gateway.py", line 111, in launch_gateway
+    raise PySparkRuntimeError(
+pyspark.errors.exceptions.base.PySparkRuntimeError: [JAVA_GATEWAY_EXITED] Java gateway process exited before sending its port number.
+2026-05-21 23:38:48,304 - INFO - ================================================================================
+2026-05-21 23:38:48,304 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-21 23:38:48,304 - INFO - ================================================================================
+2026-05-21 23:38:48,304 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-21 23:38:48,304 - INFO - Initializing Spark session...
+2026-05-21 23:38:48,728 - ERROR - Error initializing Spark: [JAVA_GATEWAY_EXITED] Java gateway process exited before sending its port number.
+2026-05-21 23:38:48,729 - ERROR - 
+================================================================================
+2026-05-21 23:38:48,729 - ERROR - PIPELINE EXECUTION FAILED!
+2026-05-21 23:38:48,729 - ERROR - ================================================================================
+2026-05-21 23:38:48,729 - ERROR - Error: [JAVA_GATEWAY_EXITED] Java gateway process exited before sending its port number.
+Traceback (most recent call last):
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 464, in main
+    spark = initialize_spark()
+            ^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 73, in initialize_spark
+    .getOrCreate()
+     ^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/.pyenv/versions/3.12.9/lib/python3.12/site-packages/pyspark/sql/session.py", line 557, in getOrCreate
+    sc = SparkContext.getOrCreate(sparkConf)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/.pyenv/versions/3.12.9/lib/python3.12/site-packages/pyspark/core/context.py", line 542, in getOrCreate
+    SparkContext(conf=conf or SparkConf())
+  File "/Users/manuelruckerabella/.pyenv/versions/3.12.9/lib/python3.12/site-packages/pyspark/core/context.py", line 206, in __init__
+    SparkContext._ensure_initialized(self, gateway=gateway, conf=conf)
+  File "/Users/manuelruckerabella/.pyenv/versions/3.12.9/lib/python3.12/site-packages/pyspark/core/context.py", line 463, in _ensure_initialized
+    SparkContext._gateway = gateway or launch_gateway(conf)
+                                       ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/.pyenv/versions/3.12.9/lib/python3.12/site-packages/pyspark/java_gateway.py", line 111, in launch_gateway
+    raise PySparkRuntimeError(
+pyspark.errors.exceptions.base.PySparkRuntimeError: [JAVA_GATEWAY_EXITED] Java gateway process exited before sending its port number.
+2026-05-22 01:23:27,454 - INFO - ================================================================================
+2026-05-22 01:23:27,454 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-22 01:23:27,454 - INFO - ================================================================================
+2026-05-22 01:23:27,454 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-22 01:23:27,454 - INFO - Initializing Spark session...
+2026-05-22 01:23:27,878 - ERROR - Error initializing Spark: [JAVA_GATEWAY_EXITED] Java gateway process exited before sending its port number.
+2026-05-22 01:23:27,878 - ERROR - 
+================================================================================
+2026-05-22 01:23:27,878 - ERROR - PIPELINE EXECUTION FAILED!
+2026-05-22 01:23:27,878 - ERROR - ================================================================================
+2026-05-22 01:23:27,878 - ERROR - Error: [JAVA_GATEWAY_EXITED] Java gateway process exited before sending its port number.
+Traceback (most recent call last):
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 464, in main
+    spark = initialize_spark()
+            ^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/dataQuality.py", line 73, in initialize_spark
+    .getOrCreate()
+     ^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/.pyenv/versions/3.12.9/lib/python3.12/site-packages/pyspark/sql/session.py", line 557, in getOrCreate
+    sc = SparkContext.getOrCreate(sparkConf)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/.pyenv/versions/3.12.9/lib/python3.12/site-packages/pyspark/core/context.py", line 542, in getOrCreate
+    SparkContext(conf=conf or SparkConf())
+  File "/Users/manuelruckerabella/.pyenv/versions/3.12.9/lib/python3.12/site-packages/pyspark/core/context.py", line 206, in __init__
+    SparkContext._ensure_initialized(self, gateway=gateway, conf=conf)
+  File "/Users/manuelruckerabella/.pyenv/versions/3.12.9/lib/python3.12/site-packages/pyspark/core/context.py", line 463, in _ensure_initialized
+    SparkContext._gateway = gateway or launch_gateway(conf)
+                                       ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/manuelruckerabella/.pyenv/versions/3.12.9/lib/python3.12/site-packages/pyspark/java_gateway.py", line 111, in launch_gateway
+    raise PySparkRuntimeError(
+pyspark.errors.exceptions.base.PySparkRuntimeError: [JAVA_GATEWAY_EXITED] Java gateway process exited before sending its port number.
+2026-05-22 01:25:52,102 - INFO - ================================================================================
+2026-05-22 01:25:52,102 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-22 01:25:52,102 - INFO - ================================================================================
+2026-05-22 01:25:52,102 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-22 01:25:52,102 - INFO - Initializing Spark session...
+2026-05-22 01:25:56,427 - INFO - Spark session initialized successfully
+2026-05-22 01:25:56,427 - INFO - 
+[2/5] Preparing TrustedZone database...
+2026-05-22 01:25:56,427 - INFO - Preparing DuckDB database at /Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/TrustedZone.duckdb...
+2026-05-22 01:25:56,450 - INFO - Database prepared successfully - existing tables cleared
+2026-05-22 01:25:56,451 - INFO - 
+[3/5] Extracting and applying Denial Constraints (Spark-based)...
+2026-05-22 01:25:56,451 - INFO - 
+Extracting and filtering data using Spark architecture...
+2026-05-22 01:25:56,458 - INFO -   Reading data from FormattedZone...
+2026-05-22 01:25:56,601 - INFO -   NASDAQ: 3426 rows
+2026-05-22 01:25:56,601 - INFO -   Company History: 481133 rows
+2026-05-22 01:25:56,601 - INFO -   Exchange: 71 rows
+2026-05-22 01:25:56,601 - INFO -   S&P 500: 98 rows
+2026-05-22 01:25:56,601 - INFO -   Forbes Employers: 700 rows
+2026-05-22 01:25:56,601 - INFO -   Company Acquisitions: 1455 rows
+2026-05-22 01:25:56,601 - INFO - 
+Defining Denial Constraints with Spark SQL...
+2026-05-22 01:25:59,351 - INFO -   Defining constraints for all datasets in Spark SQL
+2026-05-22 01:25:59,626 - INFO - 
+Applying Denial Constraints using Pandas execution...
+2026-05-22 01:25:59,626 - INFO -   Applying NASDAQ constraints...
+2026-05-22 01:25:59,628 - INFO -   Applying Company History constraints...
+2026-05-22 01:25:59,671 - INFO -   Applying Exchange constraints...
+2026-05-22 01:25:59,672 - INFO -   Applying S&P 500 constraints...
+2026-05-22 01:25:59,672 - INFO -   Applying Forbes Employers constraints...
+2026-05-22 01:25:59,672 - INFO -   Applying Company Acquisitions constraints...
+2026-05-22 01:25:59,679 - INFO - 
+Constraints applied successfully!
+2026-05-22 01:25:59,679 - INFO -   Nasdaq: 3426 rows after filtering (0.00% removed)
+2026-05-22 01:25:59,679 - INFO -   Company History: 481027 rows after filtering (0.02% removed)
+2026-05-22 01:25:59,679 - INFO -   Us Exchange: 71 rows after filtering (0.00% removed)
+2026-05-22 01:25:59,679 - INFO -   Sp500 Companies: 98 rows after filtering (0.00% removed)
+2026-05-22 01:25:59,679 - INFO -   Forbes Employers: 700 rows after filtering (0.00% removed)
+2026-05-22 01:25:59,679 - INFO -   Company Acquisitions: 891 rows after filtering (38.76% removed)
+2026-05-22 01:25:59,679 - INFO - 
+[4/5] Writing cleaned data to TrustedZone...
+2026-05-22 01:25:59,679 - INFO - 
+Writing cleaned data to TrustedZone DuckDB...
+2026-05-22 01:25:59,687 - INFO -   Writing Nasdaq data...
+2026-05-22 01:25:59,700 - INFO -   Nasdaq: 3426 rows written
+2026-05-22 01:25:59,700 - INFO -   Writing Company History data...
+2026-05-22 01:25:59,908 - INFO -   Company_History: 481027 rows written
+2026-05-22 01:25:59,908 - INFO -   Writing Us Exchange data...
+2026-05-22 01:25:59,910 - INFO -   Us_Exchange: 71 rows written
+2026-05-22 01:25:59,910 - INFO -   Writing Sp500 Companies data...
+2026-05-22 01:25:59,912 - INFO -   Sp500_Companies: 98 rows written
+2026-05-22 01:25:59,912 - INFO -   Writing Forbes Employers data...
+2026-05-22 01:25:59,914 - INFO -   Forbes_Employers: 700 rows written
+2026-05-22 01:25:59,914 - INFO -   Writing Company Acquisitions data...
+2026-05-22 01:25:59,916 - INFO -   Company_Acquisitions: 891 rows written
+2026-05-22 01:25:59,916 - INFO -   Writing data quality metrics...
+2026-05-22 01:25:59,918 - INFO -   Creating enriched companies table with resolved country...
+2026-05-22 01:25:59,958 - INFO -   companies: 3426 rows written (22 non-US companies resolved)
+2026-05-22 01:26:00,004 - INFO - Data successfully written to Trusted Zone!
+2026-05-22 01:26:00,004 - INFO - 
+[5/5] Validating and verifying TrustedZone...
+2026-05-22 01:26:00,012 - INFO - 
+Validating cleaned data...
+2026-05-22 01:26:00,013 - INFO -   Nasdaq data validation passed
+2026-05-22 01:26:00,014 - INFO -   Company_History data validation passed
+2026-05-22 01:26:00,014 - INFO -   Us_Exchange data validation passed
+2026-05-22 01:26:00,014 - INFO -   Sp500_Companies data validation passed
+2026-05-22 01:26:00,014 - INFO -   Forbes_Employers data validation passed
+2026-05-22 01:26:00,014 - INFO -   Company_Acquisitions data validation passed
+2026-05-22 01:26:00,015 - INFO - 
+Verifying TrustedZone database integrity...
+2026-05-22 01:26:00,026 - INFO -   company_history: 481027 rows
+2026-05-22 01:26:00,026 - INFO -   nasdaq: 3426 rows
+2026-05-22 01:26:00,026 - INFO -   us_exchange: 71 rows
+2026-05-22 01:26:00,026 - INFO -   company_acquisitions: 891 rows
+2026-05-22 01:26:00,026 - INFO -   companies: 3426 rows
+2026-05-22 01:26:00,027 - INFO -   forbes_employers: 700 rows
+2026-05-22 01:26:00,027 - INFO -   sp500_companies: 98 rows
+2026-05-22 01:26:00,028 - INFO - TrustedZone database verification passed
+2026-05-22 01:26:00,215 - INFO - Spark session stopped
+2026-05-22 01:26:00,215 - INFO - 
+================================================================================
+2026-05-22 01:26:00,216 - INFO - PIPELINE EXECUTION COMPLETED SUCCESSFULLY!
+2026-05-22 01:26:00,216 - INFO - ================================================================================
+2026-05-22 01:26:00,216 - INFO - 
+TrustedZone database created at: /Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/TrustedZone.duckdb
+2026-05-22 01:26:00,216 - INFO - Processing Engine: Apache Spark
+2026-05-22 01:26:00,216 - INFO - Validation passed: True
+2026-05-22 01:26:00,216 - INFO - Database verified: True
+2026-05-22 01:26:00,216 - INFO - 
+Denial Constraints Applied:
+2026-05-22 01:26:00,216 - INFO - {
+  "nasdaq": [
+    "Symbol NOT NULL",
+    "Name NOT NULL",
+    "LastSale >= 0 OR NULL",
+    "MarketCap >= 0 OR NULL",
+    "IPOyear <= 2026"
+  ],
+  "company_history": [
+    "Date NOT NULL",
+    "High >= Low",
+    "Volume >= 0",
+    "Open >= 0 OR NULL",
+    "Close >= 0 OR NULL",
+    "Company record count > 1"
+  ],
+  "us_exchange": [
+    "Date NOT NULL",
+    "EUR > 0",
+    "JPY > 0"
+  ],
+  "sp500_companies": [
+    "Ticker NOT NULL",
+    "Name NOT NULL",
+    "MarketCap >= 0 OR NULL",
+    "Employees >= 0 OR NULL"
+  ],
+  "forbes_employers": [
+    "company NOT NULL",
+    "rank > 0",
+    "publish_year <= 2026 OR NULL"
+  ],
+  "company_acquisitions": [
+    "Parent Company NOT NULL",
+    "Acquired Company NOT NULL",
+    "Parent Company IN canonical acquirer set",
+    "Acquisition Year BETWEEN 1900 AND 2026 OR NULL",
+    "Acquisition Price >= 0 OR NULL"
+  ]
+}
+2026-05-22 01:26:00,217 - INFO - Closing down clientserver connection
+2026-05-22 20:37:39,298 - INFO - ================================================================================
+2026-05-22 20:37:39,299 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-22 20:37:39,299 - INFO - ================================================================================
+2026-05-22 20:37:39,299 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-22 20:37:39,299 - INFO - Initializing Spark session...
+2026-05-22 20:37:43,856 - INFO - Spark session initialized successfully
+2026-05-22 20:37:43,856 - INFO - 
+[2/5] Preparing TrustedZone database...
+2026-05-22 20:37:43,856 - INFO - Preparing DuckDB database at /Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/TrustedZone.duckdb...
+2026-05-22 20:37:43,869 - INFO - Database prepared successfully - existing tables cleared
+2026-05-22 20:37:43,869 - INFO - 
+[3/5] Extracting and applying Denial Constraints (Spark-based)...
+2026-05-22 20:37:43,869 - INFO - 
+Extracting and filtering data using Spark architecture...
+2026-05-22 20:37:43,877 - INFO -   Reading data from FormattedZone...
+2026-05-22 20:37:44,017 - INFO -   NASDAQ: 3426 rows
+2026-05-22 20:37:44,017 - INFO -   Company History: 481133 rows
+2026-05-22 20:37:44,017 - INFO -   Exchange: 71 rows
+2026-05-22 20:37:44,017 - INFO -   S&P 500: 98 rows
+2026-05-22 20:37:44,017 - INFO -   Forbes Employers: 700 rows
+2026-05-22 20:37:44,017 - INFO -   Company Acquisitions: 1455 rows
+2026-05-22 20:37:44,017 - INFO - 
+Defining Denial Constraints with Spark SQL...
+2026-05-22 20:37:48,220 - INFO -   Defining constraints for all datasets in Spark SQL
+2026-05-22 20:37:48,687 - INFO - 
+Applying Denial Constraints using Pandas execution...
+2026-05-22 20:37:48,687 - INFO -   Applying NASDAQ constraints...
+2026-05-22 20:37:48,688 - INFO -   Applying Company History constraints...
+2026-05-22 20:37:48,757 - INFO -   Applying Exchange constraints...
+2026-05-22 20:37:48,758 - INFO -   Applying S&P 500 constraints...
+2026-05-22 20:37:48,759 - INFO -   Applying Forbes Employers constraints...
+2026-05-22 20:37:48,760 - INFO -   Applying Company Acquisitions constraints...
+2026-05-22 20:37:48,765 - INFO - 
+Constraints applied successfully!
+2026-05-22 20:37:48,765 - INFO -   Nasdaq: 3426 rows after filtering (0.00% removed)
+2026-05-22 20:37:48,765 - INFO -   Company History: 481027 rows after filtering (0.02% removed)
+2026-05-22 20:37:48,765 - INFO -   Us Exchange: 71 rows after filtering (0.00% removed)
+2026-05-22 20:37:48,765 - INFO -   Sp500 Companies: 98 rows after filtering (0.00% removed)
+2026-05-22 20:37:48,765 - INFO -   Forbes Employers: 700 rows after filtering (0.00% removed)
+2026-05-22 20:37:48,765 - INFO -   Company Acquisitions: 891 rows after filtering (38.76% removed)
+2026-05-22 20:37:48,765 - INFO - 
+[4/5] Writing cleaned data to TrustedZone...
+2026-05-22 20:37:48,766 - INFO - 
+Writing cleaned data to TrustedZone DuckDB...
+2026-05-22 20:37:48,772 - INFO -   Writing Nasdaq data...
+2026-05-22 20:37:48,781 - INFO -   Nasdaq: 3426 rows written
+2026-05-22 20:37:48,781 - INFO -   Writing Company History data...
+2026-05-22 20:37:49,034 - INFO -   Company_History: 481027 rows written
+2026-05-22 20:37:49,035 - INFO -   Writing Us Exchange data...
+2026-05-22 20:37:49,038 - INFO -   Us_Exchange: 71 rows written
+2026-05-22 20:37:49,038 - INFO -   Writing Sp500 Companies data...
+2026-05-22 20:37:49,039 - INFO -   Sp500_Companies: 98 rows written
+2026-05-22 20:37:49,040 - INFO -   Writing Forbes Employers data...
+2026-05-22 20:37:49,042 - INFO -   Forbes_Employers: 700 rows written
+2026-05-22 20:37:49,042 - INFO -   Writing Company Acquisitions data...
+2026-05-22 20:37:49,044 - INFO -   Company_Acquisitions: 891 rows written
+2026-05-22 20:37:49,044 - INFO -   Writing data quality metrics...
+2026-05-22 20:37:49,047 - INFO -   Creating enriched companies table with resolved country...
+2026-05-22 20:37:49,087 - INFO -   companies: 3426 rows written (22 non-US companies resolved)
+2026-05-22 20:37:49,134 - INFO - Data successfully written to Trusted Zone!
+2026-05-22 20:37:49,134 - INFO - 
+[5/5] Validating and verifying TrustedZone...
+2026-05-22 20:37:49,142 - INFO - 
+Validating cleaned data...
+2026-05-22 20:37:49,143 - INFO -   Nasdaq data validation passed
+2026-05-22 20:37:49,144 - INFO -   Company_History data validation passed
+2026-05-22 20:37:49,144 - INFO -   Us_Exchange data validation passed
+2026-05-22 20:37:49,145 - INFO -   Sp500_Companies data validation passed
+2026-05-22 20:37:49,145 - INFO -   Forbes_Employers data validation passed
+2026-05-22 20:37:49,145 - INFO -   Company_Acquisitions data validation passed
+2026-05-22 20:37:49,146 - INFO - 
+Verifying TrustedZone database integrity...
+2026-05-22 20:37:49,156 - INFO -   company_acquisitions: 891 rows
+2026-05-22 20:37:49,156 - INFO -   forbes_employers: 700 rows
+2026-05-22 20:37:49,157 - INFO -   company_history: 481027 rows
+2026-05-22 20:37:49,157 - INFO -   nasdaq: 3426 rows
+2026-05-22 20:37:49,157 - INFO -   us_exchange: 71 rows
+2026-05-22 20:37:49,157 - INFO -   sp500_companies: 98 rows
+2026-05-22 20:37:49,157 - INFO -   companies: 3426 rows
+2026-05-22 20:37:49,158 - INFO - TrustedZone database verification passed
+2026-05-22 20:37:49,448 - INFO - Spark session stopped
+2026-05-22 20:37:49,448 - INFO - 
+================================================================================
+2026-05-22 20:37:49,448 - INFO - PIPELINE EXECUTION COMPLETED SUCCESSFULLY!
+2026-05-22 20:37:49,448 - INFO - ================================================================================
+2026-05-22 20:37:49,448 - INFO - 
+TrustedZone database created at: /Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/TrustedZone.duckdb
+2026-05-22 20:37:49,448 - INFO - Processing Engine: Apache Spark
+2026-05-22 20:37:49,448 - INFO - Validation passed: True
+2026-05-22 20:37:49,448 - INFO - Database verified: True
+2026-05-22 20:37:49,448 - INFO - 
+Denial Constraints Applied:
+2026-05-22 20:37:49,448 - INFO - {
+  "nasdaq": [
+    "Symbol NOT NULL",
+    "Name NOT NULL",
+    "LastSale >= 0 OR NULL",
+    "MarketCap >= 0 OR NULL",
+    "IPOyear <= 2026"
+  ],
+  "company_history": [
+    "Date NOT NULL",
+    "High >= Low",
+    "Volume >= 0",
+    "Open >= 0 OR NULL",
+    "Close >= 0 OR NULL",
+    "Company record count > 1"
+  ],
+  "us_exchange": [
+    "Date NOT NULL",
+    "EUR > 0",
+    "JPY > 0"
+  ],
+  "sp500_companies": [
+    "Ticker NOT NULL",
+    "Name NOT NULL",
+    "MarketCap >= 0 OR NULL",
+    "Employees >= 0 OR NULL"
+  ],
+  "forbes_employers": [
+    "company NOT NULL",
+    "rank > 0",
+    "publish_year <= 2026 OR NULL"
+  ],
+  "company_acquisitions": [
+    "Parent Company NOT NULL",
+    "Acquired Company NOT NULL",
+    "Parent Company IN canonical acquirer set",
+    "Acquisition Year BETWEEN 1900 AND 2026 OR NULL",
+    "Acquisition Price >= 0 OR NULL"
+  ]
+}
+2026-05-22 20:37:49,452 - INFO - Closing down clientserver connection
+2026-05-22 21:08:51,798 - INFO - ================================================================================
+2026-05-22 21:08:51,798 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-22 21:08:51,798 - INFO - ================================================================================
+2026-05-22 21:08:51,798 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-22 21:08:51,798 - INFO - Initializing Spark session...
+2026-05-22 21:08:53,538 - INFO - Spark session initialized successfully
+2026-05-22 21:08:53,538 - INFO - 
+[2/5] Preparing TrustedZone database...
+2026-05-22 21:08:53,538 - INFO - Preparing DuckDB database at /Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/TrustedZone.duckdb...
+2026-05-22 21:08:53,547 - INFO - Database prepared successfully - existing tables cleared
+2026-05-22 21:08:53,547 - INFO - 
+[3/5] Extracting and applying Denial Constraints (Spark-based)...
+2026-05-22 21:08:53,547 - INFO - 
+Extracting and filtering data using Spark architecture...
+2026-05-22 21:08:53,551 - INFO -   Reading data from FormattedZone...
+2026-05-22 21:08:53,598 - INFO -   NASDAQ: 3426 rows
+2026-05-22 21:08:53,598 - INFO -   Company History: 481133 rows
+2026-05-22 21:08:53,598 - INFO -   Exchange: 71 rows
+2026-05-22 21:08:53,598 - INFO -   S&P 500: 98 rows
+2026-05-22 21:08:53,599 - INFO -   Forbes Employers: 700 rows
+2026-05-22 21:08:53,599 - INFO -   Company Acquisitions: 1455 rows
+2026-05-22 21:08:53,599 - INFO - 
+Defining Denial Constraints with Spark SQL...
+2026-05-22 21:08:54,965 - INFO -   Defining constraints for all datasets in Spark SQL
+2026-05-22 21:08:55,134 - INFO - 
+Applying Denial Constraints using Pandas execution...
+2026-05-22 21:08:55,134 - INFO -   Applying NASDAQ constraints...
+2026-05-22 21:08:55,135 - INFO -   Applying Company History constraints...
+2026-05-22 21:08:55,154 - INFO -   Applying Exchange constraints...
+2026-05-22 21:08:55,154 - INFO -   Applying S&P 500 constraints...
+2026-05-22 21:08:55,154 - INFO -   Applying Forbes Employers constraints...
+2026-05-22 21:08:55,155 - INFO -   Applying Company Acquisitions constraints...
+2026-05-22 21:08:55,157 - INFO - 
+Constraints applied successfully!
+2026-05-22 21:08:55,157 - INFO -   Nasdaq: 3426 rows after filtering (0.00% removed)
+2026-05-22 21:08:55,157 - INFO -   Company History: 481027 rows after filtering (0.02% removed)
+2026-05-22 21:08:55,157 - INFO -   Us Exchange: 71 rows after filtering (0.00% removed)
+2026-05-22 21:08:55,157 - INFO -   Sp500 Companies: 98 rows after filtering (0.00% removed)
+2026-05-22 21:08:55,157 - INFO -   Forbes Employers: 700 rows after filtering (0.00% removed)
+2026-05-22 21:08:55,157 - INFO -   Company Acquisitions: 891 rows after filtering (38.76% removed)
+2026-05-22 21:08:55,157 - INFO - 
+[4/5] Writing cleaned data to TrustedZone...
+2026-05-22 21:08:55,157 - INFO - 
+Writing cleaned data to TrustedZone DuckDB...
+2026-05-22 21:08:55,160 - INFO -   Writing Nasdaq data...
+2026-05-22 21:08:55,164 - INFO -   Nasdaq: 3426 rows written
+2026-05-22 21:08:55,164 - INFO -   Writing Company History data...
+2026-05-22 21:08:55,280 - INFO -   Company_History: 481027 rows written
+2026-05-22 21:08:55,280 - INFO -   Writing Us Exchange data...
+2026-05-22 21:08:55,281 - INFO -   Us_Exchange: 71 rows written
+2026-05-22 21:08:55,281 - INFO -   Writing Sp500 Companies data...
+2026-05-22 21:08:55,282 - INFO -   Sp500_Companies: 98 rows written
+2026-05-22 21:08:55,282 - INFO -   Writing Forbes Employers data...
+2026-05-22 21:08:55,283 - INFO -   Forbes_Employers: 700 rows written
+2026-05-22 21:08:55,283 - INFO -   Writing Company Acquisitions data...
+2026-05-22 21:08:55,284 - INFO -   Company_Acquisitions: 891 rows written
+2026-05-22 21:08:55,285 - INFO -   Writing data quality metrics...
+2026-05-22 21:08:55,286 - INFO -   Creating enriched companies table with resolved country...
+2026-05-22 21:08:55,305 - INFO -   companies: 3426 rows written (22 non-US companies resolved)
+2026-05-22 21:08:55,336 - INFO - Data successfully written to Trusted Zone!
+2026-05-22 21:08:55,336 - INFO - 
+[5/5] Validating and verifying TrustedZone...
+2026-05-22 21:08:55,341 - INFO - 
+Validating cleaned data...
+2026-05-22 21:08:55,342 - INFO -   Nasdaq data validation passed
+2026-05-22 21:08:55,342 - INFO -   Company_History data validation passed
+2026-05-22 21:08:55,342 - INFO -   Us_Exchange data validation passed
+2026-05-22 21:08:55,342 - INFO -   Sp500_Companies data validation passed
+2026-05-22 21:08:55,343 - INFO -   Forbes_Employers data validation passed
+2026-05-22 21:08:55,343 - INFO -   Company_Acquisitions data validation passed
+2026-05-22 21:08:55,343 - INFO - 
+Verifying TrustedZone database integrity...
+2026-05-22 21:08:55,348 - INFO -   company_acquisitions: 891 rows
+2026-05-22 21:08:55,348 - INFO -   companies: 3426 rows
+2026-05-22 21:08:55,349 - INFO -   us_exchange: 71 rows
+2026-05-22 21:08:55,349 - INFO -   company_history: 481027 rows
+2026-05-22 21:08:55,349 - INFO -   forbes_employers: 700 rows
+2026-05-22 21:08:55,349 - INFO -   sp500_companies: 98 rows
+2026-05-22 21:08:55,349 - INFO -   nasdaq: 3426 rows
+2026-05-22 21:08:55,349 - INFO - TrustedZone database verification passed
+2026-05-22 21:08:55,462 - INFO - Spark session stopped
+2026-05-22 21:08:55,462 - INFO - 
+================================================================================
+2026-05-22 21:08:55,462 - INFO - PIPELINE EXECUTION COMPLETED SUCCESSFULLY!
+2026-05-22 21:08:55,462 - INFO - ================================================================================
+2026-05-22 21:08:55,462 - INFO - 
+TrustedZone database created at: /Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/TrustedZone.duckdb
+2026-05-22 21:08:55,462 - INFO - Processing Engine: Apache Spark
+2026-05-22 21:08:55,462 - INFO - Validation passed: True
+2026-05-22 21:08:55,462 - INFO - Database verified: True
+2026-05-22 21:08:55,462 - INFO - 
+Denial Constraints Applied:
+2026-05-22 21:08:55,462 - INFO - {
+  "nasdaq": [
+    "Symbol NOT NULL",
+    "Name NOT NULL",
+    "LastSale >= 0 OR NULL",
+    "MarketCap >= 0 OR NULL",
+    "IPOyear <= 2026"
+  ],
+  "company_history": [
+    "Date NOT NULL",
+    "High >= Low",
+    "Volume >= 0",
+    "Open >= 0 OR NULL",
+    "Close >= 0 OR NULL",
+    "Company record count > 1"
+  ],
+  "us_exchange": [
+    "Date NOT NULL",
+    "EUR > 0",
+    "JPY > 0"
+  ],
+  "sp500_companies": [
+    "Ticker NOT NULL",
+    "Name NOT NULL",
+    "MarketCap >= 0 OR NULL",
+    "Employees >= 0 OR NULL"
+  ],
+  "forbes_employers": [
+    "company NOT NULL",
+    "rank > 0",
+    "publish_year <= 2026 OR NULL"
+  ],
+  "company_acquisitions": [
+    "Parent Company NOT NULL",
+    "Acquired Company NOT NULL",
+    "Parent Company IN canonical acquirer set",
+    "Acquisition Year BETWEEN 1900 AND 2026 OR NULL",
+    "Acquisition Price >= 0 OR NULL"
+  ]
+}
+2026-05-22 21:08:55,462 - INFO - Closing down clientserver connection
+2026-05-23 13:44:19,159 - INFO - ================================================================================
+2026-05-23 13:44:19,159 - INFO - TRUSTEDZONE DATA QUALITY PIPELINE (Apache Spark)
+2026-05-23 13:44:19,159 - INFO - ================================================================================
+2026-05-23 13:44:19,159 - INFO - 
+[1/5] Initializing Spark Session...
+2026-05-23 13:44:19,159 - INFO - Initializing Spark session...
+2026-05-23 13:44:21,005 - INFO - Spark session initialized successfully
+2026-05-23 13:44:21,005 - INFO - 
+[2/5] Preparing TrustedZone database...
+2026-05-23 13:44:21,005 - INFO - Preparing DuckDB database at /Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/TrustedZone.duckdb...
+2026-05-23 13:44:21,014 - INFO - Database prepared successfully - existing tables cleared
+2026-05-23 13:44:21,014 - INFO - 
+[3/5] Extracting and applying Denial Constraints (Spark-based)...
+2026-05-23 13:44:21,014 - INFO - 
+Extracting and filtering data using Spark architecture...
+2026-05-23 13:44:21,018 - INFO -   Reading data from FormattedZone...
+2026-05-23 13:44:21,065 - INFO -   NASDAQ: 3426 rows
+2026-05-23 13:44:21,065 - INFO -   Company History: 481133 rows
+2026-05-23 13:44:21,065 - INFO -   Exchange: 71 rows
+2026-05-23 13:44:21,065 - INFO -   S&P 500: 98 rows
+2026-05-23 13:44:21,065 - INFO -   Forbes Employers: 700 rows
+2026-05-23 13:44:21,065 - INFO -   Company Acquisitions: 1455 rows
+2026-05-23 13:44:21,065 - INFO - 
+Defining Denial Constraints with Spark SQL...
+2026-05-23 13:44:22,374 - INFO -   Defining constraints for all datasets in Spark SQL
+2026-05-23 13:44:22,521 - INFO - 
+Applying Denial Constraints using Pandas execution...
+2026-05-23 13:44:22,521 - INFO -   Applying NASDAQ constraints...
+2026-05-23 13:44:22,522 - INFO -   Applying Company History constraints...
+2026-05-23 13:44:22,541 - INFO -   Applying Exchange constraints...
+2026-05-23 13:44:22,542 - INFO -   Applying S&P 500 constraints...
+2026-05-23 13:44:22,542 - INFO -   Applying Forbes Employers constraints...
+2026-05-23 13:44:22,542 - INFO -   Applying Company Acquisitions constraints...
+2026-05-23 13:44:22,544 - INFO - 
+Constraints applied successfully!
+2026-05-23 13:44:22,544 - INFO -   Nasdaq: 3426 rows after filtering (0.00% removed)
+2026-05-23 13:44:22,544 - INFO -   Company History: 481027 rows after filtering (0.02% removed)
+2026-05-23 13:44:22,544 - INFO -   Us Exchange: 71 rows after filtering (0.00% removed)
+2026-05-23 13:44:22,544 - INFO -   Sp500 Companies: 98 rows after filtering (0.00% removed)
+2026-05-23 13:44:22,544 - INFO -   Forbes Employers: 700 rows after filtering (0.00% removed)
+2026-05-23 13:44:22,544 - INFO -   Company Acquisitions: 891 rows after filtering (38.76% removed)
+2026-05-23 13:44:22,544 - INFO - 
+[4/5] Writing cleaned data to TrustedZone...
+2026-05-23 13:44:22,545 - INFO - 
+Writing cleaned data to TrustedZone DuckDB...
+2026-05-23 13:44:22,548 - INFO -   Writing Nasdaq data...
+2026-05-23 13:44:22,551 - INFO -   Nasdaq: 3426 rows written
+2026-05-23 13:44:22,551 - INFO -   Writing Company History data...
+2026-05-23 13:44:22,679 - INFO -   Company_History: 481027 rows written
+2026-05-23 13:44:22,679 - INFO -   Writing Us Exchange data...
+2026-05-23 13:44:22,680 - INFO -   Us_Exchange: 71 rows written
+2026-05-23 13:44:22,680 - INFO -   Writing Sp500 Companies data...
+2026-05-23 13:44:22,681 - INFO -   Sp500_Companies: 98 rows written
+2026-05-23 13:44:22,681 - INFO -   Writing Forbes Employers data...
+2026-05-23 13:44:22,682 - INFO -   Forbes_Employers: 700 rows written
+2026-05-23 13:44:22,682 - INFO -   Writing Company Acquisitions data...
+2026-05-23 13:44:22,683 - INFO -   Company_Acquisitions: 891 rows written
+2026-05-23 13:44:22,683 - INFO -   Writing data quality metrics...
+2026-05-23 13:44:22,684 - INFO -   Creating enriched companies table with resolved country...
+2026-05-23 13:44:22,703 - INFO -   companies: 3426 rows written (22 non-US companies resolved)
+2026-05-23 13:44:22,727 - INFO - Data successfully written to Trusted Zone!
+2026-05-23 13:44:22,727 - INFO - 
+[5/5] Validating and verifying TrustedZone...
+2026-05-23 13:44:22,731 - INFO - 
+Validating cleaned data...
+2026-05-23 13:44:22,731 - INFO -   Nasdaq data validation passed
+2026-05-23 13:44:22,731 - INFO -   Company_History data validation passed
+2026-05-23 13:44:22,732 - INFO -   Us_Exchange data validation passed
+2026-05-23 13:44:22,732 - INFO -   Sp500_Companies data validation passed
+2026-05-23 13:44:22,732 - INFO -   Forbes_Employers data validation passed
+2026-05-23 13:44:22,732 - INFO -   Company_Acquisitions data validation passed
+2026-05-23 13:44:22,732 - INFO - 
+Verifying TrustedZone database integrity...
+2026-05-23 13:44:22,737 - INFO -   us_exchange: 71 rows
+2026-05-23 13:44:22,737 - INFO -   companies: 3426 rows
+2026-05-23 13:44:22,737 - INFO -   sp500_companies: 98 rows
+2026-05-23 13:44:22,737 - INFO -   forbes_employers: 700 rows
+2026-05-23 13:44:22,737 - INFO -   nasdaq: 3426 rows
+2026-05-23 13:44:22,737 - INFO -   company_acquisitions: 891 rows
+2026-05-23 13:44:22,738 - INFO -   company_history: 481027 rows
+2026-05-23 13:44:22,738 - INFO - TrustedZone database verification passed
+2026-05-23 13:44:22,909 - INFO - Spark session stopped
+2026-05-23 13:44:22,909 - INFO - 
+================================================================================
+2026-05-23 13:44:22,909 - INFO - PIPELINE EXECUTION COMPLETED SUCCESSFULLY!
+2026-05-23 13:44:22,909 - INFO - ================================================================================
+2026-05-23 13:44:22,909 - INFO - 
+TrustedZone database created at: /Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/TrustedZone/TrustedZone.duckdb
+2026-05-23 13:44:22,909 - INFO - Processing Engine: Apache Spark
+2026-05-23 13:44:22,909 - INFO - Validation passed: True
+2026-05-23 13:44:22,909 - INFO - Database verified: True
+2026-05-23 13:44:22,909 - INFO - 
+Denial Constraints Applied:
+2026-05-23 13:44:22,909 - INFO - {
+  "nasdaq": [
+    "Symbol NOT NULL",
+    "Name NOT NULL",
+    "LastSale >= 0 OR NULL",
+    "MarketCap >= 0 OR NULL",
+    "IPOyear <= 2026"
+  ],
+  "company_history": [
+    "Date NOT NULL",
+    "High >= Low",
+    "Volume >= 0",
+    "Open >= 0 OR NULL",
+    "Close >= 0 OR NULL",
+    "Company record count > 1"
+  ],
+  "us_exchange": [
+    "Date NOT NULL",
+    "EUR > 0",
+    "JPY > 0"
+  ],
+  "sp500_companies": [
+    "Ticker NOT NULL",
+    "Name NOT NULL",
+    "MarketCap >= 0 OR NULL",
+    "Employees >= 0 OR NULL"
+  ],
+  "forbes_employers": [
+    "company NOT NULL",
+    "rank > 0",
+    "publish_year <= 2026 OR NULL"
+  ],
+  "company_acquisitions": [
+    "Parent Company NOT NULL",
+    "Acquired Company NOT NULL",
+    "Parent Company IN canonical acquirer set",
+    "Acquisition Year BETWEEN 1900 AND 2026 OR NULL",
+    "Acquisition Price >= 0 OR NULL"
+  ]
+}
+2026-05-23 13:44:22,910 - INFO - Closing down clientserver connection

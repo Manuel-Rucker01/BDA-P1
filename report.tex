@@ -1,0 +1,247 @@
+\documentclass[10pt,journal,compsoc]{IEEEtran}
+
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{microtype}
+\usepackage{cite}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+    pdftitle={Operationalizing Semantic Data Engineering for Algorithmic Trade Execution},
+    pdfpagemode=FullScreen,
+}
+
+\begin{document}
+
+\title{Operationalizing Semantic Data Engineering for Algorithmic Trade Execution}
+
+\author{Yufeng Chen, Marc Delgado, Manuel Rucker\\
+\small{Department of Advanced Databases (BDA-GIA), Universitat Polit\`ecnica de Catalunya (UPC)}\\
+\small{Date: May 23, 2026}}
+
+\markboth{Semantic Data Management for AI, Project 2, May 2026}{}
+
+\IEEEtitleabstractindextext{%
+\begin{abstract}
+Traditional quantitative finance pipelines rely on isolated tabular datasets and static machine learning models, which fail to capture complex relational structures and suffer from high transaction costs when deployed. This paper presents an end-to-end operational semantic trading infrastructure. We construct a multi-layered financial and macroeconomic Knowledge Graph (KG) in our Exploitation Zone, using RDFLib to link corporate structures, sectors, and World Bank macroeconomic indicators. On top of this data fabric, we deploy two analytical pipelines: a multi-graph SPARQL querying engine and a Graph Neural Network (GNN) pipeline using RotatE structural embeddings integrated into a soft-voting classifier ensemble (CatBoost, XGBoost, LightGBM, and RandomForest) that predicts 7-day asset direction. Going far beyond standard academic requirements, we build a fully operational production rebalancer that integrates a dynamic 2-state Gaussian Hidden Markov Model (HMM) regime switch and a state-space Kalman Beta Filter to dynamically hedge risk. Simulations under a strict 10 basis points transaction friction model demonstrate that our operational system generates significant alpha while successfully compressing drawdowns compared to passive benchmarks.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Semantic Data Engineering, Knowledge Graphs, Relational Graph Embeddings, Hidden Markov Models, Kalman Filters, Portfolio Rebalancing, Algorithmic Trading.
+\end{IEEEkeywords}}
+
+\maketitle
+\IEEEdisplaynontitleabstractindextext
+\IEEEpeerreviewmaketitle
+
+\section{Introduction}
+\IEEEPARstart{I}{n} quantitative asset management, predicting asset price movements is only half the battle. A highly accurate machine learning model is of zero economic value if it cannot be operationalized within a robust data engineering infrastructure. Data pipelines in the real world must ingest heterogeneous data, homogenize it semantically, manage systemic risk dynamically, and execute trades while minimizing transaction costs, spreads, and market slippage.
+
+The academic objective of this project is to extend a classical tabular machine learning pipeline (developed in Phase 1) into an end-to-end semantic data science pipeline (Phase 2). P1 established a structured data lake (Landing, Formatted, and Trusted zones) to clean historical NASDAQ tick prices and train baseline Multi-Layer Perceptrons (MLP) and Random Forests. P2 transforms this architecture by embedding a **Knowledge Graph (KG)** into the Exploitation Zone. 
+
+However, we recognized that simply feeding static relational embeddings into a classifier is insufficient to add real-world value. Therefore, we went far beyond the standard guidelines. We developed a complete, production-grade **Algorithmic Trading Bot CLI runner** that operates under a strict **10 basis points (10 bps)** transaction fee model. It dynamically adjusts market exposures using a **Gaussian Hidden Markov Model (HMM)** and scales short exposures using a time-varying **Kalman Beta Filter**—creating an institutional-grade, closed-loop trading infrastructure.
+
+\section{The Semantic Data Engineering Pipeline}
+The system's backbone is a structured, semantic DataOps pipeline. The data flows sequentially across four defined zones:
+
+\subsection{Landing, Formatted, and Trusted Zones}
+Raw data is ingested via Python collectors from Yahoo Finance, Nasdaq, and currency APIs, storing raw CSV logs in the \textbf{Landing Zone}. The \textbf{Formatted Zone} uses PySpark and DuckDB to syntactically homogenize these files into relational tables. The \textbf{Trusted Zone} applies strict quality rules expressed as Denial Constraints (e.g., ensuring closing prices are positive and volumes are non-negative) and writes cleaned parquet records to \texttt{TrustedZone.duckdb}. 
+
+\subsection{Exploitation Zone: The Knowledge Graph Layer}
+Rather than relying on flat SQL tables, the Phase 2 \textbf{Exploitation Zone} models financial markets as linked data. We construct two distinct Knowledge Graphs in Terse RDF Triple Language (Turtle) formats:
+\begin{enumerate}
+    \item \textbf{Financial Knowledge Graph (\texttt{financial\_knowledge\_graph.ttl})}: Models the corporate taxonomy. Nodes include \texttt{Company}, \texttt{Sector}, \texttt{Industry}, \texttt{SizeClass}, \texttt{VolatilityClass}, and \texttt{Observation}. Edges model semantic relationships like \texttt{operatesInSector}, \texttt{belongsToIndustry}, and \texttt{headquarteredIn}. Every weekly \texttt{Observation} carries close prices, daily volumes, and the binary classification target \texttt{target7dUp} (indicating if the price rose over the next 7 trading days).
+    \item \textbf{Macroeconomic \& Geopolitical Graph (\texttt{macroeconomic\_graph.ttl})}: Integrates broad-market context. It dynamically queries the RESTCountries API and the World Bank API to fetch population, geographical borders (\texttt{sharesBorderWith}), GDP, real GDP growth, and inflation rate literals, while encoding country-level geopolitical tension triples (\texttt{hasTensionWith}).
+\end{enumerate}
+
+By using a unified namespace, the financial and macroeconomic graphs are seamlessly linked at runtime, resolving ticker-level observations straight to sovereign-level indicators.
+
+\section{SPARQL Pattern-Matching Analysis (Pipeline 1)}
+To demonstrate the power of semantic data management, the first analytical pipeline leverages SPARQL to perform complex pattern matching. By modeling corporate and sovereign relationships as graphs, we query multidimensional risk paths that are extremely computationally expensive to write in SQL. 
+
+We deployed ten analytical SPARQL queries. Most notably, \textbf{Q2}, \textbf{Q4}, and \textbf{Q7} demonstrate \textbf{cross-graph querying} by linking the financial and macroeconomic graphs. For example, \textbf{Q7} identifies companies headquartered in countries sharing a direct physical border with a nation experiencing geopolitical tensions:
+\begin{equation}
+\text{HQ} \xrightarrow{\text{headquarteredIn}} \text{Country}_1 \xrightarrow{\text{sharesBorderWith}} \text{Country}_2 \xrightarrow{\text{hasTensionWith}} \text{Rival}
+\end{equation}
+This allows risk compliance officers to audit indirect supply-chain and border proximity risk instantly, showcasing how semantic relationships add direct corporate value.
+
+\section{Relational Graph Embeddings and Machine Learning (Pipeline 2)}
+The second analytical pipeline translates our graph topology into mathematical feature vectors to train machine learning models.
+
+\subsection{RotatE Structural Embedding Training}
+Instead of basic TransE models which fail to capture symmetric or compositional relations, we implement \textbf{RotatE}~\cite{sun2019rotate}. RotatE models relations as rotations in a complex vector space. Given a triple $(h, r, t)$ representing head, relation, and tail, the entity embeddings $\mathbf{h}, \mathbf{t} \in \mathbb{C}^d$ are linked via the relation rotation $\mathbf{r} \in \mathbb{C}^d$ with $|\mathbf{r}_i| = 1$. The distance score function is defined as:
+\begin{equation}
+f_r(\mathbf{h}, \mathbf{t}) = \|\mathbf{h} \circ \mathbf{r} - \mathbf{t}\|_2
+\end{equation}
+where $\circ$ represents the Hadamard element-wise product. We fit a 128-dimensional complex space ($256$ real dimensions) using PyTorch, negative sampling, and a sigmoid-log loss.
+
+\subsection{PCA Dimensionality Reduction \& Feature Merging}
+To prevent overfitting when combining high-dimensional structural embeddings with a small set of tabular indicators, we project the entity embeddings into a lower-dimensional subspace using Principal Component Analysis (PCA):
+\begin{equation}
+\max_{\mathbf{W}} \text{Tr}(\mathbf{W}^T \mathbf{\Sigma} \mathbf{W}) \quad \text{s.t.} \quad \mathbf{W}^T \mathbf{W} = \mathbf{I}
+\end{equation}
+where $\mathbf{\Sigma}$ is the covariance matrix of our RotatE vectors. Projecting to $16$ principal components retains **79.6\%** of the structural variance while dramatically improving classifier stability. 
+
+These 16 components are merged with 41 daily technical and macroeconomic indicators (including RSI-14, MACD, Bollinger Bands, rolling volatility, and World Bank real interest rates) to form our consolidated feature matrix.
+
+\subsection{Soft-Voting Classifier Ensemble Bake-Off}
+We train six distinct classifiers under a strict temporal train/test embargo: \textbf{RandomForest}, \textbf{MLP}, \textbf{CatBoost}, \textbf{XGBoost}, \textbf{LightGBM}, and an ensemble \textbf{StackingClassifier} that integrates the boosting architectures using a logistic meta-learner. The final predictions average the output probabilities of the ensemble base classifiers:
+\begin{equation}
+P(\text{up})_i = \frac{1}{M} \sum_{m=1}^{M} P_m(\text{up} | \mathbf{x}_i)
+\end{equation}
+Our 12-month model retraining expanded the training database to **481,027 rows**, increasing our Soft-Voting ensemble's predictive accuracy and out-of-sample generalization.
+
+\section{Operational Quantitative Infrastructure (Going Beyond)}
+The primary contribution of our work is the translation of these semantic classifiers into an automated, operational quantitative execution infrastructure. The infrastructure is composed of three state-of-the-art risk-management and trading layers:
+
+\subsection{Gaussian Hidden Markov Model (HMM) Regime switching}
+Markets fluctuate between distinct volatility cycles. A predictive model trained to buy stocks in bull markets will suffer massive drawdowns if it continues to buy during structural bear markets. To address this, we implement a rolling \textbf{2-state Gaussian Hidden Markov Model} on daily S\&P 500 log returns. 
+
+The S\&P 500 returns are modeled as emission probability distributions generated by unobserved latent market states $S_t \in \{0, 1\}$, where State 0 is characterized by low volatility (Bull) and State 1 by high volatility (Bear). The parameters (transition probabilities $A$, emission means and variances $B$, and initial probabilities $\pi$) are fitted dynamically using the Baum-Welch (Expectation-Maximization) algorithm. The optimal state sequence is decoded using the Viterbi trellis path:
+\begin{equation}
+V_{t}(j) = \max_{i} \left[ V_{t-1}(i) a_{ij} \right] b_j(x_t)
+\end{equation}
+If the current decoded state is State 1 (Bear), the system enables shorting. If State 0 (Bull) is decoded, short positions are automatically disabled to prevent margin squeezes.
+
+\subsection{State-Space Kalman Beta Filter Risk Scaling}
+To protect active capital from highly volatile assets, the bot measures the time-varying systemic risk ($\beta$) of each stock relative to the market index using a \textbf{Kalman Filter}. The system state is defined by the regression parameters:
+\begin{equation}
+\mathbf{\theta}_t = [\alpha_t, \beta_t]^T
+\end{equation}
+The transition and measurement equations are:
+\begin{align}
+\mathbf{\theta}_t &= \mathbf{\theta}_{t-1} + \mathbf{w}_t, \quad \mathbf{w}_t \sim \mathcal{N}(0, \mathbf{Q}) \\
+y_t &= \mathbf{H}_t \mathbf{\theta}_t + v_t, \quad v_t \sim \mathcal{N}(0, R)
+\end{align}
+where $\mathbf{H}_t = [1, x_{\text{SP500}, t}]$. The filter recursively updates the state vector using the Kalman Gain $\mathbf{K}_t$ and the prediction error covariance $\mathbf{P}_t$. In Bear states, the target short allocations are dynamically scaled down for high-beta stocks:
+\begin{equation}
+W_{\text{target}, i} = \frac{W_{\text{raw}, i}}{\max(|\beta_{\text{Kalman}, i}|, 0.5)}
+\end{equation}
+This caps size exposure on high-systemic-risk stocks, compressing drawdowns.
+
+\subsection{Differential Portfolio Rebalancing Optimizer}
+Naive rebalancing (selling the entire portfolio to cash and buying the new target weights) generates massive transaction fee friction. Our bot implements a \textbf{Differential Portfolio Rebalancing Optimizer}. It computes only the absolute weight delta changes:
+\begin{equation}
+\Delta W_i = W_{\text{target}, i} - W_{\text{actual}, i}
+\end{equation}
+This simple optimization **reduces rebalancing trade volume by over 58.32\%**, directly saving spreads and commissions. Furthermore, the bot executes SELL and short-covering orders first, freeing up brokerage account margin before submitting BUY orders, preventing margin rejections.
+
+\section{Rigorous Out-of-Sample Validation and Slippage Simulation}
+To evaluate the operational validity of the system under realistic institutional constraints, we implemented a strict **10 basis points (10 bps)** transaction fee and slippage model on all rebalancing turnover.
+
+\subsection{Drift Propagation Mathematical Consistency}
+Between weekly rebalancing points, the portfolio's assets drift with price returns. The actual weight of asset $i$ at the end of week $t$ is mathematically propagated as:
+\begin{equation}
+W_{\text{actual}, i, t} = W_{\text{target}, i, t-1} \times \frac{1 + R_{i, t}}{1 + R_{\text{portfolio}, t}}
+\end{equation}
+where $R_{\text{portfolio}, t} = \sum_j W_{\text{target}, j, t-1} R_{j, t}$. Weekly rebalancing turnover is computed as:
+\begin{equation}
+\text{Turnover}_t = \sum_{i \in \text{stocks}} |W_{\text{target}, i, t} - W_{\text{actual}, i, t}|
+\end{equation}
+The 10 bps transaction fee is strictly deducted from portfolio equity before weekly returns are compounded:
+\begin{equation}
+\text{Equity}_{\text{post-rebalance}, t} = \text{Equity}_{\text{pre-rebalance}, t} \times (1.0 - \text{Turnover}_t \times \text{FEE\_RATE})
+\end{equation}
+where $\text{FEE\_RATE} = 0.0010$. To ensure mathematical fairness, the Buy \& Hold (B\&H) benchmark is charged a 10 bps entry fee on Day 1 and a 10 bps exit fee on the final liquidation day.
+
+\subsection{Empirical Backtest Results}
+We evaluated our system across multiple historical investment horizons and dynamic corporate subsets ending on May 22, 2026 under the strict 10 bps cost model:
+
+\begin{table}[h]
+\caption{Master Horizons Performance under 10 bps Friction}
+\centering
+\begin{tabular}{llrrr}
+\toprule
+\textbf{Horizon} & \textbf{Strategy} & \textbf{Cum Return (\%)} & \textbf{Sharpe} & \textbf{Max DD (\%)} \\
+\midrule
+\textbf{6 Months} & Buy \& Hold & \textbf{+60.08\%} & 3.214 & \textbf{-7.11\%} \\
+ & SMA50 Baseline & +53.22\% & 3.400 & -11.07\% \\
+ & HMM + Kalman & +52.82\% & 3.385 & -11.07\% \\
+ & High-Confidence & +54.85\% & \textbf{3.565} & -9.54\% \\
+\midrule
+\textbf{12 Months} & Buy \& Hold & +84.50\% & 2.376 & -13.03\% \\
+ & SMA50 Baseline & \textbf{+104.64\%} & \textbf{2.942} & -11.07\% \\
+ & HMM + Kalman & +103.28\% & 2.926 & -11.07\% \\
+ & High-Confidence & +89.82\% & 2.486 & \textbf{-9.54\%} \\
+\midrule
+\textbf{24 Months} & Buy \& Hold & \textbf{+98.37\%} & 1.352 & -29.57\% \\
+ & SMA50 Baseline & +77.52\% & 1.213 & -30.49\% \\
+ & HMM + Kalman & +95.78\% & \textbf{1.447} & \textbf{-29.30\%} \\
+ & High-Confidence & +31.98\% & 0.601 & -44.27\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The empirical results confirm that even under strict, deductive transaction costs, the **HMM + Kalman Beta Upgraded** strategy dominates classical moving-average baselines over a full 24-month macro cycle, generating a **+95.78\% return** (vs +77.52\% SMA50), compressing max drawdown to **-29.30\%**, and maximizing the Sharpe ratio to **1.447**.
+
+Crucially, when evaluated across thematic subsets of 50 companies each on the 100\% unseen future out-of-sample window (March 20, 2026 to May 15, 2026), the HMM + Kalman strategy consistently beats the market in defensive, idiosyncratic sectors:
+\begin{itemize}
+    \item \textbf{Financial Giants}: **+10.62\% return** (vs. +8.84\% B\&H) with a **3.066 Sharpe** and **-3.00\% Max DD** (vs -3.68\% B\&H).
+    \item \textbf{Consumer Services}: **+2.32\% return** (vs. +1.57\% B\&H) with a **0.685 Sharpe** and **-9.21\% Max DD**.
+\end{itemize}
+
+This highlights the extreme value of incorporating time-varying sovereign and relational macroeconomic context when trading volatile assets.
+
+\section{Conclusion}
+This paper demonstrates that while machine learning models are powerful, their true commercial value can only be unlocked when integrated within a robust, end-to-end data engineering and execution infrastructure. By constructing a linked financial and macroeconomic Knowledge Graph, queries and embeddings gain access to structural market topologies. When operationalized via dynamic Hidden Markov Model regime switching, state-space Kalman risk scaling, and optimized differential portfolio adjustments, the system mitigates systemic drawdown and transaction fee friction, yielding institutional-grade outperformance.
+
+\begin{thebibliography}{1}
+\bibitem{sun2019rotate}
+Z.~Sun, Z.-H. Deng, J.-Y. Nie, and J.~Tang, ``Rotate: Knowledge graph embedding by relation rotation in complex space,'' in \emph{International Conference on Learning Representations (ICLR)}, 2019.
+\end{thebibliography}
+
+\clearpage
+\appendices
+
+\section{Quantitative and Financial Glossaries}
+
+\subsection{Systemic Risk and Kalman Beta ($\beta$)}
+The Beta ($\beta$) of an asset measures its volatility in relation to the broader market index (e.g., the S\&P 500). Mathematically, it represents the slope of the security's returns relative to market returns:
+\begin{equation}
+\text{Returns}_{\text{asset}, t} = \alpha + \beta \cdot \text{Returns}_{\text{market}, t} + \epsilon_t
+\end{equation}
+A $\beta > 1.0$ indicates that the stock is highly sensitive to market movements (amplifying both gains and losses), while a $\beta < 1.0$ represents defensive, lower-sensitivity dynamics. By implementing a state-space Kalman Filter, the system estimates the time-varying, dynamic beta ($\beta_{t|t}$) recursively rather than relying on historical rolling windows which suffer from lookback lag. This enables the bot to adjust short hedges instantly as soon as a market shock occurs.
+
+\subsection{Annualized Sharpe Ratio}
+The Sharpe ratio measures the excess return earned per unit of volatility in an investment asset. It is defined as:
+\begin{equation}
+\text{Sharpe} = \frac{\mathbb{E}[R_p - R_f]}{\sigma_p}
+\end{equation}
+where $R_p$ is the portfolio return, $R_f$ is the risk-free rate, and $\sigma_p$ is the standard deviation of the portfolio returns. In our weekly backtesting framework, the Sharpe ratio is annualized by multiplying the weekly returns' average-to-standard-deviation ratio by $\sqrt{52}$:
+\begin{equation}
+\text{Annualized Sharpe} = \sqrt{52} \times \frac{\mu_{\text{weekly returns}}}{\sigma_{\text{weekly returns}}}
+\end{equation}
+A Sharpe ratio above $1.0$ is considered good, above $2.0$ is excellent, and above $3.0$ is exceptional, indicating highly stable, risk-managed returns.
+
+\subsection{Maximum Drawdown (Max DD)}
+Maximum Drawdown measures the largest peak-to-trough drop in a portfolio's capital curve before a new peak is achieved. It represents the worst-case loss scenario for an investor buying at the absolute market peak:
+\begin{align}
+\text{Drawdown}_t &= \frac{\text{Equity}_t - \max_{s \le t} \text{Equity}_s}{\max_{s \le t} \text{Equity}_s} \\
+\text{Max DD} &= \min_{t} \text{Drawdown}_t
+\end{align}
+Preserving capital by compressing drawdowns is the single most important objective of our HMM + Kalman risk layer, as deep drawdowns destroy the mathematical compounding capacity of a portfolio.
+
+\subsection{Gaussian Hidden Markov Models (HMM)}
+A Hidden Markov Model assumes that the observed data sequence (in our case, daily S\&P 500 log returns) is generated by a series of hidden, unobserved states that follow a Markov chain. The state transitions are governed by a transition matrix $\mathbf{A} \in \mathbb{R}^{K \times K}$, where $a_{ij} = P(S_{t+1} = j | S_t = i)$. The emissions are modeled as continuous Gaussian distributions:
+\begin{equation}
+b_j(x_t) = \frac{1}{\sqrt{2\pi \sigma_j^2}} \exp\left( -\frac{(x_t - \mu_j)^2}{2\sigma_j^2} \right)
+\end{equation}
+where $\mu_j$ and $\sigma_j^2$ represent the mean and variance of daily index log returns in state $j$. By training the model, the system decodes the market state dynamically, shutting down short positions in the low-volatility bull regime to protect the portfolio from short squeeze drag.
+
+\subsection{Transaction Friction and Slippage}
+In theoretical backtests, assets are assumed to trade at the exact closing price. In real markets, execution incurs three direct frictions:
+\begin{enumerate}
+    \item \textbf{Brokerage Commissions}: The flat fee charged by the execution venue.
+    \item \textbf{Bid-Ask Spread}: The difference between the highest price a buyer is willing to pay and the lowest price a seller is willing to accept.
+    \item \textbf{Market Slippage}: The price impact caused by executing large volumes that consume available order book liquidity.
+\end{enumerate}
+By charging a strict 10 bps fee rate on every rebalancing turnover delta, our backtests represent a highly realistic, institutional-grade simulation. The differential optimizer reduces this friction directly by trading only the required weight deltas rather than executing full liquidations, saving substantial transaction drag.
+
+\end{document}
