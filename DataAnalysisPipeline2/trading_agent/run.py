@@ -4,8 +4,12 @@ CLI Execution Script for the BDA Production Trading Bot.
 Use this script to trigger weekly portfolio rebalancing.
 """
 
+import os
 import sys
 import argparse
+
+import pandas as pd
+
 from .bot import BDATradingAgent
 from . import config
 
@@ -180,7 +184,75 @@ def main():
             return
             
         agent.execute_alpaca_rebalance(weights, prices_df=prices_df, dry_run=is_dry_run)
-        
+
+        # ── Performance attribution against the previous rebalance ────────
+        # We persist the most-recent decision's target weights to a small
+        # state file so the next invocation can attribute realised returns
+        # between rebalances.
+        try:
+            import json
+            import yfinance as yf
+
+            state_path = os.path.join(
+                os.path.dirname(__file__), "agent_logs", "last_weights.json"
+            )
+            prev_state = None
+            if os.path.exists(state_path):
+                with open(state_path) as f:
+                    prev_state = json.load(f)
+
+            # Realised returns: average daily_return over the window for each
+            # ticker (using whatever price_history_df already has).
+            realised_returns = {}
+            if prices_df is not None and prev_state is not None:
+                window_start = prev_state.get("period_end")
+                for ticker in set(prev_state["weights"].keys()):
+                    rows = prices_df[(prices_df["ticker"] == ticker)
+                                     & (prices_df["Date"] >= window_start)]
+                    if len(rows) >= 2:
+                        first = float(rows.sort_values("Date").iloc[0]["company_close"])
+                        last  = float(rows.sort_values("Date").iloc[-1]["company_close"])
+                        realised_returns[ticker] = (last - first) / first if first > 0 else 0.0
+
+            # Benchmark return over the same window
+            bench_return = 0.0
+            if prev_state is not None:
+                try:
+                    sp = yf.download(config.SP500_INDEX, period="3mo", progress=False)
+                    if isinstance(sp.columns, pd.MultiIndex):
+                        sp.columns = [c[0] for c in sp.columns]
+                    sp = sp.reset_index()
+                    sp["Date"] = pd.to_datetime(sp["Date"]).dt.strftime("%Y-%m-%d")
+                    window_start = prev_state.get("period_end")
+                    window_rows = sp[sp["Date"] >= window_start].sort_values("Date")
+                    if len(window_rows) >= 2:
+                        bench_return = (float(window_rows.iloc[-1]["Close"])
+                                        - float(window_rows.iloc[0]["Close"])) / \
+                                        float(window_rows.iloc[0]["Close"])
+                except Exception as e:
+                    print(f"[Attribution] benchmark fetch failed: {e}")
+
+            if prev_state is not None and realised_returns:
+                agent.record_attribution(
+                    weights_prev=prev_state["weights"],
+                    weights_curr=weights,
+                    realised_returns=realised_returns,
+                    benchmark_return=bench_return,
+                    period_start=prev_state["period_end"],
+                    period_end=str(prices_df["Date"].max()),
+                )
+
+            os.makedirs(os.path.dirname(state_path), exist_ok=True)
+            with open(state_path, "w") as f:
+                json.dump({
+                    "decision_id": agent.last_decision_ctx.decision_id
+                        if agent.last_decision_ctx else "no_ctx",
+                    "period_end": str(prices_df["Date"].max()),
+                    "weights": weights,
+                }, f)
+        except Exception as e:
+            print(f"[Attribution] [WARN] post-rebalance attribution failed: {e}")
+
         print("\nBDA Production Trading Runner run completed successfully.")
         
     except Exception as e:

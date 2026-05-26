@@ -12,6 +12,12 @@ import duckdb
 import yfinance as yf
 
 from . import config
+from .operational import (
+    TradeLogger, TradeLogRow,
+    DrawdownCircuitBreaker,
+    PerformanceAttribution,
+    build_decision_context, save_feature_snapshot, write_decision_row,
+)
 
 # --- Helper Technical Indicators ---
 
@@ -422,6 +428,20 @@ class BDATradingAgent:
         self.hmm_state = 0
         self.kalman_betas = {}
 
+        # Operational hardening — logger, drawdown circuit breaker, attribution.
+        # These all persist to ./agent_logs/.
+        self.trade_logger = TradeLogger()
+        self.circuit_breaker = DrawdownCircuitBreaker(
+            threshold_pct=getattr(config, "DRAWDOWN_LIMIT_PCT", 5.0)
+        )
+        self.attribution = PerformanceAttribution()
+
+        # Filled in by run_inference()/execute_alpaca_rebalance() so we have a
+        # full audit trail of "what did the bot see when it traded?"
+        self.last_decision_ctx = None
+        self.last_predictions_df = None     # ticker, pred_proba, kalman_beta, ...
+        self.last_feature_matrix = None     # scaled X used to call .predict()
+
     def load_model(self):
         """Loads serialized ensemble classifier models and scaling metrics from best_model.pkl."""
         if not os.path.exists(config.MODEL_PATH):
@@ -611,7 +631,33 @@ class BDATradingAgent:
             self.kalman_betas[ticker] = beta_val
             
         latest_df["kalman_beta"] = latest_df["ticker"].map(self.kalman_betas).fillna(1.0)
-        
+
+        # --- Build & persist the reproducibility tag for this decision ---
+        try:
+            self.last_decision_ctx = build_decision_context(
+                model_path=config.MODEL_PATH,
+                feature_df=X_full_df,
+                universe=list(latest_df["ticker"].unique()),
+                hmm_state=self.hmm_state,
+                hmm_probs=self.hmm_probs,
+                decision_date=str(latest_df["Date"].max()),
+            )
+            snapshot_path = save_feature_snapshot(
+                self.last_decision_ctx.decision_id, X_full_df)
+            write_decision_row(
+                self.last_decision_ctx,
+                extras={"snapshot_path": snapshot_path,
+                        "n_tickers": int(len(latest_df))},
+            )
+            print(f"[Agent] decision_id = {self.last_decision_ctx.decision_id} "
+                  f"(snapshot: {os.path.basename(snapshot_path)})")
+        except Exception as e:
+            print(f"[WARN] Could not record decision context: {e}")
+
+        # Save the predictions and feature matrix for later attribution / replay
+        self.last_predictions_df = latest_df.copy()
+        self.last_feature_matrix = X_full_df.copy()
+
         return latest_df[["ticker", "company_close", "pred_proba", "kalman_beta"]].sort_values("pred_proba", ascending=False)
 
     def calculate_target_weights(self, predictions_df, is_bull, strategy="high_confidence"):
@@ -715,17 +761,75 @@ class BDATradingAgent:
 
         return target_weights
 
+    def _trade_log_row(self, *, ticker, action, target_w, delta_pct,
+                       qty, notional, ref_price, dry_run, side="flat", notes=""):
+        """Build a TradeLogRow stamped with this rebalance's decision_id and
+        the signal decomposition for `ticker`."""
+        pred_row = None
+        if self.last_predictions_df is not None:
+            sel = self.last_predictions_df[self.last_predictions_df["ticker"] == ticker]
+            if not sel.empty:
+                pred_row = sel.iloc[0]
+        ml = float(pred_row["pred_proba"]) if pred_row is not None else float("nan")
+        beta = float(pred_row.get("kalman_beta", 1.0)) if pred_row is not None else float("nan")
+        ctx = self.last_decision_ctx
+        return TradeLogRow(
+            decision_id=ctx.decision_id if ctx else "no_ctx",
+            decision_date=ctx.decision_date if ctx else "",
+            ts=pd.Timestamp.utcnow().isoformat(timespec="seconds"),
+            ticker=ticker, action=action,
+            target_weight=float(target_w),
+            delta_weight=float(delta_pct),
+            intended_qty=int(qty), intended_notional_usd=float(notional),
+            ref_price=float(ref_price),
+            raw_score=ml,
+            ml_signal=ml,
+            hmm_state=int(self.hmm_state),
+            hmm_prob_bull=float(self.hmm_probs[0]) if len(self.hmm_probs) > 0 else float("nan"),
+            kalman_beta=beta, side=side, dry_run=bool(dry_run), notes=notes,
+        )
+
     def execute_alpaca_rebalance(self, target_weights, prices_df=None, dry_run=True):
         """
         Executes real-world portfolio rebalancing on Alpaca.
         Leverages the Differential Portfolio Rebalancing Optimizer to save 30-58% in volume fees.
+
+        Operational hardening:
+          * Drawdown circuit breaker: refuses to trade if a -5% peak-to-trough
+            stop has been hit (manual-reset halt file under ./agent_logs/).
+          * Per-trade structured log: every order writes a row to
+            ./agent_logs/trades.csv with the full signal decomposition.
         """
         print("\n" + "=" * 80)
         print("DIFFERENTIAL PORTFOLIO REBALANCING OPTIMIZER")
         print("=" * 80)
 
-        # Checking credentials
+        # ── Drawdown circuit breaker ──────────────────────────────────────
+        # Skip the check entirely in dry-run mode without credentials (no real
+        # equity to track); otherwise pull current equity from Alpaca first.
         has_credentials = len(config.ALPACA_API_KEY) > 0 and len(config.ALPACA_SECRET_KEY) > 0
+        if self.circuit_breaker.is_halted():
+            print("[HALT] DrawdownCircuitBreaker is tripped — refusing to submit any orders.")
+            print(f"[HALT] Inspect {self.circuit_breaker.history_path} and remove the halt file manually after review.")
+            print("=" * 80)
+            return
+
+        if has_credentials and not dry_run:
+            try:
+                from alpaca.trading.client import TradingClient
+                _tc = TradingClient(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY,
+                                    paper=config.ALPACA_PAPER_TRADING)
+                _acc = _tc.get_account()
+                _eq = float(_acc.portfolio_value)
+                status = self.circuit_breaker.update_and_check(_eq)
+                print(f"[CircuitBreaker] equity=${_eq:,.2f}  peak=${status['peak_equity']:,.2f}  "
+                      f"drawdown={status['drawdown_pct']:.2f}%  threshold={status['threshold_pct']:.2f}%")
+                if status["halted"]:
+                    print("[HALT] Drawdown threshold breached — bot just halted.  Aborting rebalance.")
+                    print("=" * 80)
+                    return
+            except Exception as e:
+                print(f"[CircuitBreaker] [WARN] Could not fetch live equity: {e}.  Proceeding with rebalance.")
 
         if dry_run or not has_credentials:
             if not has_credentials:
@@ -765,15 +869,18 @@ class BDATradingAgent:
                 
                 if abs(delta_val) >= config.MIN_ORDER_VALUE:
                     if curr_val == 0.0 and target_val != 0.0:
+                        side_str = "long" if target_val > 0 else "short"
                         action = "BUY (Long)" if target_val > 0 else "SELL (Short)"
-                        reason = f"Establish NEW {side.lower()} position"
+                        reason = f"Establish NEW {side_str} position"
                     elif target_val == 0.0 and curr_val != 0.0:
+                        side_str = "flat"
                         action = "SELL (Cover)" if curr_val < 0 else "SELL (Liquidate)"
                         reason = "LIQUIDATE position entirely"
                     else:
+                        side_str = "long" if target_val > 0 else ("short" if target_val < 0 else "flat")
                         action = "BUY" if delta_val > 0 else "SELL"
                         reason = "Adjust existing target exposure"
-                        
+
                     trades.append({
                         "ticker": ticker,
                         "curr": curr_val / simulated_equity * 100.0,
@@ -783,6 +890,23 @@ class BDATradingAgent:
                         "trade_usd": abs(delta_val),
                         "reason": reason
                     })
+
+                    # Per-trade structured log (dry-run side)
+                    try:
+                        ref_p = 1.0
+                        if prices_df is not None:
+                            pr = prices_df[prices_df["ticker"] == ticker]
+                            if not pr.empty:
+                                ref_p = float(pr.sort_values("Date").iloc[-1]["company_close"])
+                        self.trade_logger.log(self._trade_log_row(
+                            ticker=ticker, action=action, target_w=target_w,
+                            delta_pct=delta_val / simulated_equity,
+                            qty=int(abs(delta_val) / max(ref_p, 1e-6)),
+                            notional=abs(delta_val), ref_price=ref_p,
+                            dry_run=True, side=side_str, notes=reason,
+                        ))
+                    except Exception as e:
+                        print(f"  -> [WARN] trade logger failed for {ticker}: {e}")
                     
             trades.sort(key=lambda x: x["delta"])  # SELLs first
             
@@ -868,11 +992,16 @@ class BDATradingAgent:
                 if delta < 0:
                     # Sell
                     side = OrderSide.SELL
+                    side_str = "flat" if target_w == 0.0 else ("short" if target_w < 0 else "long")
                     if target_w == 0.0:
                         print(f"  -> [ORDER] Liquidating 100% of {ticker} (Value: ${abs(delta):,.2f})")
                         client.close_position(ticker)
+                        action = "SELL (Liquidate)"
+                        qty_logged = 0
                     else:
                         qty = int(abs(delta) / ticker_price)
+                        action = "SELL"
+                        qty_logged = qty
                         if qty > 0:
                             print(f"  -> [ORDER] Selling {qty} shares of {ticker} to reduce exposure (Value: ${qty * ticker_price:,.2f}, price: ${ticker_price:.2f})")
                             order = MarketOrderRequest(symbol=ticker, qty=qty, side=side, time_in_force=TimeInForce.DAY)
@@ -882,7 +1011,10 @@ class BDATradingAgent:
                 else:
                     # Buy
                     side = OrderSide.BUY
+                    side_str = "long" if target_w > 0 else ("short" if target_w < 0 else "flat")
                     qty = int(delta / ticker_price)
+                    action = "BUY"
+                    qty_logged = qty
                     if qty > 0:
                         print(f"  -> [ORDER] Buying {qty} shares of {ticker} to establish/increase exposure (Value: ${qty * ticker_price:,.2f}, price: ${ticker_price:.2f})")
                         order = MarketOrderRequest(symbol=ticker, qty=qty, side=side, time_in_force=TimeInForce.DAY)
@@ -890,8 +1022,55 @@ class BDATradingAgent:
                     else:
                         print(f"  -> [skip] Order value for {ticker} is too small for a whole share (Value: ${delta:,.2f}).")
 
+                # Per-trade structured log (live side, after submit attempt)
+                try:
+                    self.trade_logger.log(self._trade_log_row(
+                        ticker=ticker, action=action, target_w=target_w,
+                        delta_pct=delta / max(equity, 1e-6),
+                        qty=int(qty_logged),
+                        notional=abs(delta), ref_price=ticker_price,
+                        dry_run=False, side=side_str,
+                    ))
+                except Exception as e:
+                    print(f"  -> [WARN] trade logger failed for {ticker}: {e}")
+
             print("[Broker] Portfolio rebalance completed successfully.")
             print("=" * 80)
         except Exception as e:
             print(f"\n[ERROR] Alpaca Broker Execution failure: {e}")
             print("=" * 80)
+
+    def record_attribution(self, *, weights_prev, weights_curr,
+                            realised_returns, benchmark_return,
+                            period_start, period_end):
+        """Decompose realised PnL between the previous and current rebalance
+        into HMM / ML / Kalman / residual buckets and append to
+        ./agent_logs/attribution.csv.
+
+        Caller responsibilities:
+          - weights_prev: {ticker: weight} as of the prior rebalance
+          - weights_curr: {ticker: weight} just decided
+          - realised_returns: {ticker: realised return over the window}
+          - benchmark_return: realised S&P 500 return over the window
+        """
+        ctx = self.last_decision_ctx
+        decision_id = ctx.decision_id if ctx else "no_ctx"
+        try:
+            snap = self.attribution.attribute(
+                decision_id=decision_id,
+                period_start=str(period_start),
+                period_end=str(period_end),
+                weights_prev=weights_prev,
+                weights_curr=weights_curr,
+                realised_returns=realised_returns,
+                benchmark_return=float(benchmark_return),
+                kalman_betas=dict(self.kalman_betas),
+                hmm_state=self.hmm_state,
+            )
+            print(f"[Attribution] regime={snap.pnl_regime_pct:+.3f}% "
+                  f"ml={snap.pnl_ml_pct:+.3f}% kalman={snap.pnl_kalman_pct:+.3f}% "
+                  f"residual={snap.pnl_residual_pct:+.3f}%  "
+                  f"realised={snap.realised_return_pct:+.3f}% "
+                  f"(decision_id={decision_id})")
+        except Exception as e:
+            print(f"[WARN] attribution failed: {e}")

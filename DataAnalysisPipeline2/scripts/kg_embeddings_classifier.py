@@ -1,25 +1,43 @@
 """
-Data Analysis Pipeline 2: Knowledge Graph Embeddings + Multi-Model Comparison.
+Data Analysis Pipeline 2: Knowledge Graph Embeddings + Multi-Model Bake-Off
+                          for 30-DAY CROSS-SECTIONAL RANK PREDICTION.
+
+Why 30d-rank and not 7d-up?
+---------------------------
+The structural KG (sector, industry, size, country, region, borders,
+acquisitions) is dominated by near-static categorical labels.  Short-horizon
+direction (target_7d_up) is driven by microstructure — momentum, volume
+shocks, vol regime — none of which the KG encodes.  At a 30-day horizon, the
+**relative ordering** of stocks (which is what a portfolio actually needs)
+becomes more strongly tied to sector, country and corporate-structure
+factors.  So we regress `target_30d_rank ∈ [0,1]` — the cross-sectional
+PERCENT_RANK of 30-day forward return within each Date — and score the
+models with metrics that match portfolio construction:
+
+  * Spearman rank IC  — correlation between predicted rank and realised rank
+  * Hit rate          — sign agreement between (pred − 0.5) and (rank − 0.5)
+  * Decile spread     — mean realised return of the top decile minus the
+                        bottom decile of predicted ranks (the "long/short"
+                        spread you would actually capture)
+  * RMSE              — sanity check on calibration
 
 Pipeline:
-  1. Extract structural triples from the financial KG (Company, Sector,
-     Industry, Size, Volatility, Country, Region, SubRegion, sharesBorderWith,
-     madeAcquisition, acquisitionCountry). Observation and literal-valued
-     predicates are excluded — per-day numeric features are joined from DuckDB
-     instead, avoiding geometric distortion in the embedding space.
-  2. Train a **RotatE** model (PyTorch, 128-dim complex) on these triples with:
-       - Self-adversarial negative sampling (multiple negs per positive,
-         re-weighted by their current difficulty — Sun et al. 2019)
-       - Sigmoid+log loss (more stable than margin-ranking)
-       - Vectorised sampling, GPU/MPS auto-detect, early stopping
-     RotatE handles symmetric (sharesBorderWith), antisymmetric and
-     compositional relations — a strict superset of what TransE can model.
-  3. Export the learned company embeddings to parquet.
-  4. Join embeddings with per-observation features computed by DuckDB window
-     functions, including volatility-adjusted return and sector momentum.
-  5. Compare five base classifiers + a stacking ensemble under three feature
-     configurations (tabular / embedding / combined). Report accuracy, F1 and
-     ROC-AUC for every (model, feature-set) combination.
+  1. Extract structural triples from the financial KG (URI–URI only).
+  2. Train a RotatE model (Sun et al. 2019) refined by an R-GCN message-
+     passing layer.  Self-adversarial negative sampling, sigmoid-log loss,
+     early stopping.
+  3. Extract refined company embeddings and compress to PCA_DIM axes.
+  4. Join with per-observation features computed by DuckDB window functions
+     (multi-window momentum + volatility, calendar, cross-sectional ranks
+     within Date, RSI/MACD/Bollinger).  Macro features attached via the
+     ticker's resolved HQ country.
+  5. Walk-forward CV (expanding window, 5 folds, 30-day embargo between
+     train and test).  Each fold trains the bake-off on data up to fold-end
+     and evaluates on the next slice.  Per-fold metrics are aggregated as
+     mean ± stdev to give an honest confidence interval on the IC.
+  6. Bake-off across three feature configurations × four base regressors
+     (RandomForest, CatBoost, XGBoost, LightGBM) + Stack (Ridge meta).
+     MLP dropped — it was consistently the slowest and weakest model.
 """
 
 import os
@@ -34,11 +52,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from rdflib import Graph, Namespace, URIRef
+from scipy.stats import spearmanr
 from sklearn.decomposition import PCA
-from sklearn.ensemble import RandomForestClassifier, StackingClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
-from sklearn.neural_network import MLPClassifier
+from sklearn.ensemble import RandomForestRegressor, StackingRegressor
+from sklearn.linear_model import RidgeCV
+from sklearn.metrics import mean_squared_error
 from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -310,16 +328,35 @@ def compute_macd_signal(macd_series, span_signal=9):
     return macd_series.ewm(span=span_signal, adjust=False).mean()
 
 def load_observation_features(db_path: str):
-    """Per-observation feature builder. Every feature is *strictly past* — uses
-    only ROWS BETWEEN N PRECEDING AND CURRENT ROW and PARTITION BY Date for
-    cross-sectional rank, so there is no leak from the LEAD(close, 7)
-    that builds target_7d_up."""
+    """Per-observation feature builder.
+
+    Two leakage concerns and how they're handled:
+
+    1. Time-series window features ALWAYS use
+           ROWS BETWEEN N PRECEDING AND CURRENT ROW
+       i.e. strictly past-and-present data per ticker.  None of them peek at
+       LEAD prices that build the target.
+
+    2. PERCENT_RANK() OVER (PARTITION BY Date ORDER BY <feature>) ranks
+       across all tickers on the *same* date.  These are SAFE because:
+         (a) the feature being ranked is itself past-only — it does not
+             use any forward look,
+         (b) the cross-section of EOD prices for the same day is available
+             live (every other ticker's close on the same date is published
+             at the same EOD),
+         (c) the rank target's future window (30d) never enters any feature
+             computation — only its own forward return defines it.
+       Conclusion: the rank features are usable in production by reading
+       every ticker's close at EOD before the next session.
+    """
     print("\n[4/5] Loading per-observation features from DuckDB...")
     conn = duckdb.connect(db_path, read_only=True)
     df = conn.execute("""
         WITH base AS (
             SELECT
-                Symbol AS ticker, Date, target_7d_up, Sector, Industry,
+                Symbol AS ticker, Date,
+                target_7d_up, target_30d_return, target_30d_rank,
+                Sector, Industry,
                 LOG(NULLIF(MarketCap, 0)) AS log_market_cap,
                 eur_rate, jpy_rate, company_close, company_volume,
 
@@ -373,7 +410,7 @@ def load_observation_features(db_path: str):
                 EXTRACT(DOW   FROM Date) AS day_of_week,
                 EXTRACT(MONTH FROM Date) AS month_of_year
             FROM master_dataset
-            WHERE target_7d_up IS NOT NULL
+            WHERE target_30d_rank IS NOT NULL
         ),
         enriched AS (
             SELECT
@@ -499,13 +536,16 @@ def build_feature_matrices(df_obs, company_embeddings, embed_dim_real):
           f"variance retained = {pca.explained_variance_ratio_.sum():.3f}")
 
     merged = df_obs.merge(emb_df_reduced, on="ticker", how="inner")
-    # STRICT TEMPORAL ALIGNMENT BUG FIX: Sort by Date to align all datasets before extracting arrays
+    # Sort by Date so the temporal split / walk-forward folds operate on
+    # strictly time-ordered rows.
     merged = merged.sort_values("Date").reset_index(drop=True)
     print(f"  -> {len(merged)} observations after embedding join "
           f"({len(df_obs) - len(merged)} dropped — no structural data)")
 
-    control_cols = {"ticker", "Date", "target_7d_up", "Sector", "Industry",
-                    "company_close", "company_volume"}
+    # Targets and bookkeeping columns are excluded from the feature matrix.
+    control_cols = {"ticker", "Date", "Sector", "Industry",
+                    "company_close", "company_volume",
+                    "target_7d_up", "target_30d_return", "target_30d_rank"}
     tabular_cols = [c for c in merged.columns
                     if c not in control_cols and c not in pca_cols
                     and pd.api.types.is_numeric_dtype(merged[c])]
@@ -513,7 +553,12 @@ def build_feature_matrices(df_obs, company_embeddings, embed_dim_real):
     X_tab = merged[tabular_cols].fillna(0).values.astype(np.float32)
     X_emb = merged[pca_cols].fillna(0).values.astype(np.float32)
     X_full = np.concatenate([X_tab, X_emb], axis=1)
-    y = merged["target_7d_up"].values.astype(int)
+
+    # Primary target: cross-sectional 30-day rank (regression target in [0,1])
+    y_rank = merged["target_30d_rank"].astype(float).values
+    # Realised 30-day return — used to compute decile spread for the
+    # predicted ranks
+    y_ret = merged["target_30d_return"].astype(float).values
 
     feature_sets = {
         "tabular_only":      X_tab,
@@ -522,51 +567,56 @@ def build_feature_matrices(df_obs, company_embeddings, embed_dim_real):
     }
     print(f"  -> Tabular cols ({len(tabular_cols)}): {tabular_cols}")
     print(f"  -> KG-PCA cols ({len(pca_cols)}): {pca_cols}")
-    return feature_sets, y, merged, pca, tabular_cols, pca_cols
+    print(f"  -> Target: target_30d_rank "
+          f"(mean={y_rank.mean():.3f}, std={y_rank.std():.3f})")
+    return feature_sets, y_rank, y_ret, merged, pca, tabular_cols, pca_cols
 
 
-# ── Step 6: Multi-model comparison + stacking ─────────────────────────────────
+# ── Step 6: Multi-model regression bake-off + Walk-forward CV ─────────────────
+
+# Walk-forward CV — chronological expanding-window folds.  Each fold trains
+# on all data up to a cut date and evaluates on the following window.  An
+# embargo of EMBARGO_DAYS sits between train and test to prevent the
+# 30-day forward-return target from leaking across the boundary.
+N_FOLDS = 5
+EMBARGO_DAYS = 30
+
 
 def make_base_models():
+    """Four base regressors for the bake-off.  MLP dropped (was consistently
+    the weakest and slowest in the classification bake-off — and the new
+    target is regression on a tight [0,1] range, where tree ensembles
+    dominate)."""
     models = {
-        "RandomForest": RandomForestClassifier(
+        "RandomForest": RandomForestRegressor(
             n_estimators=300, max_depth=14, min_samples_leaf=5,
-            random_state=SEED, n_jobs=-1, class_weight="balanced",
-        ),
-        "MLP": MLPClassifier(
-            hidden_layer_sizes=(128, 64), activation="relu",
-            alpha=1e-4, learning_rate_init=1e-3,
-            max_iter=200, early_stopping=True, random_state=SEED,
+            random_state=SEED, n_jobs=-1,
         ),
     }
     try:
-        from catboost import CatBoostClassifier
-        # Reduced depth to 4 to prevent overfitting on noisy stock data
-        models["CatBoost"] = CatBoostClassifier(
+        from catboost import CatBoostRegressor
+        models["CatBoost"] = CatBoostRegressor(
             iterations=1000, depth=4, learning_rate=0.02,
-            random_seed=SEED, verbose=0, auto_class_weights="Balanced",
+            random_seed=SEED, verbose=0, loss_function="RMSE",
         )
     except ImportError:
         print("  [skip] catboost not installed")
     try:
-        from xgboost import XGBClassifier
-        # Reduced max_depth to 4 and added subsampling to control variance
-        models["XGBoost"] = XGBClassifier(
+        from xgboost import XGBRegressor
+        models["XGBoost"] = XGBRegressor(
             n_estimators=1000, max_depth=4, learning_rate=0.02,
             subsample=0.8, colsample_bytree=0.8,
-            random_state=SEED, n_jobs=-1, eval_metric="logloss",
-            tree_method="hist",
+            random_state=SEED, n_jobs=-1,
+            tree_method="hist", objective="reg:squarederror",
         )
     except ImportError:
         print("  [skip] xgboost not installed")
     try:
-        from lightgbm import LGBMClassifier
-        # Reduced num_leaves/max_depth and added bagging/subsampling
-        models["LightGBM"] = LGBMClassifier(
+        from lightgbm import LGBMRegressor
+        models["LightGBM"] = LGBMRegressor(
             n_estimators=1000, max_depth=4, num_leaves=15,
             learning_rate=0.02, subsample=0.8, colsample_bytree=0.8,
-            random_state=SEED, n_jobs=-1,
-            class_weight="balanced", verbose=-1,
+            random_state=SEED, n_jobs=-1, verbose=-1,
         )
     except ImportError:
         print("  [skip] lightgbm not installed")
@@ -574,17 +624,16 @@ def make_base_models():
 
 
 def make_stacking_model(base_models):
-    """Stack the three boosted models with a logistic meta-learner."""
+    """Stack the three gradient-boosted regressors with a RidgeCV meta-learner."""
     estimators = []
     for name in ("CatBoost", "XGBoost", "LightGBM"):
         if name in base_models:
             estimators.append((name.lower(), base_models[name]))
     if len(estimators) < 2:
         return None
-    return StackingClassifier(
+    return StackingRegressor(
         estimators=estimators,
-        final_estimator=LogisticRegression(max_iter=500, random_state=SEED),
-        stack_method="predict_proba",
+        final_estimator=RidgeCV(alphas=[0.1, 1.0, 10.0]),
         passthrough=False,
         cv=STACK_CV,
         n_jobs=-1,
@@ -592,195 +641,273 @@ def make_stacking_model(base_models):
 
 
 def fit_with_early_stopping(model, X_train_s, y_train, model_name):
-    # For early stopping on boosting models, split training into 90% train and 10% validation temporally
+    """Train a regressor with a 90/10 temporal validation split for early
+    stopping on the gradient-boosted family.  RandomForest and Stack just
+    use a plain fit."""
     val_split = int(len(X_train_s) * 0.9)
     X_tr, X_val = X_train_s[:val_split], X_train_s[val_split:]
     y_tr, y_val = y_train[:val_split], y_train[val_split:]
-    
+
     if model_name == "CatBoost":
-        model.fit(X_tr, y_tr, eval_set=(X_val, y_val), early_stopping_rounds=50, verbose=0)
+        model.fit(X_tr, y_tr, eval_set=(X_val, y_val),
+                  early_stopping_rounds=50, verbose=0)
     elif model_name == "XGBoost":
         try:
-            model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], early_stopping_rounds=50, verbose=False)
+            model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)],
+                      early_stopping_rounds=50, verbose=False)
         except TypeError:
             try:
                 import xgboost as xgb
-                model.fit(
-                    X_tr, y_tr, 
-                    eval_set=[(X_val, y_val)], 
-                    callbacks=[xgb.callback.EarlyStopping(rounds=50, save_best=True)], 
-                    verbose=False
-                )
+                model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)],
+                          callbacks=[xgb.callback.EarlyStopping(
+                              rounds=50, save_best=True)],
+                          verbose=False)
             except Exception:
                 model.fit(X_train_s, y_train)
     elif model_name == "LightGBM":
         try:
             import lightgbm
-            model.fit(
-                X_tr, y_tr, 
-                eval_set=[(X_val, y_val)], 
-                callbacks=[lightgbm.early_stopping(stopping_rounds=50, verbose=False)]
-            )
+            model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)],
+                      callbacks=[lightgbm.early_stopping(
+                          stopping_rounds=50, verbose=False)])
         except Exception:
             model.fit(X_train_s, y_train)
     else:
-        # Standard fit for RF, MLP
+        # RandomForest, Stack — no early stopping support
         model.fit(X_train_s, y_train)
 
 
-def evaluate_all(feature_sets, y, merged_df, pca=None, tabular_cols=None, pca_cols=None, company_embeddings=None):
+def regression_metrics(y_true_rank, y_pred_rank, y_true_return):
+    """Portfolio-relevant metrics for the rank-prediction task.
+
+    Returns dict with:
+      ic        : Spearman correlation between predicted and realised rank
+      hit_rate  : fraction of rows where sign(pred-0.5) == sign(rank-0.5)
+      decile_spread_pct : mean realised 30d-return of top decile of predicted
+                          ranks minus that of the bottom decile (the
+                          long/short spread an idealised portfolio captures)
+      rmse      : root mean squared error of the [0,1] rank prediction
+                  — calibration sanity check
+    """
+    if len(y_true_rank) < 10 or np.std(y_pred_rank) < 1e-9:
+        return dict(ic=np.nan, hit_rate=np.nan,
+                    decile_spread_pct=np.nan, rmse=np.nan)
+
+    ic, _ = spearmanr(y_pred_rank, y_true_rank)
+    hit = ((y_pred_rank - 0.5) * (y_true_rank - 0.5) > 0).mean()
+    rmse = float(np.sqrt(mean_squared_error(y_true_rank, y_pred_rank)))
+
+    # Decile spread: rank the predictions, take top/bottom 10%, compute
+    # mean realised RETURN difference (in % units, since target_30d_return
+    # is already percent-of-price).
+    n = len(y_pred_rank)
+    if n >= 20:
+        cut = max(1, n // 10)
+        order = np.argsort(y_pred_rank)
+        bot = y_true_return[order[:cut]].mean()
+        top = y_true_return[order[-cut:]].mean()
+        decile_spread = float(top - bot)
+    else:
+        decile_spread = float("nan")
+
+    return dict(ic=float(ic), hit_rate=float(hit),
+                decile_spread_pct=decile_spread, rmse=rmse)
+
+
+def make_walk_forward_folds(merged_df, n_folds=N_FOLDS, embargo_days=EMBARGO_DAYS):
+    """Expanding-window walk-forward folds.
+
+    The time axis is divided into (n_folds + 1) chronological slabs.  Fold k
+    (0-indexed) trains on slabs [0..k] and evaluates on slab k+1, with an
+    EMBARGO_DAYS gap between the last training day and the first test day.
+
+    Yields tuples (fold_idx, train_mask, test_mask, train_end_date, test_start_date).
+    """
+    dates = pd.to_datetime(merged_df["Date"].values)
+    unique_dates = np.array(sorted(set(dates)))
+    n_blocks = n_folds + 1
+    block_size = max(1, len(unique_dates) // n_blocks)
+
+    for k in range(n_folds):
+        # Train on data up to the end of block k
+        train_end_idx = (k + 1) * block_size - 1
+        if train_end_idx >= len(unique_dates):
+            break
+        train_end_date = unique_dates[train_end_idx]
+        test_start_date = train_end_date + pd.Timedelta(days=embargo_days)
+        # Test ends at the end of block k+1 (or the data, whichever first)
+        test_end_idx = min((k + 2) * block_size - 1, len(unique_dates) - 1)
+        test_end_date = unique_dates[test_end_idx]
+
+        train_mask = dates <= train_end_date
+        test_mask = (dates >= test_start_date) & (dates <= test_end_date)
+        if train_mask.sum() < 100 or test_mask.sum() < 100:
+            continue
+        yield k, train_mask, test_mask, train_end_date, test_start_date
+
+
+def evaluate_all(feature_sets, y_rank, y_ret, merged_df,
+                 pca=None, tabular_cols=None, pca_cols=None,
+                 company_embeddings=None):
     print("\n" + "=" * 72)
-    print("  Multi-Model Comparison with Advanced Ensembling & Leakage Prevention")
+    print(f"  Walk-Forward Bake-Off — target_30d_rank, {N_FOLDS} expanding folds, "
+          f"{EMBARGO_DAYS}-day embargo")
     print("=" * 72)
 
-    # 1. TEMPORAL split WITH EMBARGO (leakage prevention)
-    # Target 7d horizon means we must discard the first 7 days of the test set
     merged_df = merged_df.sort_values("Date").reset_index(drop=True)
-    
-    # 80/20 index split point
-    split_idx = int(len(merged_df) * 0.8)
-    split_date = merged_df.iloc[split_idx]["Date"]
-    split_date_dt = pd.to_datetime(split_date)
-    
-    # Embargo date: split_date + 7 days
-    embargo_date = split_date_dt + pd.Timedelta(days=7)
-    
-    # Define masks
-    train_mask = merged_df["Date"] < split_date
-    test_mask = pd.to_datetime(merged_df["Date"]) >= embargo_date
-    
-    print(f"Split Date: {split_date}  -> Test Embargo Date: {embargo_date.strftime('%Y-%m-%d')}")
-    print(f"Initial split counts - Train: {train_mask.sum()}  Test (Un-embargoed): {len(merged_df) - train_mask.sum()}")
-    print(f"Final split counts   - Train: {train_mask.sum()}  Test (With 7d Embargo): {test_mask.sum()}  "
-          f"(Dropped {len(merged_df) - train_mask.sum() - test_mask.sum()} overlapping boundary rows)")
 
-    results = []
+    # Collect per-fold metrics keyed by (feature_set, model_name)
+    fold_records = []
+    # Predictions from the LAST fold (most recent test slab) — used as the
+    # bake-off's "production" prediction set for backtesting + bot loading
+    last_fold_predictions = {}
+    last_fold_artefacts = {}
 
-    for feat_name, X_full in feature_sets.items():
-        X_train = X_full[train_mask]
-        X_test = X_full[test_mask]
-        y_train = y[train_mask]
-        y_test = y[test_mask]
-        
-        scaler = StandardScaler()
-        X_train_s = scaler.fit_transform(X_train)
-        X_test_s = scaler.transform(X_test)
+    folds = list(make_walk_forward_folds(merged_df))
+    print(f"  -> Built {len(folds)} walk-forward folds")
 
-        base_models = make_base_models()
-        # Add standard Stack ensemble
-        stack = make_stacking_model(base_models)
-        if stack is not None:
-            base_models["Stack"] = stack
+    for fold_idx, train_mask, test_mask, train_end, test_start in folds:
+        print(f"\n--- Fold {fold_idx+1}/{len(folds)}: "
+              f"train ≤ {pd.Timestamp(train_end).strftime('%Y-%m-%d')}  "
+              f"test ≥ {pd.Timestamp(test_start).strftime('%Y-%m-%d')}  "
+              f"({train_mask.sum()} train / {test_mask.sum()} test)")
 
-        # Store test probability predictions for custom ensembles
-        test_probas = {}
+        for feat_name, X_full in feature_sets.items():
+            X_train = X_full[train_mask]
+            X_test = X_full[test_mask]
+            y_train = y_rank[train_mask]
+            y_test_rank = y_rank[test_mask]
+            y_test_ret = y_ret[test_mask]
 
-        for model_name, model in base_models.items():
-            t0 = time.time()
-            try:
-                # Fit model (boosting models use early stopping via temporal validation)
-                fit_with_early_stopping(model, X_train_s, y_train, model_name)
-                
-                # Predict
-                y_pred = model.predict(X_test_s)
-                if hasattr(model, "predict_proba"):
-                    y_proba = model.predict_proba(X_test_s)[:, 1]
-                    test_probas[model_name] = y_proba
-                else:
-                    y_proba = y_pred.astype(float)
-                
-                acc = accuracy_score(y_test, y_pred)
-                f1 = f1_score(y_test, y_pred, average="binary", zero_division=0)
-                auc = roc_auc_score(y_test, y_proba) if len(np.unique(y_test)) > 1 else float("nan")
-                elapsed = time.time() - t0
-                
-                results.append({
-                    "feature_set": feat_name, "model": model_name,
-                    "accuracy": acc, "f1": f1, "roc_auc": auc,
-                    "time_s": elapsed,
-                })
-                print(f"  [{feat_name:>17}] {model_name:<13}  "
-                      f"acc={acc:.4f}  f1={f1:.4f}  auc={auc:.4f}  ({elapsed:.1f}s)")
-            except Exception as e:
-                print(f"  [{feat_name:>17}] {model_name:<13}  FAILED: {e}")
+            scaler = StandardScaler()
+            X_train_s = scaler.fit_transform(X_train)
+            X_test_s = scaler.transform(X_test)
 
-        # --- 2. Advanced Ensemble Mixtures ---
-        # Only mix if we have at least 2 successful boosting models/RandomForest
-        mix_models = [m for m in ["CatBoost", "XGBoost", "LightGBM", "RandomForest"] if m in test_probas]
-        if len(mix_models) >= 2:
-            # A. Soft-Voting (Raw Probability Average)
-            soft_proba = np.mean([test_probas[m] for m in mix_models], axis=0)
-            soft_pred = (soft_proba >= 0.5).astype(int)
-            soft_acc = accuracy_score(y_test, soft_pred)
-            soft_f1 = f1_score(y_test, soft_pred, average="binary", zero_division=0)
-            soft_auc = roc_auc_score(y_test, soft_proba)
-            
-            results.append({
-                "feature_set": feat_name, "model": "SoftVote_Ensemble",
-                "accuracy": soft_acc, "f1": soft_f1, "roc_auc": soft_auc,
-                "time_s": 0.0,
-            })
-            print(f"  [{feat_name:>17}] SoftVote_Ensemble   acc={soft_acc:.4f}  f1={soft_f1:.4f}  auc={soft_auc:.4f}  (mix of {mix_models})")
-            
-            # Export predictions for backtesting on the combined feature set
-            if feat_name == "tabular+embedding":
+            base_models = make_base_models()
+            stack = make_stacking_model(base_models)
+            if stack is not None:
+                base_models["Stack"] = stack
+
+            preds_this_fold = {}
+
+            for model_name, model in base_models.items():
+                t0 = time.time()
                 try:
-                    test_df = merged_df[test_mask].copy()
-                    test_df["pred_proba"] = soft_proba
-                    pred_out_path = os.path.join(EXPLOITATION_DIR, "test_predictions.parquet")
-                    test_df[["ticker", "Date", "company_close", "target_7d_up", "pred_proba"]].to_parquet(pred_out_path, index=False)
-                    print(f"  -> [EXPORT] Saved SoftVote_Ensemble predictions to {pred_out_path} for backtesting")
-                except Exception as e:
-                    print(f"  -> [WARN] Could not export predictions: {e}")
-                
-                # Pickle best model ensemble, scaler, PCA, and metadata
-                try:
-                    import pickle
-                    best_model_path = os.path.join(EXPLOITATION_DIR, "best_model.pkl")
-                    serial_data = {
-                        "trained_models": base_models,
-                        "mix_models": mix_models,
-                        "scaler": scaler,
-                        "pca": pca,
-                        "tabular_cols": tabular_cols,
-                        "pca_cols": pca_cols,
-                        "company_embeddings": company_embeddings,
-                    }
-                    with open(best_model_path, "wb") as f:
-                        pickle.dump(serial_data, f)
-                    print(f"  -> [EXPORT] Saved best ensemble model & metadata to {best_model_path}")
-                except Exception as e:
-                    print(f"  -> [WARN] Could not pickle best ensemble model: {e}")
-            
-            # B. Rank-Average Ensemble (Percentile Rank Average)
-            # Extremely robust to model calibration and scale shifts in financial datasets!
-            rank_matrix = np.column_stack([pd.Series(test_probas[m]).rank(pct=True).values for m in mix_models])
-            rank_avg = np.mean(rank_matrix, axis=1)
-            # Threshold rank at median (0.5) to make binary prediction
-            rank_pred = (rank_avg >= 0.5).astype(int)
-            rank_acc = accuracy_score(y_test, rank_pred)
-            rank_f1 = f1_score(y_test, rank_pred, average="binary", zero_division=0)
-            rank_auc = roc_auc_score(y_test, rank_avg)
-            
-            results.append({
-                "feature_set": feat_name, "model": "RankAvg_Ensemble",
-                "accuracy": rank_acc, "f1": rank_f1, "roc_auc": rank_auc,
-                "time_s": 0.0,
-            })
-            print(f"  [{feat_name:>17}] RankAvg_Ensemble    acc={rank_acc:.4f}  f1={rank_f1:.4f}  auc={rank_auc:.4f}  (mix of {mix_models})")
+                    fit_with_early_stopping(model, X_train_s, y_train, model_name)
+                    y_pred = model.predict(X_test_s)
+                    # Predictions are continuous regression outputs.  Squash
+                    # them into [0,1] for IC/decile metrics that interpret
+                    # predictions as ranks (any monotone transform is fine
+                    # for IC, but [0,1] keeps the RMSE comparable).
+                    pred_rank = pd.Series(y_pred).rank(pct=True).values
+                    preds_this_fold[model_name] = pred_rank
 
+                    m = regression_metrics(y_test_rank, pred_rank, y_test_ret)
+                    fold_records.append(dict(
+                        fold=fold_idx, feature_set=feat_name,
+                        model=model_name, time_s=time.time()-t0, **m,
+                    ))
+                    print(f"    [{feat_name:>17}] {model_name:<13}  "
+                          f"IC={m['ic']:+.4f}  hit={m['hit_rate']:.3f}  "
+                          f"dec_spread={m['decile_spread_pct']:+.2f}%  "
+                          f"rmse={m['rmse']:.3f}  ({time.time()-t0:.1f}s)")
+                except Exception as e:
+                    print(f"    [{feat_name:>17}] {model_name:<13}  FAILED: {e}")
+
+            # Soft-vote ensemble of the tree models for this fold
+            mix_models = [m for m in ("RandomForest", "CatBoost", "XGBoost", "LightGBM")
+                          if m in preds_this_fold]
+            if len(mix_models) >= 2:
+                soft = np.mean([preds_this_fold[m] for m in mix_models], axis=0)
+                # Re-rank after averaging for a clean [0,1] prediction
+                soft = pd.Series(soft).rank(pct=True).values
+                m_soft = regression_metrics(y_test_rank, soft, y_test_ret)
+                fold_records.append(dict(
+                    fold=fold_idx, feature_set=feat_name,
+                    model="SoftVote", time_s=0.0, **m_soft,
+                ))
+                print(f"    [{feat_name:>17}] {'SoftVote':<13}  "
+                      f"IC={m_soft['ic']:+.4f}  hit={m_soft['hit_rate']:.3f}  "
+                      f"dec_spread={m_soft['decile_spread_pct']:+.2f}%  "
+                      f"rmse={m_soft['rmse']:.3f}")
+                preds_this_fold["SoftVote"] = soft
+
+            # On the LAST fold + combined feature set, freeze artefacts so the
+            # backtester / trading bot loads "the model trained on the most
+            # recent data prior to live deployment."
+            is_last_fold = (fold_idx == folds[-1][0])
+            if is_last_fold and feat_name == "tabular+embedding":
+                last_fold_predictions[feat_name] = {
+                    "test_mask": test_mask,
+                    "preds": preds_this_fold,
+                }
+                last_fold_artefacts = {
+                    "trained_models": base_models,
+                    "mix_models": mix_models,
+                    "scaler": scaler,
+                    "pca": pca,
+                    "tabular_cols": tabular_cols,
+                    "pca_cols": pca_cols,
+                    "company_embeddings": company_embeddings,
+                }
+
+    # ── Aggregate per-fold metrics into mean ± std ──────────────────────────
     print("\n" + "=" * 72)
-    print("Summary (sorted by ROC-AUC):")
+    print("Walk-Forward Summary  (mean ± std across folds, sorted by IC desc)")
     print("=" * 72)
-    df_res = pd.DataFrame(results).sort_values("roc_auc", ascending=False)
-    print(df_res.to_string(index=False, float_format="{:.4f}".format))
+    fold_df = pd.DataFrame(fold_records)
+    agg = (fold_df.groupby(["feature_set", "model"])
+           .agg(ic_mean=("ic", "mean"),       ic_std=("ic", "std"),
+                hit_mean=("hit_rate", "mean"), hit_std=("hit_rate", "std"),
+                ds_mean=("decile_spread_pct", "mean"),
+                ds_std=("decile_spread_pct", "std"),
+                rmse_mean=("rmse", "mean"),
+                n_folds=("ic", "count"))
+           .reset_index()
+           .sort_values("ic_mean", ascending=False))
+    print(agg.to_string(index=False, float_format="{:+.4f}".format))
 
-    best_combined = df_res[df_res.feature_set == "tabular+embedding"].head(1)
-    if len(best_combined):
-        b = best_combined.iloc[0]
-        print(f"\nBest combined model: {b['model']}  "
-              f"(AUC={b['roc_auc']:.4f}, F1={b['f1']:.4f})")
-    return df_res
+    # Best (model, feature_set) under the combined config
+    best = agg[agg.feature_set == "tabular+embedding"].head(1)
+    if len(best):
+        b = best.iloc[0]
+        print(f"\nBest combined model:  {b['model']}  "
+              f"IC = {b['ic_mean']:+.4f} ± {b['ic_std']:.4f}  "
+              f"hit = {b['hit_mean']:.3f}  "
+              f"decile spread = {b['ds_mean']:+.2f}% ± {b['ds_std']:.2f}%")
+
+    # ── Export last-fold predictions + frozen model artefacts ───────────────
+    if last_fold_predictions and last_fold_artefacts:
+        try:
+            test_mask = last_fold_predictions["tabular+embedding"]["test_mask"]
+            preds = last_fold_predictions["tabular+embedding"]["preds"]
+            export_df = merged_df[test_mask].copy()
+            for mname, pvec in preds.items():
+                export_df[f"pred_rank_{mname}"] = pvec
+            if "SoftVote" in preds:
+                export_df["pred_rank"] = preds["SoftVote"]
+            elif preds:
+                export_df["pred_rank"] = next(iter(preds.values()))
+            keep = ["ticker", "Date", "company_close",
+                    "target_30d_rank", "target_30d_return", "target_7d_up",
+                    "pred_rank"] + [f"pred_rank_{m}" for m in preds.keys()]
+            keep = [c for c in keep if c in export_df.columns]
+            export_path = os.path.join(EXPLOITATION_DIR, "test_predictions.parquet")
+            export_df[keep].to_parquet(export_path, index=False)
+            print(f"\n[EXPORT] Saved last-fold predictions to {export_path}")
+        except Exception as e:
+            print(f"[WARN] Could not export predictions: {e}")
+
+        try:
+            import pickle
+            best_model_path = os.path.join(EXPLOITATION_DIR, "best_model.pkl")
+            with open(best_model_path, "wb") as f:
+                pickle.dump(last_fold_artefacts, f)
+            print(f"[EXPORT] Saved last-fold artefacts to {best_model_path}")
+        except Exception as e:
+            print(f"[WARN] Could not pickle artefacts: {e}")
+
+    return agg, fold_df
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -791,8 +918,12 @@ def main():
     company_embeddings, embed_dim_real = extract_company_embeddings(model, ent2id)
     df_obs = load_observation_features(DB_PATH)
     df_obs = attach_macro_features(df_obs, DB_PATH, MACRO_KG_PATH)
-    feature_sets, y, merged, pca, tabular_cols, pca_cols = build_feature_matrices(df_obs, company_embeddings, embed_dim_real)
-    evaluate_all(feature_sets, y, merged, pca=pca, tabular_cols=tabular_cols, pca_cols=pca_cols, company_embeddings=company_embeddings)
+    feature_sets, y_rank, y_ret, merged, pca, tabular_cols, pca_cols = (
+        build_feature_matrices(df_obs, company_embeddings, embed_dim_real)
+    )
+    evaluate_all(feature_sets, y_rank, y_ret, merged,
+                 pca=pca, tabular_cols=tabular_cols, pca_cols=pca_cols,
+                 company_embeddings=company_embeddings)
 
 
 if __name__ == "__main__":

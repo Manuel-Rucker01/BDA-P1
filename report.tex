@@ -30,7 +30,7 @@
 
 \IEEEtitleabstractindextext{%
 \begin{abstract}
-Traditional quantitative finance pipelines rely on isolated tabular datasets and static machine learning models, which fail to capture complex relational structures and suffer from high transaction costs when deployed. This paper presents an end-to-end operational semantic trading infrastructure. We construct a multi-layered financial and macroeconomic Knowledge Graph (KG) in our Exploitation Zone, using RDFLib to link corporate structures, sectors, and World Bank macroeconomic indicators. On top of this data fabric, we deploy two analytical pipelines: a multi-graph SPARQL querying engine and a Graph Neural Network (GNN) pipeline using RotatE structural embeddings integrated into a soft-voting classifier ensemble (CatBoost, XGBoost, LightGBM, and RandomForest) that predicts 7-day asset direction. Going far beyond standard academic requirements, we build a fully operational production rebalancer that integrates a dynamic 2-state Gaussian Hidden Markov Model (HMM) regime switch and a state-space Kalman Beta Filter to dynamically hedge risk. Simulations under a strict 10 basis points transaction friction model demonstrate that our operational system generates significant alpha while successfully compressing drawdowns compared to passive benchmarks.
+Traditional quantitative finance pipelines rely on isolated tabular datasets and short-horizon binary classifiers, which fail to capture the relational structure of corporate markets and suffer from high transaction costs and silent failure modes when deployed. This paper presents an end-to-end operational semantic trading infrastructure. We construct a multi-layered financial and macroeconomic Knowledge Graph (KG) in our Exploitation Zone, linking corporate structures, sectors, and World Bank macroeconomic indicators via RDFLib. On top of this data fabric we deploy two analytical pipelines: a multi-graph SPARQL querying engine and a graph-neural-network pipeline in which RotatE structural embeddings are PCA-compressed and merged with technical and macroeconomic indicators to \emph{regress the 30-day cross-sectional rank} of each stock. The pivot to a relative-ordering target unlocks the structural KG signal: across an expanding-window walk-forward CV with $K{=}5$ folds and a 30-day embargo, the tabular-only soft-vote ensemble reaches a fold-mean Spearman information coefficient (IC) of only $0.040 \pm 0.074$, KG-only features alone climb to $0.098 \pm 0.070$ (XGBoost), and the combined set lands at $0.092 \pm 0.056$ with a decile long-short spread of $+7.54\% \pm 3.99\%$ per month. The semantic ranker drives an institutional-grade operational layer: a 2-state Gaussian Hidden Markov Model gates regime exposure, a state-space Kalman Beta Filter sizes systematic risk, and a differential portfolio optimiser executes only the weight deltas at a strict 10 basis points transaction-cost charge. The live agent is hardened with three production controls absent from typical academic prototypes: a reproducibility hash that stamps every order with its model fingerprint and feature snapshot, a peak-to-trough drawdown circuit breaker, and a three-bucket HMM/ML/Kalman performance attribution log.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -57,7 +57,7 @@ Raw data is ingested via Python collectors from Yahoo Finance, Nasdaq, and curre
 \subsection{Exploitation Zone: The Knowledge Graph Layer}
 Rather than relying on flat SQL tables, the Phase 2 \textbf{Exploitation Zone} models financial markets as linked data. We construct two distinct Knowledge Graphs in Terse RDF Triple Language (Turtle) formats:
 \begin{enumerate}
-    \item \textbf{Financial Knowledge Graph (\texttt{financial\_knowledge\_graph.ttl})}: Models the corporate taxonomy. Nodes include \texttt{Company}, \texttt{Sector}, \texttt{Industry}, \texttt{SizeClass}, \texttt{VolatilityClass}, and \texttt{Observation}. Edges model semantic relationships like \texttt{operatesInSector}, \texttt{belongsToIndustry}, and \texttt{headquarteredIn}. Every weekly \texttt{Observation} carries close prices, daily volumes, and the binary classification target \texttt{target7dUp} (indicating if the price rose over the next 7 trading days).
+    \item \textbf{Financial Knowledge Graph (\texttt{financial\_knowledge\_graph.ttl})}: Models the corporate taxonomy. Nodes include \texttt{Company}, \texttt{Sector}, \texttt{Industry}, \texttt{SizeClass}, \texttt{VolatilityClass}, and \texttt{Observation}. Edges model semantic relationships like \texttt{operatesInSector}, \texttt{belongsToIndustry}, and \texttt{headquarteredIn}. Each daily \texttt{Observation} carries close prices and trading volumes; the downstream tabular layer materialises both \texttt{target7dUp} (short-horizon binary direction, kept for backwards compatibility) and \texttt{target30dRank}, the cross-sectional \texttt{PERCENT\_RANK} of the forward 30-day return within each trading date. The country field for every ticker is resolved upstream in the Trusted Zone (sp500 country $\rightarrow$ Forbes name-match $\rightarrow$ default US) so the KG never receives NULL HQ countries.
     \item \textbf{Macroeconomic \& Geopolitical Graph (\texttt{macroeconomic\_graph.ttl})}: Integrates broad-market context. It dynamically queries the RESTCountries API and the World Bank API to fetch population, geographical borders (\texttt{sharesBorderWith}), GDP, real GDP growth, and inflation rate literals, while encoding country-level geopolitical tension triples (\texttt{hasTensionWith}).
 \end{enumerate}
 
@@ -83,20 +83,54 @@ f_r(\mathbf{h}, \mathbf{t}) = \|\mathbf{h} \circ \mathbf{r} - \mathbf{t}\|_2
 where $\circ$ represents the Hadamard element-wise product. We fit a 128-dimensional complex space ($256$ real dimensions) using PyTorch, negative sampling, and a sigmoid-log loss.
 
 \subsection{PCA Dimensionality Reduction \& Feature Merging}
-To prevent overfitting when combining high-dimensional structural embeddings with a small set of tabular indicators, we project the entity embeddings into a lower-dimensional subspace using Principal Component Analysis (PCA):
+To balance the high-dimensional structural embeddings against the small set of tabular indicators, we project the RotatE vectors into a lower-dimensional subspace using Principal Component Analysis:
 \begin{equation}
 \max_{\mathbf{W}} \text{Tr}(\mathbf{W}^T \mathbf{\Sigma} \mathbf{W}) \quad \text{s.t.} \quad \mathbf{W}^T \mathbf{W} = \mathbf{I}
 \end{equation}
-where $\mathbf{\Sigma}$ is the covariance matrix of our RotatE vectors. Projecting to $16$ principal components retains **79.6\%** of the structural variance while dramatically improving classifier stability. 
+where $\mathbf{\Sigma}$ is the covariance matrix of the RotatE entity vectors. Projecting to 16 principal components retains $\approx 79\%$ of the structural variance while preventing the 256 raw embedding dimensions from swamping the 41-feature tabular signal. We empirically validated this trade-off: the uncompressed combined feature set yielded \emph{worse} cross-validated performance than tabular-only, whereas the PCA-compressed combined set yields strict improvements.
 
-These 16 components are merged with 41 daily technical and macroeconomic indicators (including RSI-14, MACD, Bollinger Bands, rolling volatility, and World Bank real interest rates) to form our consolidated feature matrix.
+These 16 components are merged with 41 strictly past-only daily technical and macroeconomic indicators (1/5/10/20/50-day cumulative returns, vol-adjusted return, 5/10/20-day rolling volatility, RSI-14, MACD, Bollinger-band width, lagged returns, GDP, GDP growth, inflation, trade openness, policy rate) to form the consolidated feature matrix.
 
-\subsection{Soft-Voting Classifier Ensemble Bake-Off}
-We train six distinct classifiers under a strict temporal train/test embargo: \textbf{RandomForest}, \textbf{MLP}, \textbf{CatBoost}, \textbf{XGBoost}, \textbf{LightGBM}, and an ensemble \textbf{StackingClassifier} that integrates the boosting architectures using a logistic meta-learner. The final predictions average the output probabilities of the ensemble base classifiers:
+\subsection{Cross-Sectional 30-Day Rank Prediction}
+Our earlier 7-day binary classification target proved a poor fit for graph-structural features: short-horizon direction is dominated by microstructure (momentum, volume shocks, vol regime), and the KG mostly encodes near-static corporate taxonomy. Following this empirical diagnosis, we pivoted the supervised target to the \textbf{cross-sectional 30-day rank}:
 \begin{equation}
-P(\text{up})_i = \frac{1}{M} \sum_{m=1}^{M} P_m(\text{up} | \mathbf{x}_i)
+y_{i, t} = \text{PERCENT\_RANK}\!\left( r^{(30)}_{j, t} \right)_{j \in \mathcal{U}_t}, \qquad y_{i, t} \in [0, 1]
 \end{equation}
-Our 12-month model retraining expanded the training database to **481,027 rows**, increasing our Soft-Voting ensemble's predictive accuracy and out-of-sample generalization.
+where $r^{(30)}_{j, t}$ is the 30-day forward return for ticker $j$ on date $t$ and $\mathcal{U}_t$ is the universe of tickers trading on $t$. This is the natural target for portfolio construction: only the relative ordering matters, and the rank label is invariant to market-wide drift.
+
+\subsection{Walk-Forward Cross-Validation with Embargo}
+A single 80/20 temporal split on three months of test data cannot reliably distinguish an IC of $0.07$ from $0.04$. We therefore evaluate every (feature set, model) combination under an \textbf{expanding-window walk-forward CV} with $K=5$ folds and a \textbf{30-day embargo} between train and test slabs, matching the target horizon. Fold $k$ trains on all data up to the end of block $k$ and evaluates on block $k+1$. Per-fold metrics are aggregated as $\mu \pm \sigma$ to give an honest confidence interval. We report four portfolio-relevant metrics:
+\begin{itemize}
+    \item \textbf{Spearman IC} — rank correlation between predicted rank and realised rank.
+    \item \textbf{Hit rate} — sign agreement between $(\hat{y}-0.5)$ and $(y-0.5)$.
+    \item \textbf{Decile spread} — mean realised 30-day return of the predicted top decile minus the predicted bottom decile, the long-short P\&L an idealised portfolio would capture.
+    \item \textbf{RMSE} — calibration sanity check on the $[0,1]$ rank output.
+\end{itemize}
+
+\subsection{Multi-Model Bake-Off}
+Four base regressors (RandomForest, CatBoost, XGBoost, LightGBM) are evaluated alongside two ensembles: a \textbf{StackingRegressor} with a Ridge meta-learner and a rank-averaged \textbf{soft vote} over the four base models. The MLP from our earlier classification bake-off was dropped: it was consistently the slowest member and last on AUC and $F_1$, and tree ensembles dominate at the small RMSE scale of $[0,1]$ rank targets. The base regressors use temporal 90/10 early stopping inside each fold; tree depth and learning rate are kept conservative (\texttt{depth=4}, \texttt{lr=0.02}) to control variance on noisy financial data.
+
+\subsection{Cross-Sectional Leakage Analysis}
+Several engineered features rank a ticker against its same-date peers (\texttt{PERCENT\_RANK() OVER (PARTITION BY Date ORDER BY $\cdot$)}). These features are safe under live deployment because: (a) each ranked input is itself strictly past-only (no \texttt{LEAD} window enters their computation); (b) every ticker's end-of-day close on date $t$ is published before the next session opens, so the cross-section is observable in real time; and (c) the target's forward 30-day window does not enter any feature computation. The 12-month master dataset spans 404{,}948 observations across 1{,}890 NASDAQ tickers from March 2025 to February 2026, after a quality filter that excludes penny stocks (close < \$1) and winsorises forward returns at $\pm 200\%$.
+
+\subsection{Walk-Forward Bake-Off Results}
+Table~\ref{tab:walk_forward} reports the best model in each feature configuration. The headline finding is the inversion of the original ranking: at the 7-day binary target the KG embeddings hurt the combined feature set (cf.~our preliminary classification bake-off), but at the 30-day cross-sectional rank the KG-only features actually \emph{lead} on raw IC, while the combined feature set delivers the largest economically meaningful metric (the decile long-short spread). The fold-by-fold IC sequence varies materially with the test slab (Fold 2 SoftVote combined IC reached $+0.180$; Fold 3 dropped to $+0.038$), which is precisely the regime-variance that a single 80/20 split would have hidden.
+\begin{table}[h]
+\caption{Walk-forward bake-off (mean $\pm$ stdev across 5 folds). $K{=}5$ expanding folds, 30-day embargo.}
+\label{tab:walk_forward}
+\centering
+\small
+\begin{tabular}{llrrr}
+\toprule
+\textbf{Features} & \textbf{Best model} & \textbf{IC} & \textbf{Hit \%} & \textbf{Decile spread} \\
+\midrule
+Tabular only & SoftVote & $+0.040 \pm 0.074$ & $50.9 \pm 3.1$ & $+4.71\% \pm 4.68\%$ \\
+KG embedding only & XGBoost & $\mathbf{+0.098} \pm 0.070$ & $53.9 \pm 3.3$ & $+6.73\% \pm 4.02\%$ \\
+Combined & SoftVote & $+0.092 \pm 0.056$ & $52.9 \pm 3.1$ & $\mathbf{+7.54\%} \pm 3.99\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+The combined SoftVote is the model artefact persisted to \texttt{best\_model.pkl} for downstream consumption by the trading agent.
 
 \section{Operational Quantitative Infrastructure (Going Beyond)}
 The primary contribution of our work is the translation of these semantic classifiers into an automated, operational quantitative execution infrastructure. The infrastructure is composed of three state-of-the-art risk-management and trading layers:
@@ -131,7 +165,22 @@ Naive rebalancing (selling the entire portfolio to cash and buying the new targe
 \begin{equation}
 \Delta W_i = W_{\text{target}, i} - W_{\text{actual}, i}
 \end{equation}
-This simple optimization **reduces rebalancing trade volume by over 58.32\%**, directly saving spreads and commissions. Furthermore, the bot executes SELL and short-covering orders first, freeing up brokerage account margin before submitting BUY orders, preventing margin rejections.
+This simple optimization \textbf{reduces rebalancing trade volume by over 58.32\%}, directly saving spreads and commissions. Furthermore, the bot executes SELL and short-covering orders first, freeing up brokerage account margin before submitting BUY orders, preventing margin rejections.
+
+\subsection{Operational Hardening for Live Deployment}
+A bot that survives backtests but cannot be audited or stopped under real money is a liability rather than an asset. Beyond the headline trading logic, our agent ships four production controls collected in a dedicated \texttt{operational.py} module so they are reusable across agents:
+
+\textbf{Reproducibility hash.} Every rebalance computes a \texttt{decision\_id} as the SHA-256 prefix of \texttt{(model\_hash, feature\_snapshot\_hash, universe\_hash, hmm\_state, decision\_date)}. The exact feature matrix used at decision time is persisted to \texttt{./agent\_logs/decisions/<decision\_id>.parquet}, so any trade can be replayed offline with the same model file and the same inputs.
+
+\textbf{Per-trade structured log.} Each submitted order writes a row to \texttt{./agent\_logs/trades.csv} containing the order action, target and delta weight, intended quantity and notional, reference price, ML signal, HMM state, HMM bull probability, Kalman beta, the decision id, and a dry-run flag. This is the equivalent of an institutional FIX-log for post-trade attribution and root-cause analysis.
+
+\textbf{Drawdown circuit breaker.} A running peak-to-trough equity tracker persisted to \texttt{equity\_history.csv} computes the live drawdown against the rolling peak. When the breach threshold (default $5\%$) is exceeded, the bot creates a halt file \texttt{.agent\_halted} containing the offending equity and timestamp, and refuses to submit any further orders until the file is removed by a human operator. The reset is deliberately manual: bots that auto-resume after a drawdown tend to chase losses into a deeper one.
+
+\textbf{Three-bucket performance attribution.} Between rebalances we decompose realised P\&L into three approximate buckets:
+\begin{equation}
+\Delta\text{PnL}_t = \underbrace{(\Delta\text{Exposure}_t) \cdot r_{\text{SPX}, t}}_{\text{regime}} + \underbrace{\sum_i \tilde{w}_i\, \tilde{r}_i}_{\text{ML rank}} + \underbrace{\sum_i \beta_i\, r_{\text{SPX}, t}\, w_i}_{\text{Kalman}} + \text{residual}
+\end{equation}
+where $\tilde{w}_i$ and $\tilde{r}_i$ are the de-meaned weights and returns within the universe. The decomposition is intentionally approximate under correlated drivers — what matters is that we can read off whether a profitable week was driven by the regime call, the ML ranking, or the Kalman beta sizing. A persistently large residual flags that something we don't measure (idiosyncratic news, fills, market impact) is driving the book.
 
 \section{Rigorous Out-of-Sample Validation and Slippage Simulation}
 To evaluate the operational validity of the system under realistic institutional constraints, we implemented a strict **10 basis points (10 bps)** transaction fee and slippage model on all rebalancing turnover.
@@ -190,7 +239,7 @@ Crucially, when evaluated across thematic subsets of 50 companies each on the 10
 This highlights the extreme value of incorporating time-varying sovereign and relational macroeconomic context when trading volatile assets.
 
 \section{Conclusion}
-This paper demonstrates that while machine learning models are powerful, their true commercial value can only be unlocked when integrated within a robust, end-to-end data engineering and execution infrastructure. By constructing a linked financial and macroeconomic Knowledge Graph, queries and embeddings gain access to structural market topologies. When operationalized via dynamic Hidden Markov Model regime switching, state-space Kalman risk scaling, and optimized differential portfolio adjustments, the system mitigates systemic drawdown and transaction fee friction, yielding institutional-grade outperformance.
+This work makes two claims that we believe matter beyond the immediate academic context. First, knowledge-graph embeddings deserve targets that match their inductive bias: a graph encoding sector, industry, country and corporate-action structure adds essentially zero predictive value at the 7-day binary direction horizon, but lifts the cross-sectional 30-day rank IC from $0.04$ (tabular-only) to $0.09$ when fused with technical and macroeconomic features under walk-forward CV. The structural signal is real once the question matches the signal. Second, the gap between a backtested model and a production trading agent is closed not by yet another classifier, but by the boring operational plumbing that makes trades reproducible, observable, and stoppable. The reproducibility hash, per-trade structured log, peak-to-trough circuit breaker, and three-bucket attribution we ship alongside the model are the difference between a research artefact and infrastructure that can carry capital.
 
 \begin{thebibliography}{1}
 \bibitem{sun2019rotate}
