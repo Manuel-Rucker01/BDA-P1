@@ -61,6 +61,54 @@ This project implements a fully integrated, semantic quantitative trading and in
 
 ---
 
+## 📥 Cloning the Repository (Git LFS Required)
+
+Two large artefacts in this repository are stored via **[Git LFS](https://git-lfs.com)** rather than as ordinary Git blobs:
+
+| File | Size | Why it's in LFS |
+|---|---|---|
+| `ExploitationZone/best_model.pkl` | 157 MB | Trained ensemble (CatBoost + XGB + LightGBM + RF) + fitted scaler + PCA state |
+| `ExploitationZone/financial_knowledge_graph.ttl` | 98 MB | Generated RDF graph (~590k triples) |
+
+A plain `git clone` without LFS will leave you with **pointer stubs** instead of these files, and `graph_generation.py` / the trading bot will fail at load time. Do the following once:
+
+```bash
+# 1. Install git-lfs (one-time)
+brew install git-lfs                   # macOS
+# sudo apt install git-lfs             # Ubuntu / Debian
+# choco install git-lfs                # Windows (Chocolatey)
+
+# 2. Register the LFS smudge/clean filters in your user config (one-time)
+git lfs install
+
+# 3. Clone the repo — LFS objects download automatically as part of the checkout
+git clone git@github.com:Manuel-Rucker01/BDA-P1.git
+cd BDA-P1
+```
+
+If you already cloned the repo *before* installing LFS, the two files above will be tiny pointer text files. Fix it with:
+
+```bash
+git lfs install
+git lfs pull                           # download the real binary blobs
+```
+
+To verify everything is in order:
+
+```bash
+git lfs ls-files
+# expected output:
+#   b6bdb5b557 - ExploitationZone/best_model.pkl
+#   ade219497a - ExploitationZone/financial_knowledge_graph.ttl
+
+ls -lh ExploitationZone/best_model.pkl ExploitationZone/financial_knowledge_graph.ttl
+# expected:  ~157M and ~98M (not a few KB)
+```
+
+> **Note for existing contributors:** the LFS migration on 26 May 2026 force-pushed a rewritten history to `main`. If you have a clone from before that date, your local `main` no longer matches the remote. The safe fix is `git fetch origin && git reset --hard origin/main` after backing up any local branches, or simply re-clone.
+
+---
+
 ## 🚀 Step-by-Step Operations Pipeline
 
 Run all execution commands from the repository root directory.
