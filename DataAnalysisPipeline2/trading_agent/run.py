@@ -156,13 +156,15 @@ def main():
         # 4. Run ensemble inference
         predictions = agent.run_inference(prices_df)
         
-        print("\nModel Inference Probabilities & Kalman Betas:")
-        print("-" * 70)
-        print(f"{'Ticker':<8} | {'Current Close':<15} | {'P(up) Probability':<20} | {'Kalman Beta'}")
-        print("-" * 70)
+        print("\nModel Inference (30d Cross-Sectional Rank) & Kalman Betas:")
+        print("-" * 75)
+        print(f"{'Ticker':<8} | {'Current Close':<15} | {'Pred Rank (30d)':<20} | {'Kalman Beta'}")
+        print("-" * 75)
         for _, row in predictions.iterrows():
-            print(f"{row['ticker']:<8} | ${row['company_close']:>14.2f} | {row['pred_proba'] * 100:>18.2f}% | {row['kalman_beta']:>11.2f}")
-        print("-" * 70)
+            rank_val = row.get("pred_rank", row.get("pred_proba", float("nan")))
+            print(f"{row['ticker']:<8} | ${row['company_close']:>14.2f} | "
+                  f"{rank_val * 100:>18.2f}% | {row['kalman_beta']:>11.2f}")
+        print("-" * 75)
 
         # 5. Compute target weights
         weights = agent.calculate_target_weights(predictions, is_bull, strategy=args.strategy)

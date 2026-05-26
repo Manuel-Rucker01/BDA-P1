@@ -228,16 +228,35 @@ def run_backtest_for_horizon(df_all_feat, df_full, gspc_df, friday_dates, compan
         X_full_s = scaler.transform(X_full)
         X_full_df = pd.DataFrame(X_full_s, columns=tabular_cols + pca_cols)
         
-        # Soft Voting predictions
-        model_probas = []
+        # Soft-vote ensemble inference — regressor-aware.
+        # The new best_model.pkl ships REGRESSORS trained against the 30-day
+        # cross-sectional rank target.  We:
+        #   1. call .predict on each base model (or .predict_proba on legacy
+        #      classifiers if a back-compat model file is loaded),
+        #   2. rank each model's predictions across the live cross-section,
+        #   3. average the per-model ranks and re-rank so the output column
+        #      is a clean [0, 1] cross-sectional rank.
+        # `pred_proba` is preserved as the column name so the downstream
+        # threshold logic (>= 0.53, raw_weight = pred − 0.5, etc.) still
+        # behaves correctly in rank space.
+        model_preds = []
         for m in mix_models:
             if m in trained_models:
+                est = trained_models[m]
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", category=UserWarning)
-                    y_proba = trained_models[m].predict_proba(X_full_df)[:, 1]
-                model_probas.append(y_proba)
-        
-        friday_obs["pred_proba"] = np.mean(model_probas, axis=0)
+                    if hasattr(est, "predict_proba"):
+                        y = est.predict_proba(X_full_df)[:, 1]
+                    else:
+                        y = est.predict(X_full_df)
+                model_preds.append(np.asarray(y, dtype=float))
+
+        rank_matrix = np.column_stack(
+            [pd.Series(p).rank(pct=True).values for p in model_preds]
+        )
+        friday_obs["pred_proba"] = (
+            pd.Series(rank_matrix.mean(axis=1)).rank(pct=True).values
+        )
         
         # Kalman Betas for each stock
         kf = KalmanBetaFilter(q_noise=config.KALMAN_Q, r_noise=config.KALMAN_R)

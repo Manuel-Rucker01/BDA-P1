@@ -439,7 +439,7 @@ class BDATradingAgent:
         # Filled in by run_inference()/execute_alpaca_rebalance() so we have a
         # full audit trail of "what did the bot see when it traded?"
         self.last_decision_ctx = None
-        self.last_predictions_df = None     # ticker, pred_proba, kalman_beta, ...
+        self.last_predictions_df = None     # ticker, pred_rank, pred_proba, kalman_beta, ...
         self.last_feature_matrix = None     # scaled X used to call .predict()
 
     def load_model(self):
@@ -585,17 +585,44 @@ class BDATradingAgent:
         # Convert back to a DataFrame with identical feature names to prevent scikit-learn/LGBM warnings
         X_full_df = pd.DataFrame(X_full_s, columns=self.tabular_cols + self.pca_cols)
 
-        # Average prediction probabilities across ensemble classifiers
+        # ── Ensemble inference (regressor interface) ──────────────────────
+        # The new best_model.pkl ships REGRESSORS trained against the 30-day
+        # cross-sectional rank target in [0, 1].  We:
+        #   1. average the continuous predictions across the base ensemble,
+        #   2. re-rank the average across the live universe so that the
+        #      output column "pred_rank" is again a clean [0, 1] cross-
+        #      sectional rank.  This makes the downstream `>= threshold`
+        #      logic in calculate_target_weights still meaningful.
+        # The legacy "pred_proba" column is kept as an alias so existing
+        # consumers (trade logger, backtests pre-migration) don't break.
         import warnings
-        model_probas = []
+        model_preds = []
         for m in self.mix_models:
             if m in self.trained_models:
+                est = self.trained_models[m]
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", category=UserWarning)
-                    y_proba = self.trained_models[m].predict_proba(X_full_df)[:, 1]
-                model_probas.append(y_proba)
+                    if hasattr(est, "predict_proba"):  # legacy classifier path
+                        y = est.predict_proba(X_full_df)[:, 1]
+                    else:                              # regressor (current)
+                        y = est.predict(X_full_df)
+                model_preds.append(np.asarray(y, dtype=float))
 
-        latest_df["pred_proba"] = np.mean(model_probas, axis=0)
+        if not model_preds:
+            raise RuntimeError("[Agent] No mix_models produced predictions.")
+
+        # Soft-vote: rank each base model's predictions on the live universe,
+        # then average the ranks.  This is robust to scale shifts across the
+        # different regressor families (xgb/lgb/cat/rf each produce values in
+        # their own range — averaging raw outputs would over-weight the
+        # widest-range model).
+        rank_matrix = np.column_stack(
+            [pd.Series(p).rank(pct=True).values for p in model_preds]
+        )
+        avg_rank = pd.Series(rank_matrix.mean(axis=1)).rank(pct=True).values
+        latest_df["pred_rank"] = avg_rank
+        # Backwards-compatible alias for log + downstream consumers
+        latest_df["pred_proba"] = avg_rank
 
         # 1. Download S&P 500 returns for Kalman Beta
         print("[Agent] Fetching S&P 500 history for Kalman Beta calculations...")
@@ -658,36 +685,55 @@ class BDATradingAgent:
         self.last_predictions_df = latest_df.copy()
         self.last_feature_matrix = X_full_df.copy()
 
-        return latest_df[["ticker", "company_close", "pred_proba", "kalman_beta"]].sort_values("pred_proba", ascending=False)
+        return latest_df[["ticker", "company_close", "pred_rank",
+                          "pred_proba", "kalman_beta"]].sort_values(
+            "pred_rank", ascending=False)
 
     def calculate_target_weights(self, predictions_df, is_bull, strategy="high_confidence"):
         """
-        Computes optimal target portfolio weights.
-        Supports 'high_confidence' (Long only, P >= 0.53) and 'regime_filtered' (Long/Short switch).
+        Computes optimal target portfolio weights from cross-sectional 30d
+        rank predictions in [0, 1].
+
+        Strategies:
+          - high_confidence : long the top-ranked tickers (pred_rank >= CONFIDENCE_THRESHOLD).
+                              Threshold is a *rank percentile* now, not a probability —
+                              0.53 means roughly the top 47% of the live universe.
+          - regime_filtered : long/short tilt with raw_weight = pred_rank − 0.5,
+                              shorts disabled in bull regimes via the HMM gate.
         """
-        print(f"[Agent] Computing target allocations using '{strategy}' strategy...")
-        
+        print(f"[Agent] Computing target allocations using '{strategy}' strategy "
+              f"(pred_rank threshold = {config.CONFIDENCE_THRESHOLD})")
+
         target_weights = {t: 0.0 for t in config.TICKERS}
-        
+
+        # Use pred_rank as the canonical signal column; fall back to pred_proba
+        # for any caller still using the legacy column name.
+        if "pred_rank" not in predictions_df.columns:
+            predictions_df = predictions_df.copy()
+            predictions_df["pred_rank"] = predictions_df["pred_proba"]
+
         if strategy == "high_confidence":
-            # Select highly robust candidates matching threshold
-            high_longs = predictions_df[predictions_df["pred_proba"] >= config.CONFIDENCE_THRESHOLD].copy()
-            
+            high_longs = predictions_df[
+                predictions_df["pred_rank"] >= config.CONFIDENCE_THRESHOLD
+            ].copy()
+
             if high_longs.empty:
-                print(f"[Agent] No tickers met P >= {config.CONFIDENCE_THRESHOLD}. Selecting top 2 as reference protection.")
+                print(f"[Agent] No tickers above rank {config.CONFIDENCE_THRESHOLD}. "
+                      f"Falling back to top 2 by rank.")
                 high_longs = predictions_df.head(2).copy()
-                
-            # Weight allocations proportional to predicted probabilities (ponderating by P)
-            sum_prob = high_longs["pred_proba"].sum()
-            if sum_prob > 0:
+
+            # Weights proportional to predicted rank (top ranks get more capital)
+            sum_rank = high_longs["pred_rank"].sum()
+            if sum_rank > 0:
                 for _, row in high_longs.iterrows():
-                    t = row["ticker"]
-                    prob = row["pred_proba"]
-                    target_weights[t] = (prob / sum_prob) * config.TARGET_EXPOSURE
-                
+                    target_weights[row["ticker"]] = (
+                        row["pred_rank"] / sum_rank
+                    ) * config.TARGET_EXPOSURE
+
         elif strategy == "regime_filtered":
             predictions_df = predictions_df.copy()
-            predictions_df["raw_weight"] = predictions_df["pred_proba"] - 0.5
+            # Centre at 0.5 so a uniform random ranker produces zero weights
+            predictions_df["raw_weight"] = predictions_df["pred_rank"] - 0.5
             
             # Scale shorts using Kalman Beta
             def scale_short(row):
@@ -770,7 +816,9 @@ class BDATradingAgent:
             sel = self.last_predictions_df[self.last_predictions_df["ticker"] == ticker]
             if not sel.empty:
                 pred_row = sel.iloc[0]
-        ml = float(pred_row["pred_proba"]) if pred_row is not None else float("nan")
+        ml = float(pred_row.get("pred_rank",
+                                pred_row.get("pred_proba", float("nan")))) \
+            if pred_row is not None else float("nan")
         beta = float(pred_row.get("kalman_beta", 1.0)) if pred_row is not None else float("nan")
         ctx = self.last_decision_ctx
         return TradeLogRow(
