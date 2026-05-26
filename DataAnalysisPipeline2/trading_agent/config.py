@@ -68,3 +68,7 @@ HMM_TRAINING_DAYS = 250         # Number of historical days to train the HMM
 KALMAN_Q = 1e-4                 # Process noise covariance (Beta drift)
 KALMAN_R = 1e-1                 # Measurement noise covariance (trust in daily prints)
 
+# --- Quantitative Trading Upgrades ---
+FRED_API_KEY = os.getenv("FRED_API_KEY", "")
+ALPACA_CHECK_BORROWABILITY = True # Enable Alpaca Shortable / Easy-to-Borrow (ETB) check
+

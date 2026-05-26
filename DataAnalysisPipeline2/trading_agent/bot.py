@@ -356,6 +356,11 @@ def compute_live_features(live_df, metadata_df, macro_df):
     df['rolling_volatility_10d'] = df.groupby('ticker')['company_close'].transform(lambda x: x.rolling(11, min_periods=1).std()).fillna(0)
     df['rolling_volatility_20d'] = df.groupby('ticker')['company_close'].transform(lambda x: x.rolling(21, min_periods=1).std()).fillna(0)
     
+    # Square-Root Market Impact metrics
+    df['dollar_volume'] = df['company_close'] * df['company_volume']
+    df['adv_usd'] = df.groupby('ticker')['dollar_volume'].transform(lambda x: x.rolling(21, min_periods=1).mean()).fillna(1e6)
+    df['return_volatility_20d'] = df.groupby('ticker')['daily_return'].transform(lambda x: x.rolling(21, min_periods=1).std()).fillna(0.01)
+    
     # Calendrical features
     df['day_of_week'] = pd.to_datetime(df['Date']).dt.dayofweek
     df['month_of_year'] = pd.to_datetime(df['Date']).dt.month
@@ -657,6 +662,43 @@ class BDATradingAgent:
             else:
                 shorts = predictions_df[predictions_df["raw_weight"] <= -0.02].copy()
                 
+            # Upgraded Short Easy-to-Borrow (ETB) Checks
+            if not shorts.empty and getattr(config, "ALPACA_CHECK_BORROWABILITY", True):
+                has_credentials = len(config.ALPACA_API_KEY) > 0 and len(config.ALPACA_SECRET_KEY) > 0
+                if has_credentials:
+                    print("[Agent] Checking short candidate borrowability via Alpaca Asset API...")
+                    try:
+                        from alpaca.trading.client import TradingClient
+                        tc = TradingClient(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY, paper=config.ALPACA_PAPER_TRADING)
+                        
+                        etb_tickers = []
+                        for _, row in shorts.iterrows():
+                            ticker = row["ticker"]
+                            try:
+                                asset = tc.get_asset(ticker)
+                                if asset.shortable and asset.easy_to_borrow:
+                                    etb_tickers.append(ticker)
+                                    print(f"  -> {ticker}: Easy-To-Borrow (ETB) verified.")
+                                else:
+                                    print(f"  -> [REJECTED] {ticker}: NOT Easy-To-Borrow or shortable. Setting weight to 0.0.")
+                            except Exception as ex:
+                                print(f"  -> [WARNING] Failed to query borrowability for {ticker}: {ex}. Setting weight to 0.0 for safety.")
+                        
+                        shorts = shorts[shorts["ticker"].isin(etb_tickers)].copy()
+                    except Exception as e:
+                        print(f"[WARNING] Alpaca Asset API query failed: {e}. Defaulting to safe no-short mode.")
+                        shorts = pd.DataFrame()
+                else:
+                    print("[Agent] Alpaca credentials missing. Simulating dynamic ETB proxy (excluding alphabetical small-caps starting with 'AA' to emulate limited borrow pool)...")
+                    etb_tickers = []
+                    for _, row in shorts.iterrows():
+                        ticker = row["ticker"]
+                        if ticker.startswith("AA") and ticker not in ["AAPL"]:
+                            print(f"  -> [MOCK REJECTED] {ticker}: NOT Easy-To-Borrow (mock). Setting weight to 0.0.")
+                        else:
+                            etb_tickers.append(ticker)
+                    shorts = shorts[shorts["ticker"].isin(etb_tickers)].copy()
+
             if longs.empty and shorts.empty:
                 print("[Agent] No candidates qualified for exposure. Holding 100% Cash.")
                 return target_weights
