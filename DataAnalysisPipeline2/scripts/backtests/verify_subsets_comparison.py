@@ -32,6 +32,46 @@ from trading_agent import config
 from trading_agent.bot import GaussianHMM, KalmanBetaFilter, compute_live_features, load_macro_features, fetch_company_metadata
 from ExploitationZone.geopolitical_macroeconomic import get_pit_macro_indicators
 
+_CS_Z = False  # set by main() after pickle load (Part-4 P3)
+
+# ── Pickle compat shim for MLP regressor ─────────────────────────────────
+# best_model.pkl serialises a TorchMLPRegressor that lives in
+# DataAnalysisPipeline2/scripts/kg_embeddings_classifier.py. When the
+# bake-off ran as `python kg_embeddings_classifier.py`, the class was
+# pickled under __main__.TorchMLPRegressor — so this loader has to
+# re-publish it on __main__ for pickle.load to resolve.
+try:
+    import sys as _sys, os as _os
+    _here = _os.path.dirname(_os.path.abspath(__file__))
+    for _rel in ('..', '../..', '../scripts', '../../scripts'):
+        _cand = _os.path.abspath(_os.path.join(_here, _rel))
+        if _os.path.exists(_os.path.join(_cand, 'kg_embeddings_classifier.py')):
+            if _cand not in _sys.path:
+                _sys.path.insert(0, _cand)
+            break
+    from kg_embeddings_classifier import TorchMLPRegressor as _TorchMLPRegressor
+    _sys.modules['__main__'].TorchMLPRegressor = _TorchMLPRegressor
+except Exception as _e:
+    print(f'[shim] could not pre-register TorchMLPRegressor: {_e}')
+# ──────────────────────────────────────────────────────────────────────────
+
+
+
+# ── Top-K selection helper (Part 5) ──────────────────────────────────────────
+def _select_top_k(friday_obs, pct_threshold=None, top_k=None):
+    '''Replace fixed 0.53 gate with: top-pct% gate -> cap at K, sorted desc.'''
+    if pct_threshold is None:
+        pct_threshold = float(os.environ.get("BACKTEST_TOP_PCT", "5.0"))
+    if top_k is None:
+        top_k = int(os.environ.get("BACKTEST_TOP_K", "10"))
+    cutoff = 1.0 - (pct_threshold / 100.0)
+    gated = friday_obs[friday_obs["pred_proba"] >= cutoff].copy()
+    gated = gated.sort_values("pred_proba", ascending=False).head(top_k)
+    if gated.empty:
+        gated = friday_obs.sort_values("pred_proba", ascending=False).head(top_k).copy()
+    return gated
+# ────────────────────────────────────────────────────────────────────────────
+
 def get_rolling_vintage_embeddings(base_embeddings, current_date_str, db_path):
     """
     Produces temporal-aligned, leak-free RotatE embeddings for the given date.
@@ -197,19 +237,33 @@ def run_backtest_for_subset(df_all_feat, df_full, gspc_df, friday_dates, company
         X_tab = friday_obs[tabular_cols].fillna(0).values.astype(np.float32)
         X_emb = friday_obs[pca_cols].fillna(0).values.astype(np.float32)
         X_full = np.concatenate([X_tab, X_emb], axis=1)
-        X_full_s = scaler.transform(X_full)
+        if _CS_Z:
+            _mean = X_full.mean(axis=0, keepdims=True)
+            _std = X_full.std(axis=0, keepdims=True) + 1e-8
+            X_full_s = np.clip((X_full - _mean) / _std, -6.0, 6.0).astype(np.float32)
+        else:
+            X_full_s = scaler.transform(X_full)
         X_full_df = pd.DataFrame(X_full_s, columns=tabular_cols + pca_cols)
         
-        # Soft Voting predictions
-        model_probas = []
+        # Soft-vote ensemble inference — regressor-aware.
+        model_preds = []
         for m in mix_models:
             if m in trained_models:
+                est = trained_models[m]
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", category=UserWarning)
-                    y_proba = trained_models[m].predict_proba(X_full_df)[:, 1]
-                model_probas.append(y_proba)
-        
-        friday_obs["pred_proba"] = np.mean(model_probas, axis=0)
+                    if hasattr(est, "predict_proba"):
+                        y = est.predict_proba(X_full_df)[:, 1]
+                    else:
+                        y = est.predict(X_full_df)
+                model_preds.append(np.asarray(y, dtype=float))
+
+        rank_matrix = np.column_stack(
+            [pd.Series(p).rank(pct=True).values for p in model_preds]
+        )
+        friday_obs["pred_proba"] = (
+            pd.Series(rank_matrix.mean(axis=1)).rank(pct=True).values
+        )
         
         # Kalman Betas
         kf = KalmanBetaFilter(q_noise=config.KALMAN_Q, r_noise=config.KALMAN_R)
@@ -308,9 +362,7 @@ def run_backtest_for_subset(df_all_feat, df_full, gspc_df, friday_dates, company
         hmm_values.append(equity_hmm)
         
         # --- C. High-Confidence Longs (P >= 0.53) ---
-        high_long_df = friday_obs[friday_obs["pred_proba"] >= 0.53].copy()
-        if high_long_df.empty:
-            high_long_df = friday_obs.sort_values("pred_proba", ascending=False).head(2).copy()
+        high_long_df = _select_top_k(friday_obs)
         
         sum_prob = high_long_df["pred_proba"].sum()
         hl_weights = {}
@@ -368,6 +420,12 @@ def main():
     tabular_cols = model_data["tabular_cols"]
     pca_cols = model_data["pca_cols"]
     company_embeddings = model_data["company_embeddings"]
+    # Part-4 P3 hand-shake: training may have used cross-sectional Z
+    # standardisation in place of the global scaler. Mirror that here
+    # if the flag is present in the pickle.
+    global _CS_Z
+    _CS_Z = bool(model_data.get("cs_z_standardize", False))
+    print(f"[Model] cs_z_standardize={_CS_Z}")
     
     # 2. Extract 5 Subsets of 50 Tickers each from DuckDB
     print("\n[Ingestion] Querying 5 distinct subsets of 50 tickers each from ExploitationZone...")
@@ -517,7 +575,7 @@ def main():
     print("=" * 125)
     
     # Save a detailed comparison results file in brain/artifact directory
-    artifact_path = "/Users/manuelruckerabella/.gemini/antigravity/brain/27ff2939-bfba-4752-8c62-8eac1df33b87/subsets_comparison_report.md"
+    artifact_path = "/Users/manuelruckerabella/.gemini/antigravity/brain/5ff25afd-4ae7-4146-9d7d-4675e86fc3e6/subsets_comparison_report.md"
     print(f"[Exporting] Writing detailed comparisons to {artifact_path}...")
     
     with open(artifact_path, "w") as f:

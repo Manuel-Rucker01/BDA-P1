@@ -21,6 +21,28 @@ from .operational import (
 
 # --- Helper Technical Indicators ---
 
+# ── Pickle compat shim for MLP regressor ─────────────────────────────────
+# best_model.pkl serialises a TorchMLPRegressor that lives in
+# DataAnalysisPipeline2/scripts/kg_embeddings_classifier.py. When the
+# bake-off ran as `python kg_embeddings_classifier.py`, the class was
+# pickled under __main__.TorchMLPRegressor — so this loader has to
+# re-publish it on __main__ for pickle.load to resolve.
+try:
+    import sys as _sys, os as _os
+    _here = _os.path.dirname(_os.path.abspath(__file__))
+    for _rel in ('..', '../..', '../scripts', '../../scripts'):
+        _cand = _os.path.abspath(_os.path.join(_here, _rel))
+        if _os.path.exists(_os.path.join(_cand, 'kg_embeddings_classifier.py')):
+            if _cand not in _sys.path:
+                _sys.path.insert(0, _cand)
+            break
+    from kg_embeddings_classifier import TorchMLPRegressor as _TorchMLPRegressor
+    _sys.modules['__main__'].TorchMLPRegressor = _TorchMLPRegressor
+except Exception as _e:
+    print(f'[shim] could not pre-register TorchMLPRegressor: {_e}')
+# ──────────────────────────────────────────────────────────────────────────
+
+
 def compute_rsi(series, period=14):
     delta = series.diff()
     gain = delta.clip(lower=0)
@@ -459,7 +481,12 @@ class BDATradingAgent:
         self.tabular_cols = self.model_data["tabular_cols"]
         self.pca_cols = self.model_data["pca_cols"]
         self.company_embeddings = self.model_data["company_embeddings"]
-        print(f"[Agent] Model successfully loaded. Base models: {self.mix_models}")
+        # Part-4 P3: when CS-Z standardisation was used at training time,
+        # apply the same transform at inference (per-date z-score on the
+        # live cross-section). Falls back to global scaler otherwise.
+        self.cs_z_standardize = bool(self.model_data.get("cs_z_standardize", False))
+        print(f"[Agent] Model successfully loaded. Base models: {self.mix_models}  "
+              f"cs_z_standardize={self.cs_z_standardize}")
 
     def check_market_regime(self, force_regime=None):
         """
@@ -518,33 +545,89 @@ class BDATradingAgent:
             return False
 
     def fetch_live_data(self):
-        """Downloads live historical bars for our 20 high-alpha tickers."""
-        print(f"[Agent] Downloading 60 days of historical daily bars for {len(config.TICKERS)} tickers...")
-        df_list = []
+        """Downloads live historical bars for the active ticker universe.
+
+        For small baskets (<= 30 tickers) we keep the per-ticker loop so error
+        reporting stays granular. For the full-universe mode (~1,890 tickers)
+        we use a single batched `yf.download(...)` call which is dramatically
+        faster (Yahoo parallelises internally) and only logs the names that
+        actually failed.
+        """
+        n = len(config.TICKERS)
+        print(f"[Agent] Downloading 60 days of historical daily bars for {n} tickers...")
+
+        if n <= 30:
+            df_list = []
+            for ticker in config.TICKERS:
+                try:
+                    ticker_df = yf.download(ticker, period="60d", progress=False)
+                    if not ticker_df.empty:
+                        ticker_df = ticker_df.reset_index()
+                        ticker_df["ticker"] = ticker
+                        ticker_df = ticker_df.rename(columns={
+                            "Close": "company_close",
+                            "Volume": "company_volume",
+                            "Open": "Open",
+                            "High": "High",
+                            "Low": "Low"
+                        })
+                        if isinstance(ticker_df.columns, pd.MultiIndex):
+                            ticker_df.columns = [col[0] for col in ticker_df.columns]
+                        ticker_df["Date"] = pd.to_datetime(ticker_df["Date"]).dt.strftime('%Y-%m-%d')
+                        df_list.append(ticker_df)
+                except Exception as e:
+                    print(f"[WARNING] Failed to download data for {ticker}: {e}")
+            if not df_list:
+                raise RuntimeError("No historical bars could be fetched for any tickers.")
+            return pd.concat(df_list, ignore_index=True)
+
+        # ── Full-universe batched path ──────────────────────────────────────
+        # yfinance returns a MultiIndex (field, ticker) DataFrame in batch
+        # mode. We pivot it into long form with the same columns the per-
+        # ticker path produces.
+        batch = yf.download(
+            tickers=" ".join(config.TICKERS),
+            period="60d",
+            progress=False,
+            group_by="ticker",
+            auto_adjust=True,
+            threads=True,
+        )
+        if batch is None or batch.empty:
+            raise RuntimeError("Batched yfinance download returned no rows.")
+
+        long_rows = []
+        failures = []
         for ticker in config.TICKERS:
             try:
-                ticker_df = yf.download(ticker, period="60d", progress=False)
-                if not ticker_df.empty:
-                    ticker_df = ticker_df.reset_index()
-                    ticker_df["ticker"] = ticker
-                    ticker_df = ticker_df.rename(columns={
-                        "Close": "company_close",
-                        "Volume": "company_volume",
-                        "Open": "Open",
-                        "High": "High",
-                        "Low": "Low"
-                    })
-                    if isinstance(ticker_df.columns, pd.MultiIndex):
-                        ticker_df.columns = [col[0] for col in ticker_df.columns]
-                    ticker_df["Date"] = pd.to_datetime(ticker_df["Date"]).dt.strftime('%Y-%m-%d')
-                    df_list.append(ticker_df)
+                if isinstance(batch.columns, pd.MultiIndex):
+                    if ticker not in batch.columns.get_level_values(0):
+                        failures.append(ticker)
+                        continue
+                    sub = batch[ticker].dropna(how="all").reset_index()
+                else:
+                    sub = batch.dropna(how="all").reset_index()
+                if sub.empty:
+                    failures.append(ticker)
+                    continue
+                sub = sub.rename(columns={
+                    "Close": "company_close",
+                    "Volume": "company_volume",
+                    "Open": "Open",
+                    "High": "High",
+                    "Low": "Low",
+                })
+                sub["ticker"] = ticker
+                sub["Date"] = pd.to_datetime(sub["Date"]).dt.strftime("%Y-%m-%d")
+                long_rows.append(sub)
             except Exception as e:
-                print(f"[WARNING] Failed to download data for {ticker}: {e}")
-
-        if not df_list:
-            raise RuntimeError("No historical bars could be fetched for any tickers.")
-        
-        return pd.concat(df_list, ignore_index=True)
+                failures.append(ticker)
+        if failures:
+            print(f"[Agent] yfinance returned no data for {len(failures)} tickers "
+                  f"(first 10: {failures[:10]}). Continuing with the rest.")
+        if not long_rows:
+            raise RuntimeError("Batched yfinance download produced no usable rows.")
+        return pd.concat(long_rows, ignore_index=True)
 
     def run_inference(self, price_history_df):
         """Performs feature calculations, PCA embedding projections, and Soft-Voting ensemble inference."""
@@ -580,7 +663,13 @@ class BDATradingAgent:
         X_tab = latest_df[self.tabular_cols].fillna(0).values.astype(np.float32)
         X_emb = latest_df[self.pca_cols].fillna(0).values.astype(np.float32)
         X_full = np.concatenate([X_tab, X_emb], axis=1)
-        X_full_s = self.scaler.transform(X_full)
+        if self.cs_z_standardize:
+            # Single-date cross-section z-score (mirrors training preprocessing)
+            mean = X_full.mean(axis=0, keepdims=True)
+            std = X_full.std(axis=0, keepdims=True) + 1e-8
+            X_full_s = np.clip((X_full - mean) / std, -6.0, 6.0).astype(np.float32)
+        else:
+            X_full_s = self.scaler.transform(X_full)
 
         # Convert back to a DataFrame with identical feature names to prevent scikit-learn/LGBM warnings
         X_full_df = pd.DataFrame(X_full_s, columns=self.tabular_cols + self.pca_cols)
@@ -698,6 +787,10 @@ class BDATradingAgent:
           - high_confidence : long the top-ranked tickers (pred_rank >= CONFIDENCE_THRESHOLD).
                               Threshold is a *rank percentile* now, not a probability —
                               0.53 means roughly the top 47% of the live universe.
+          - top_k           : the concentrated full-universe mode. Filter to the
+                              top TOP_PCT_THRESHOLD percent of pred_rank, cap at
+                              TOP_K_HOLDINGS names, equal-weight (or pred_rank
+                              proportional if EQUAL_WEIGHT_TOP_K=False).
           - regime_filtered : long/short tilt with raw_weight = pred_rank − 0.5,
                               shorts disabled in bull regimes via the HMM gate.
         """
@@ -712,7 +805,35 @@ class BDATradingAgent:
             predictions_df = predictions_df.copy()
             predictions_df["pred_rank"] = predictions_df["pred_proba"]
 
-        if strategy == "high_confidence":
+        if strategy == "top_k":
+            # Concentrated full-universe mode: top-pct gate → top-K cap → equal weight.
+            n = len(predictions_df)
+            pct_cutoff = 1.0 - (config.TOP_PCT_THRESHOLD / 100.0)
+            gate = predictions_df[predictions_df["pred_rank"] >= pct_cutoff].copy()
+            gate = gate.sort_values("pred_rank", ascending=False)
+            holdings = gate.head(config.TOP_K_HOLDINGS).copy()
+            if holdings.empty:
+                print(f"[Agent] No tickers above the top {config.TOP_PCT_THRESHOLD}% gate. "
+                      f"Falling back to top {config.TOP_K_HOLDINGS} by rank.")
+                holdings = predictions_df.sort_values("pred_rank", ascending=False).head(
+                    config.TOP_K_HOLDINGS).copy()
+            print(f"[Agent] top_k mode: universe={n} | "
+                  f"above-top-{config.TOP_PCT_THRESHOLD}% gate={len(gate)} | "
+                  f"held={len(holdings)}")
+
+            if config.EQUAL_WEIGHT_TOP_K:
+                w_each = config.TARGET_EXPOSURE / max(len(holdings), 1)
+                for _, row in holdings.iterrows():
+                    target_weights[row["ticker"]] = w_each
+            else:
+                sum_rank = holdings["pred_rank"].sum()
+                if sum_rank > 0:
+                    for _, row in holdings.iterrows():
+                        target_weights[row["ticker"]] = (
+                            row["pred_rank"] / sum_rank
+                        ) * config.TARGET_EXPOSURE
+
+        elif strategy == "high_confidence":
             high_longs = predictions_df[
                 predictions_df["pred_rank"] >= config.CONFIDENCE_THRESHOLD
             ].copy()

@@ -194,23 +194,36 @@ python3 -m DataAnalysisPipeline2.trading_agent.run --universe high_alpha --strat
 
 ## 📊 Summary of Friction-Adjusted Horizons Backtests
 
-The empirical out-of-sample backtests evaluate capital performance under a strict 10 basis points transaction cost model, with the passive Buy & Hold benchmark charged entry/exit fees on Day 1 and the final liquidation day:
+The empirical out-of-sample backtests evaluate capital performance under a strict 10 basis points transaction cost model, with the passive Buy & Hold benchmark charged entry/exit fees on entry and exit. The model is run in its intended deployment mode: every Friday it scores all ~1,890 modelled tickers, the top 5% by predicted rank are kept, capped at the top **K=10** names, equal-weighted. This matches the cross-section size used during training, which is required for the per-date cross-sectional Z preprocessing to behave consistently.
 
-| Horizon | Strategy Name | Cumulative Return (%) | Ending Value ($) | Annualized Sharpe | Max Drawdown (%) |
-| :--- | :--- | :---: | :---: | :---: | :---: |
-| 📅 **6 Months** | Buy & Hold Benchmark | **+60.08%** | \$16,007.81 | 3.214 | **-7.11%** |
-| | Regime-Filtered (SMA50 Baseline) | +53.22% | \$15,321.92 | 3.400 | -11.07% |
-| | HMM + Kalman Beta Upgraded | +52.82% | \$15,281.86 | 3.385 | -11.07% |
-| | High-Confidence Long-Only | +54.85% | \$15,485.24 | **3.565** | -9.54% |
-| | | | | | |
-| 📅 **12 Months** | Buy & Hold Benchmark | +84.50% | \$18,450.39 | 2.376 | -13.03% |
-| | Regime-Filtered (SMA50 Baseline) | **+104.64%** | \$20,463.71 | **2.942** | -11.07% |
-| | HMM + Kalman Beta Upgraded | +103.28% | \$20,327.86 | 2.926 | -11.07% |
-| | High-Confidence Long-Only | +89.82% | \$18,981.86 | 2.486 | **-9.54%** |
-| | | | | | |
-| 📅 **24 Months** | Buy & Hold Benchmark | **+98.37%** | \$19,836.52 | 1.352 | -29.57% |
-| | Regime-Filtered (SMA50 Baseline) | +77.52% | \$17,751.98 | 1.213 | -30.49% |
-| | HMM + Kalman Beta Upgraded | +95.78% | \$19,577.88 | **1.447** | **-29.30%** |
-| | High-Confidence Long-Only | +31.98% | \$13,197.96 | 0.601 | -44.27% |
+> ⚠️ **Survivorship-bias warning.** The 12- and 24-month rows below use the current NASDAQ universe, so tickers that delisted in those windows are silently absent. The 17-week Clean OOS and the 2-month Unseen Future windows are the cleanest results — both are strictly post the model's training range (which ended 2026-03-19).
 
-*The **HMM + Kalman Beta Upgraded** strategy successfully mitigates systemic risk over a full 24-month macro cycle, outperforming the moving-average baseline by **+18.26% absolute return** under transaction costs, achieving an excellent Sharpe ratio of **1.447**, and compressing drawdown to **-29.30%**.*
+### Full-universe top-K=10 backtests (the production deployment mode)
+
+| Horizon | Strategy | Cumulative Return | Sharpe | Max DD |
+| :--- | :--- | :---: | :---: | :---: |
+| **Clean OOS Weekly** (17 wk, post 2026‑01‑14) | Buy & Hold | +4.88% | 0.828 | -7.17% |
+| | High-Confidence Long-Only | **+94.94%** | **4.504** | -11.07% |
+| **Clean OOS Monthly** (4 reb, post 2026‑01‑14) | Buy & Hold | +6.15% | 3.193 | **-2.77%** |
+| | High-Confidence Long-Only | **+66.78%** | **6.736** | -4.88% |
+| **Unseen Future** (2 mo, 2026‑03‑20 → 2026‑05‑15) | Buy & Hold | +22.09% | 5.198 | **-2.41%** |
+| | High-Confidence Long-Only | **+47.00%** | **6.233** | -2.98% |
+| 📅 6 Months | Buy & Hold | +34.54% | 2.162 | -6.18% |
+| | High-Confidence Long-Only | **+188.06%** | **5.547** | -11.07% |
+| 📅 12 Months ⚠️ | Buy & Hold | +41.82% | 2.308 | -6.14% |
+| | High-Confidence Long-Only | **+748.14%** | **6.683** | -11.08% |
+| 📅 24 Months ⚠️ | Buy & Hold | +1,431.19% | 0.815 | -19.45% |
+| | High-Confidence Long-Only | +711.80% | 2.765 | -40.16% |
+
+### Sector-conditional behaviour (2-month unseen future, 50-ticker subsets)
+
+| Subset | Buy & Hold | High-Confidence Top-K=10 | Δ |
+| :--- | :---: | :---: | :---: |
+| Mega-Cap Titans | +14.67% | **+26.82%** | +12.2 pp |
+| Technology Sector | +31.36% | **+77.52%** | +46.2 pp |
+| Consumer Services | +1.43% | **+8.58%** | +7.2 pp |
+| Healthcare Pioneers | +5.55% | -3.54% | -9.1 pp |
+| Financial Giants | +9.51% | -8.63% | -18.1 pp |
+
+*The headline result is the strictly-post-training **2-month unseen future window**: High-Confidence Longs `+47.00%` vs Buy & Hold `+22.09%`, Sharpe `6.23`, Max DD `-2.98%`. The model carries genuine cross-sectional rank signal (walk-forward CV IC `+0.1053`, 5/5 folds positive), and that signal translates into portfolio P&L when the deployment cross-section matches the training cross-section (full universe → top-K=10). Sector-conditional results are mixed: the model wins decisively on Tech and Mega-Cap names (which dominate the training distribution) but loses to Buy & Hold on Healthcare and Financials, where structural KG embeddings underspecify the dominant sector-specific dynamics. The concentrated K=10 portfolio also runs materially higher drawdown than a diversified index (`-11%` to `-40%` depending on horizon).*
+

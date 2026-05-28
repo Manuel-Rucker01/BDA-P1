@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 CLI Execution Script for the BDA Production Trading Bot.
-Use this script to trigger weekly portfolio rebalancing.
+Use this script to trigger monthly portfolio rebalancing.
 """
 
 import os
@@ -29,9 +29,23 @@ def main():
     )
     parser.add_argument(
         "--strategy",
-        choices=["high_confidence", "regime_filtered"],
+        choices=["high_confidence", "regime_filtered", "top_k"],
         default="high_confidence",
-        help="Strategy to use: 'high_confidence' (+304% return, Long-Only P>=0.53) or 'regime_filtered' (Long/Short, shorts disabled in bull markets)"
+        help="Strategy to use: 'high_confidence' (Long-Only P>=0.53), 'top_k' (concentrated top-pct of full universe, equal-weighted), or 'regime_filtered' (Long/Short, shorts disabled in bull markets)"
+    )
+    parser.add_argument(
+        "--top-pct",
+        type=float,
+        default=None,
+        help="With --strategy top_k: only consider names in the top X% of pred_rank "
+             "(overrides config.TOP_PCT_THRESHOLD; default 5.0)"
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=None,
+        help="With --strategy top_k: cap held positions at K names "
+             "(overrides config.TOP_K_HOLDINGS; default 10)"
     )
     parser.add_argument(
         "--force-regime",
@@ -53,9 +67,9 @@ def main():
     )
     parser.add_argument(
         "--universe",
-        choices=["high_alpha", "safe", "top_mcap", "custom"],
+        choices=["high_alpha", "safe", "top_mcap", "custom", "full"],
         default="high_alpha",
-        help="Target stock universe: 'high_alpha' (default), 'safe' (sector diversified), 'top_mcap' (top market cap companies), or 'custom' (user file)"
+        help="Target stock universe: 'high_alpha' (default), 'safe' (sector diversified), 'top_mcap' (top market cap companies), 'custom' (user file), or 'full' (all ~1890 modelled tickers — pairs with --strategy top_k)"
     )
     parser.add_argument(
         "--num-tickers",
@@ -99,6 +113,12 @@ def main():
             print(f"[ERROR] Failed to query DuckDB for top_mcap universe: {e}. Falling back to default.")
             config.TICKERS = config.HIGH_ALPHA_TICKERS
             basket_name = "High-Alpha Alphabetical Basket (20 Small-Caps)"
+    elif universe == "full":
+        # Defer: we need agent.company_embeddings to populate this. We tag it
+        # so the post-load block (below) knows to expand to the full modelled
+        # universe.
+        config.TICKERS = []
+        basket_name = "Full Modelled Universe (defer to model embeddings)"
     elif universe == "custom":
         if not args.tickers_file:
             print("[ERROR] Custom universe selected but no --tickers-file provided. Falling back to default.")
@@ -134,11 +154,27 @@ def main():
     print(f"Alpaca endpoint  : {config.ALPACA_URL} (Paper trading: {config.ALPACA_PAPER_TRADING})")
     print("=" * 80 + "\n")
 
+    # Apply top-K / top-pct overrides BEFORE the agent runs.
+    if args.top_pct is not None:
+        config.TOP_PCT_THRESHOLD = float(args.top_pct)
+    if args.top_k is not None:
+        config.TOP_K_HOLDINGS = int(args.top_k)
+    if args.strategy == "top_k":
+        print(f"[Strategy] top_k: gate=top {config.TOP_PCT_THRESHOLD}% | "
+              f"hold cap={config.TOP_K_HOLDINGS} | "
+              f"weighting={'equal' if config.EQUAL_WEIGHT_TOP_K else 'pred_rank'}")
+
     try:
         agent = BDATradingAgent()
-        
+
         # 1. Load serializations
         agent.load_model()
+
+        # Full-universe expansion: after the model is loaded we know every
+        # ticker the model can score, so we can now populate the trade list.
+        if universe == "full":
+            config.TICKERS = sorted(agent.company_embeddings.keys())
+            print(f"[Filter] Full-universe mode: {len(config.TICKERS)} modelled tickers loaded.")
 
         # Validate that loaded tickers have structural embeddings in best_model.pkl
         valid_tickers = [t for t in config.TICKERS if t in agent.company_embeddings]

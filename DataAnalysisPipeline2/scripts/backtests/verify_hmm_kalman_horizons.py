@@ -31,6 +31,46 @@ from trading_agent import config
 from trading_agent.bot import GaussianHMM, KalmanBetaFilter, compute_live_features, load_macro_features, fetch_company_metadata
 from ExploitationZone.geopolitical_macroeconomic import get_pit_macro_indicators
 
+_CS_Z = False  # set by main() after pickle load (Part-4 P3)
+
+# ── Pickle compat shim for MLP regressor ─────────────────────────────────
+# best_model.pkl serialises a TorchMLPRegressor that lives in
+# DataAnalysisPipeline2/scripts/kg_embeddings_classifier.py. When the
+# bake-off ran as `python kg_embeddings_classifier.py`, the class was
+# pickled under __main__.TorchMLPRegressor — so this loader has to
+# re-publish it on __main__ for pickle.load to resolve.
+try:
+    import sys as _sys, os as _os
+    _here = _os.path.dirname(_os.path.abspath(__file__))
+    for _rel in ('..', '../..', '../scripts', '../../scripts'):
+        _cand = _os.path.abspath(_os.path.join(_here, _rel))
+        if _os.path.exists(_os.path.join(_cand, 'kg_embeddings_classifier.py')):
+            if _cand not in _sys.path:
+                _sys.path.insert(0, _cand)
+            break
+    from kg_embeddings_classifier import TorchMLPRegressor as _TorchMLPRegressor
+    _sys.modules['__main__'].TorchMLPRegressor = _TorchMLPRegressor
+except Exception as _e:
+    print(f'[shim] could not pre-register TorchMLPRegressor: {_e}')
+# ──────────────────────────────────────────────────────────────────────────
+
+
+
+# ── Top-K selection helper (Part 5) ──────────────────────────────────────────
+def _select_top_k(friday_obs, pct_threshold=None, top_k=None):
+    '''Replace fixed 0.53 gate with: top-pct% gate -> cap at K, sorted desc.'''
+    if pct_threshold is None:
+        pct_threshold = float(os.environ.get("BACKTEST_TOP_PCT", "5.0"))
+    if top_k is None:
+        top_k = int(os.environ.get("BACKTEST_TOP_K", "10"))
+    cutoff = 1.0 - (pct_threshold / 100.0)
+    gated = friday_obs[friday_obs["pred_proba"] >= cutoff].copy()
+    gated = gated.sort_values("pred_proba", ascending=False).head(top_k)
+    if gated.empty:
+        gated = friday_obs.sort_values("pred_proba", ascending=False).head(top_k).copy()
+    return gated
+# ────────────────────────────────────────────────────────────────────────────
+
 def get_rolling_vintage_embeddings(base_embeddings, current_date_str, db_path):
     """
     Produces temporal-aligned, leak-free RotatE embeddings for the given date.
@@ -225,7 +265,12 @@ def run_backtest_for_horizon(df_all_feat, df_full, gspc_df, friday_dates, compan
         X_tab = friday_obs[tabular_cols].fillna(0).values.astype(np.float32)
         X_emb = friday_obs[pca_cols].fillna(0).values.astype(np.float32)
         X_full = np.concatenate([X_tab, X_emb], axis=1)
-        X_full_s = scaler.transform(X_full)
+        if _CS_Z:
+            _mean = X_full.mean(axis=0, keepdims=True)
+            _std = X_full.std(axis=0, keepdims=True) + 1e-8
+            X_full_s = np.clip((X_full - _mean) / _std, -6.0, 6.0).astype(np.float32)
+        else:
+            X_full_s = scaler.transform(X_full)
         X_full_df = pd.DataFrame(X_full_s, columns=tabular_cols + pca_cols)
         
         # Soft-vote ensemble inference — regressor-aware.
@@ -390,9 +435,7 @@ def run_backtest_for_horizon(df_all_feat, df_full, gspc_df, friday_dates, compan
         hmm_values.append(equity_hmm)
         
         # --- D. High-Confidence Longs (P >= 0.53) ---
-        high_long_df = friday_obs[friday_obs["pred_proba"] >= 0.53].copy()
-        if high_long_df.empty:
-            high_long_df = friday_obs.sort_values("pred_proba", ascending=False).head(2).copy()
+        high_long_df = _select_top_k(friday_obs)
         
         sum_prob = high_long_df["pred_proba"].sum()
         hl_weights = {}
@@ -458,9 +501,25 @@ def main():
     tabular_cols = model_data["tabular_cols"]
     pca_cols = model_data["pca_cols"]
     company_embeddings = model_data["company_embeddings"]
+    # Part-4 P3 hand-shake: training may have used cross-sectional Z
+    # standardisation in place of the global scaler. Mirror that here
+    # if the flag is present in the pickle.
+    global _CS_Z
+    _CS_Z = bool(model_data.get("cs_z_standardize", False))
+    print(f"[Model] cs_z_standardize={_CS_Z}")
     
     # Stock basket
     basket = config.HIGH_ALPHA_TICKERS
+    # ── Full-universe override (Part 5 top-K mode) ───────────────────────
+    # If BACKTEST_FULL_UNIVERSE=1, replace the curated basket with every
+    # ticker the model can score. This matches the cross-section size the
+    # CS-Z preprocessing was trained against.
+    if os.environ.get("BACKTEST_FULL_UNIVERSE", "0") == "1":
+        full = sorted(company_embeddings.keys())
+        print(f"[Universe] BACKTEST_FULL_UNIVERSE=1 -> expanding basket from "
+              f"{len(basket)} to {len(full)} modelled tickers.")
+        basket = full
+
     print(f"[Config] Active Stock Basket: {len(basket)} Tickers (High-Alpha Alphabetical Basket)")
     
     # 2. Ingest GSPC (since 2023-01-01 to give 250 trading days headstart for 24-month horizon)
@@ -511,18 +570,41 @@ def main():
     macro_df = load_macro_features(MACRO_KG_PATH)
     df_all_feat = compute_live_features(df_full, metadata_df, macro_df)
     
+    # Build the monthly rebalance schedule: take roughly one Friday per month
+    # (first Friday on or after the start of each calendar month within range).
+    monthly_fridays = []
+    seen_months = set()
+    for d in friday_dates:
+        ym = d[:7]
+        if ym not in seen_months:
+            monthly_fridays.append(d)
+            seen_months.add(ym)
+    print(f"[Processing] Monthly cadence: {len(monthly_fridays)} rebalances "
+          f"(vs {len(friday_dates)} weekly).")
+
     # 6. Define Horizons
-    horizons = {
-        "6 Months (Nov 21, 2025)": "2025-11-21",
-        "12 Months (May 23, 2025)": "2025-05-23",
-        "24 Months (May 24, 2024)": "2024-05-24"
-    }
-    
+    # Data-leakage note: best_model.pkl was trained on data <= 2025-12-15
+    # (last walk-forward fold).  Backtest windows starting before that date
+    # contain in-sample memorisation.  The "Clean OOS" rows start AFTER the
+    # model's 30-day target embargo (2026-01-14) so every prediction in them
+    # is genuinely out-of-sample.  We additionally split that clean window
+    # into a weekly-rebalance variant (matches how the live bot runs) and a
+    # monthly-rebalance variant (matches the 30-day prediction horizon).
+    # The longer horizons are kept for the inflated-numbers comparison.
+    horizons = [
+        ("Clean OOS Weekly (Jan 14, 2026)",  "2026-01-14", "weekly"),
+        ("Clean OOS Monthly (Jan 14, 2026)", "2026-01-14", "monthly"),
+        ("6 Months (Nov 21, 2025)",          "2025-11-21", "weekly"),
+        ("12 Months (May 23, 2025)",         "2025-05-23", "weekly"),
+        ("24 Months (May 24, 2024)",         "2024-05-24", "weekly"),
+    ]
+
     results = {}
-    for label, start_date in horizons.items():
-        print(f"\nRunning backtest for {label}...")
+    for label, start_date, cadence in horizons:
+        dates_for_run = monthly_fridays if cadence == "monthly" else friday_dates
+        print(f"\nRunning backtest for {label} [{cadence}]...")
         res = run_backtest_for_horizon(
-            df_all_feat, df_full, gspc_df, friday_dates, company_embeddings,
+            df_all_feat, df_full, gspc_df, dates_for_run, company_embeddings,
             scaler, pca, trained_models, mix_models, tabular_cols, pca_cols,
             start_date, initial_equity=10000.0
         )
@@ -550,7 +632,7 @@ def main():
     print("=" * 125)
     
     # Save a detailed comparison results file in brain/artifact directory
-    artifact_path = "/Users/manuelruckerabella/.gemini/antigravity/brain/27ff2939-bfba-4752-8c62-8eac1df33b87/horizon_comparison.md"
+    artifact_path = "/Users/manuelruckerabella/.gemini/antigravity/brain/5ff25afd-4ae7-4146-9d7d-4675e86fc3e6/horizon_comparison.md"
     print(f"[Exporting] Writing detailed comparisons to {artifact_path}...")
     
     with open(artifact_path, "w") as f:

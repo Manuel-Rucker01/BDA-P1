@@ -6,7 +6,13 @@ This file handles absolute path resolutions and holds Alpaca API credentials and
 import os
 from dotenv import load_dotenv
 
-# Load credentials from .env file if it exists
+# Always load the .env that ships alongside this config file, so credentials
+# resolve correctly regardless of the cwd the script is invoked from
+# (running from repo root via `-m DataAnalysisPipeline2.trading_agent.run`
+# would otherwise look in the wrong place and silently fall back to dry-run).
+_AGENT_ENV = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+load_dotenv(_AGENT_ENV)
+# Also fall back to a cwd-rooted .env if one exists (developer convenience)
 load_dotenv()
 
 # --- Directory & Path Resolution ---
@@ -57,6 +63,18 @@ TICKERS = HIGH_ALPHA_TICKERS
 CONFIDENCE_THRESHOLD = 0.53      # Probability threshold for High-Confidence Longs
 TARGET_EXPOSURE = 1.0           # Target total portfolio exposure
 MIN_ORDER_VALUE = 5.0           # Minimum USD order limit to avoid tiny fraction order rejections
+
+# --- Top-K Concentrated Portfolio Mode ---
+# When `--universe full` is active, the bot scores every modelled ticker
+# (~1,890 names), keeps the top TOP_PCT_THRESHOLD percent of the cross-
+# section, then trims to at most TOP_K_HOLDINGS names to actually hold.
+# This is the "model on the full universe, trade only the very top" pattern
+# that quant funds use — it preserves the cross-sectional Z preprocessing
+# the model was trained with AND produces a concentrated, low-overhead
+# portfolio.
+TOP_PCT_THRESHOLD = 5.0          # Default: only consider top 5% of ranked universe
+TOP_K_HOLDINGS = 10              # Default: cap actually-held positions at 10
+EQUAL_WEIGHT_TOP_K = True        # Equal-weight the top-K; if False, weight by pred_rank
 
 # --- Broad-Market Regime Switching ---
 # Enable the S&P 500 trend filter (shut off short exposure in bull regimes)

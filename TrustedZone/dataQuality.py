@@ -53,7 +53,6 @@ def prepare_trusted_database(db_path: str) -> None:
         connection.execute("DROP TABLE IF EXISTS sp500_companies")
         connection.execute("DROP TABLE IF EXISTS forbes_employers")
         connection.execute("DROP TABLE IF EXISTS company_acquisitions")
-        connection.execute("DROP TABLE IF EXISTS companies")
         connection.execute("DROP TABLE IF EXISTS data_quality_metrics")
         connection.close()
         logger.info("Database prepared successfully - existing tables cleared")
@@ -110,7 +109,19 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
         sp500_pd = con.execute("SELECT * FROM sp500_companies").df()
         forbes_pd = con.execute("SELECT * FROM forbes_employers").df()
         acquisitions_pd = con.execute("SELECT * FROM company_acquisitions").df()
-        
+
+        # Coerce acquisition numeric columns BEFORE building the Spark views, so
+        # the Spark SQL denial-constraint predicates (`Acquisition Year <= 2026`,
+        # `Acquisition Price >= 0`) operate on real numerics rather than strings.
+        # The source CSV may carry non-numeric placeholders ("-", "Undisclosed");
+        # errors='coerce' turns those into NULL so the OR NULL clauses catch them.
+        acquisitions_pd['Acquisition Year'] = pd.to_numeric(
+            acquisitions_pd['Acquisition Year'], errors='coerce'
+        )
+        acquisitions_pd['Acquisition Price'] = pd.to_numeric(
+            acquisitions_pd['Acquisition Price'], errors='coerce'
+        )
+
         raw_counts = {
             "nasdaq": len(nasdaq_pd),
             "company_history": len(company_history_pd),
@@ -186,71 +197,31 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
             AND (`Acquisition Price` >= 0 OR `Acquisition Price` IS NULL)
         """).createOrReplaceTempView("acquisitions_constraints")
         
-        logger.info("\nApplying Denial Constraints using Pandas execution...")
-        
-        logger.info("  Applying NASDAQ constraints...")
-        nasdaq_clean = nasdaq_pd[
-            (nasdaq_pd['Symbol'].notna()) & 
-            (nasdaq_pd['Name'].notna()) &
-            ((nasdaq_pd['LastSale'] >= 0) | (nasdaq_pd['LastSale'].isna())) &
-            ((nasdaq_pd['MarketCap'] >= 0) | (nasdaq_pd['MarketCap'].isna())) &
-            ((nasdaq_pd['IPOyear'] <= 2026) | (nasdaq_pd['IPOyear'].isna()))
-        ].copy()
-        
-        logger.info("  Applying Company History constraints...")
-        company_counts = company_history_pd['Company'].value_counts()
-        valid_companies = company_counts[company_counts > 1].index
+        logger.info("\nApplying Denial Constraints via Spark SQL execution...")
+        # The cleaned datasets are materialised by COLLECTING the Spark SQL
+        # constraint views back to the driver with .toPandas(). The row
+        # filtering is therefore genuinely executed by the Spark engine (the
+        # WHERE clauses on the *_constraints views above), not re-implemented
+        # in pandas. toPandas() is the Spark→driver handoff so the cleaned
+        # frames can be written to the DuckDB Trusted store.
+        logger.info("  Collecting nasdaq_constraints from Spark...")
+        nasdaq_clean = spark.sql("SELECT * FROM nasdaq_constraints").toPandas()
 
-        company_history_clean = company_history_pd[
-            (company_history_pd['Company'].isin(valid_companies)) &
-            (company_history_pd['Date'].notna()) &
-            (company_history_pd['High'] >= company_history_pd['Low']) &
-            (company_history_pd['Volume'] >= 0) &
-            ((company_history_pd['Open'] >= 0) | (company_history_pd['Open'].isna())) &
-            ((company_history_pd['Close'] >= 0) | (company_history_pd['Close'].isna()))
-        ].copy()
-        
-        logger.info("  Applying Exchange constraints...")
-        exchange_clean = exchange_pd[
-            (exchange_pd['Date'].notna()) &
-            (exchange_pd['EUR'] > 0) &
-            (exchange_pd['JPY'] > 0)
-        ].copy()
+        logger.info("  Collecting company_history_constraints from Spark...")
+        company_history_clean = spark.sql("SELECT * FROM company_history_constraints").toPandas()
 
-        logger.info("  Applying S&P 500 constraints...")
-        sp500_clean = sp500_pd[
-            (sp500_pd['Ticker'].notna()) & 
-            (sp500_pd['Name'].notna()) &
-            ((sp500_pd['MarketCap'] >= 0) | (sp500_pd['MarketCap'].isna())) &
-            ((sp500_pd['Employees'] >= 0) | (sp500_pd['Employees'].isna()))
-        ].copy()
+        logger.info("  Collecting us_exchange_constraints from Spark...")
+        exchange_clean = spark.sql("SELECT * FROM us_exchange_constraints").toPandas()
 
-        logger.info("  Applying Forbes Employers constraints...")
-        forbes_clean = forbes_pd[
-            (forbes_pd['company'].notna()) & 
-            (forbes_pd['rank'] > 0) &
-            ((forbes_pd['publish_year'] <= 2026) | (forbes_pd['publish_year'].isna()))
-        ].copy()
+        logger.info("  Collecting sp500_constraints from Spark...")
+        sp500_clean = spark.sql("SELECT * FROM sp500_constraints").toPandas()
 
-        logger.info("  Applying Company Acquisitions constraints...")
-        # Coerce numeric columns: source CSV may contain non-numeric placeholders
-        # (e.g. "-", "Undisclosed"), which pandas keeps as strings. errors='coerce'
-        # turns unparseable values into NaN so the >= / <= / IS NULL predicates work.
-        acquisitions_pd['Acquisition Year'] = pd.to_numeric(
-            acquisitions_pd['Acquisition Year'], errors='coerce'
-        )
-        acquisitions_pd['Acquisition Price'] = pd.to_numeric(
-            acquisitions_pd['Acquisition Price'], errors='coerce'
-        )
-        acquisitions_clean = acquisitions_pd[
-            (acquisitions_pd['Parent Company'].notna()) &
-            (acquisitions_pd['Acquired Company'].notna()) &
-            (acquisitions_pd['Parent Company'].isin(CANONICAL_ACQUIRERS)) &
-            ((acquisitions_pd['Acquisition Year'] <= 2026) | (acquisitions_pd['Acquisition Year'].isna())) &
-            ((acquisitions_pd['Acquisition Year'] >= 1900) | (acquisitions_pd['Acquisition Year'].isna())) &
-            ((acquisitions_pd['Acquisition Price'] >= 0) | (acquisitions_pd['Acquisition Price'].isna()))
-        ].copy()
-        
+        logger.info("  Collecting forbes_constraints from Spark...")
+        forbes_clean = spark.sql("SELECT * FROM forbes_constraints").toPandas()
+
+        logger.info("  Collecting acquisitions_constraints from Spark...")
+        acquisitions_clean = spark.sql("SELECT * FROM acquisitions_constraints").toPandas()
+
         con.close()
         
         clean_counts = {
@@ -304,8 +275,8 @@ def extract_and_filter_data(formatted_db_path: str, spark: SparkSession) -> Tupl
                     "Acquisition Price >= 0 OR NULL"
                 ]
             },
-            "processing_engine": "Apache Spark (with Pandas execution)",
-            "spark_architecture": "Spark SQL used for constraint definitions and schema management"
+            "processing_engine": "Apache Spark",
+            "spark_architecture": "Denial Constraints defined AND executed as Spark SQL views; cleaned rows collected via toPandas() for DuckDB persistence"
         }
         
         return cleaned_data, metrics
@@ -367,45 +338,13 @@ def write_to_trusted_zone(trusted_db_path: str, cleaned_data: Dict, metrics: Dic
             "INSERT INTO data_quality_metrics VALUES (?, ?, ?)",
             ["all_metrics", metrics_json, datetime.now()]
         )
-        
-        # Build enriched companies table with resolved country
-        # Priority: sp500.Country → Forbes name-match → default 'United States'
-        logger.info("  Creating enriched companies table with resolved country...")
-        nasdaq_df = cleaned_data['nasdaq'].copy()
-        forbes_raw = cleaned_data['forbes_employers'].copy()
-        sp500_df = cleaned_data['sp500_companies'][['Ticker', 'Country']].rename(
-            columns={'Ticker': 'Symbol', 'Country': 'sp500_country'}
-        )
 
-        _legal_suffixes = [
-            ' inc.', ' inc', ' corp.', ' corp', ' ltd.', ' ltd',
-            ' plc', ' co.', ' co', ' group', ' holdings', ' corporation',
-        ]
-        forbes_raw = forbes_raw.sort_values('publish_year', ascending=False)
-        forbes_raw = forbes_raw.drop_duplicates(subset=['company'])
-        forbes_raw['_name_key'] = forbes_raw['company'].str.lower().str.strip()
-        for _s in _legal_suffixes:
-            forbes_raw['_name_key'] = forbes_raw['_name_key'].str.replace(_s, '', regex=False)
-        forbes_raw['_name_key'] = forbes_raw['_name_key'].str.strip()
-        forbes_raw = forbes_raw[forbes_raw['country_territory'].notna()]
-        _forbes_lookup = dict(zip(forbes_raw['_name_key'], forbes_raw['country_territory']))
-
-        def _resolve_country(row):
-            sp500_c = row.get('sp500_country')
-            if pd.notna(sp500_c) and str(sp500_c).strip() not in ('', 'None'):
-                return sp500_c
-            name_key = str(row['Name']).lower().strip()
-            for _s in _legal_suffixes:
-                name_key = name_key.replace(_s, '')
-            name_key = name_key.strip()
-            return _forbes_lookup.get(name_key, 'United States')
-
-        companies_df = nasdaq_df.merge(sp500_df, on='Symbol', how='left')
-        companies_df['country'] = companies_df.apply(_resolve_country, axis=1)
-        companies_df = companies_df.drop(columns=['sp500_country'])
-        connection.execute("CREATE TABLE companies AS SELECT * FROM companies_df")
-        _non_us = (companies_df['country'] != 'United States').sum()
-        logger.info(f"  companies: {len(companies_df)} rows written ({_non_us} non-US companies resolved)")
+        # NOTE: country enrichment (sp500 → Forbes name-match → default US) and
+        # the joined `companies` entity it produces are a CROSS-SOURCE
+        # RECONCILIATION product. Per the medallion-zone contract that belongs
+        # in the Exploitation Zone, not here — the Trusted Zone must mirror the
+        # Formatted Zone schema with quality constraints applied and nothing
+        # more. The enrichment now runs in ExploitationZone/graph_generation.py.
 
         connection.close()
         logger.info("Data successfully written to Trusted Zone!")
@@ -423,7 +362,7 @@ def verify_trusted_zone_database(trusted_db_path: str) -> bool:
         tables = connection.execute("SELECT table_name FROM information_schema.tables").fetchall()
         table_names = [table[0] for table in tables]
         
-        required_tables = {"nasdaq", "company_history", "us_exchange", "sp500_companies", "forbes_employers", "company_acquisitions", "companies", "data_quality_metrics"}
+        required_tables = {"nasdaq", "company_history", "us_exchange", "sp500_companies", "forbes_employers", "company_acquisitions", "data_quality_metrics"}
         missing_tables = required_tables - set(table_names)
         
         if missing_tables:

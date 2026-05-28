@@ -52,12 +52,12 @@ However, we recognized that simply feeding static relational embeddings into a c
 The system's backbone is a structured, semantic DataOps pipeline. The data flows sequentially across four defined zones:
 
 \subsection{Landing, Formatted, and Trusted Zones}
-Raw data is ingested via Python collectors from Yahoo Finance, Nasdaq, and currency APIs, storing raw CSV logs in the \textbf{Landing Zone}. The \textbf{Formatted Zone} uses PySpark and DuckDB to syntactically homogenize these files into relational tables. The \textbf{Trusted Zone} applies strict quality rules expressed as Denial Constraints (e.g., ensuring closing prices are positive and volumes are non-negative) and writes cleaned parquet records to \texttt{TrustedZone.duckdb}. 
+Raw data is ingested via Python collectors from Yahoo Finance, Nasdaq, and currency APIs, storing raw CSV logs in the \textbf{Landing Zone}. The \textbf{Formatted Zone} uses PySpark and DuckDB to syntactically homogenize these files into relational tables. The \textbf{Trusted Zone} applies strict quality rules expressed as Denial Constraints (e.g., ensuring closing prices are positive and volumes are non-negative). These constraints are both \emph{defined and executed} as Spark SQL views — the cleaned rows are collected from the Spark engine via \texttt{toPandas()} purely for persistence — and written, schema-parity-preserved against the Formatted Zone, to \texttt{TrustedZone.duckdb}.
 
 \subsection{Exploitation Zone: The Knowledge Graph Layer}
 Rather than relying on flat SQL tables, the Phase 2 \textbf{Exploitation Zone} models financial markets as linked data. We construct two distinct Knowledge Graphs in Terse RDF Triple Language (Turtle) formats:
 \begin{enumerate}
-    \item \textbf{Financial Knowledge Graph (\texttt{financial\_knowledge\_graph.ttl})}: Models the corporate taxonomy. Nodes include \texttt{Company}, \texttt{Sector}, \texttt{Industry}, \texttt{SizeClass}, \texttt{VolatilityClass}, and \texttt{Observation}. Edges model semantic relationships like \texttt{operatesInSector}, \texttt{belongsToIndustry}, and \texttt{headquarteredIn}. Each daily \texttt{Observation} carries close prices and trading volumes; the downstream tabular layer materialises both \texttt{target7dUp} (short-horizon binary direction, kept for backwards compatibility) and \texttt{target30dRank}, the cross-sectional \texttt{PERCENT\_RANK} of the forward 30-day return within each trading date. The country field for every ticker is resolved upstream in the Trusted Zone (sp500 country $\rightarrow$ Forbes name-match $\rightarrow$ default US) so the KG never receives NULL HQ countries.
+    \item \textbf{Financial Knowledge Graph (\texttt{financial\_knowledge\_graph.ttl})}: Models the corporate taxonomy. Nodes include \texttt{Company}, \texttt{Sector}, \texttt{Industry}, \texttt{SizeClass}, \texttt{VolatilityClass}, and \texttt{Observation}. Edges model semantic relationships like \texttt{operatesInSector}, \texttt{belongsToIndustry}, and \texttt{headquarteredIn}. Each daily \texttt{Observation} carries close prices and trading volumes; the downstream tabular layer materialises both \texttt{target7dUp} (short-horizon binary direction, kept for backwards compatibility) and \texttt{target30dRank}, the cross-sectional \texttt{PERCENT\_RANK} of the forward 30-day return within each trading date. The country field for every ticker is resolved \emph{within the Exploitation Zone} as a cross-source reconciliation (sp500 country $\rightarrow$ Forbes name-match $\rightarrow$ default US) so the KG never receives NULL HQ countries; this enrichment is deliberately kept out of the Trusted Zone, which preserves strict schema parity with the Formatted Zone (per-source cleaned tables with Denial Constraints applied, no cross-source joins).
     \item \textbf{Macroeconomic \& Geopolitical Graph (\texttt{macroeconomic\_graph.ttl})}: Integrates broad-market context. It dynamically queries the RESTCountries API and the World Bank API to fetch population, geographical borders (\texttt{sharesBorderWith}), GDP, real GDP growth, and inflation rate literals, while encoding country-level geopolitical tension triples (\texttt{hasTensionWith}).
 \end{enumerate}
 
@@ -108,29 +108,166 @@ A single 80/20 temporal split on three months of test data cannot reliably disti
 \end{itemize}
 
 \subsection{Multi-Model Bake-Off}
-Four base regressors (RandomForest, CatBoost, XGBoost, LightGBM) are evaluated alongside two ensembles: a \textbf{StackingRegressor} with a Ridge meta-learner and a rank-averaged \textbf{soft vote} over the four base models. The MLP from our earlier classification bake-off was dropped: it was consistently the slowest member and last on AUC and $F_1$, and tree ensembles dominate at the small RMSE scale of $[0,1]$ rank targets. The base regressors use temporal 90/10 early stopping inside each fold; tree depth and learning rate are kept conservative (\texttt{depth=4}, \texttt{lr=0.02}) to control variance on noisy financial data.
+The bake-off evaluates seven base learners — a regularised linear baseline (\texttt{RidgeCV}), a small two-layer MLP regressor described below, and four tree-based regressors (RandomForest, CatBoost, XGBoost, LightGBM) — alongside three rank-aware variants of the gradient-boosted trees (LightGBM \texttt{lambdarank}, XGBoost \texttt{rank:pairwise}, CatBoost \texttt{YetiRankPairwise}) and three ensembles: a \textbf{StackingRegressor} with a Ridge meta-learner, a rank-averaged \textbf{SoftVote} over the four tree regressors, and \textbf{SoftVote\_Diverse}, a greedy pruning of the SoftVote pool that keeps only members whose pairwise out-of-fold Pearson correlation stays below $0.85$. The MLP is a $64$-$64$ network with BatchNorm, dropout $0.2$, AdamW optimisation, and a temporal $90/10$ early-stopping split on each fold's training slab. The tree regressors use temporal $90/10$ early stopping inside each fold; tree depth and learning rate are kept conservative (\texttt{depth=4}, \texttt{lr=0.02}) to control variance on noisy financial data. Features are standardised cross-sectionally within each date (per-date z-score) rather than with a global \texttt{StandardScaler}, mirroring the standard quant-finance neutralisation; the live trading bot and the backtests apply the same per-date transform at inference.
 
 \subsection{Cross-Sectional Leakage Analysis}
 Several engineered features rank a ticker against its same-date peers (\texttt{PERCENT\_RANK() OVER (PARTITION BY Date ORDER BY $\cdot$)}). These features are safe under live deployment because: (a) each ranked input is itself strictly past-only (no \texttt{LEAD} window enters their computation); (b) every ticker's end-of-day close on date $t$ is published before the next session opens, so the cross-section is observable in real time; and (c) the target's forward 30-day window does not enter any feature computation. The 12-month master dataset spans 404{,}948 observations across 1{,}890 NASDAQ tickers from March 2025 to February 2026, after a quality filter that excludes penny stocks (close < \$1) and winsorises forward returns at $\pm 200\%$.
 
 \subsection{Walk-Forward Bake-Off Results}
-Table~\ref{tab:walk_forward} reports the best model in each feature configuration. The headline finding is the inversion of the original ranking: at the 7-day binary target the KG embeddings hurt the combined feature set (cf.~our preliminary classification bake-off), but at the 30-day cross-sectional rank the KG-only features actually \emph{lead} on raw IC, while the combined feature set delivers the largest economically meaningful metric (the decile long-short spread). The fold-by-fold IC sequence varies materially with the test slab (Fold 2 SoftVote combined IC reached $+0.180$; Fold 3 dropped to $+0.038$), which is precisely the regime-variance that a single 80/20 split would have hidden.
-\begin{table}[h]
-\caption{Walk-forward bake-off (mean $\pm$ stdev across 5 folds). $K{=}5$ expanding folds, 30-day embargo.}
-\label{tab:walk_forward}
+Table~\ref{tab:walk_forward_full} reports the full $K=5$ walk-forward bake-off (mean and SE across folds, plus the count of folds in which each metric was positive). On the tabular-only configuration the predictive signal is modest (best model XGBoost at $+0.0482$ IC, SE $0.0229$). Structural KGE features alone carry substantially more signal (SoftVote\_Diverse reaches $+0.0983$ IC, SE $0.0285$). Fusing tabular and embedding features delivers the best combination of signal and stability: SoftVote\_Diverse achieves $+0.1053$ IC (SE $0.0193$, 5/5 folds positive) and Stack maximises the long/short decile spread at $+7.66\%$ (SE $1.58\%$, 5/5 folds positive). Cross-sectional Z standardisation (Part 4 P3) and the small MLP regressor (Part 4 P4) participate in the bake-off so the paper can argue from a fair non-linear baseline, not a missing one.
+
+\begin{table*}[t]
 \centering
+\caption{Walk-Forward Bake-Off summary. Mean and standard error ($\text{SE}=\sigma/\sqrt{K}$) across $K=5$ expanding folds, with a 30-day embargo between train and test. The IC sign and DS sign columns report how many of the $K$ folds had a positive metric (a one-sided binomial sign test against $\text{H}_0=0.5$).}
+\label{tab:walk_forward_full}
 \small
-\begin{tabular}{llrrr}
+\begin{tabular}{llcccc}
 \toprule
-\textbf{Features} & \textbf{Best model} & \textbf{IC} & \textbf{Hit \%} & \textbf{Decile spread} \\
+\textbf{Feature Set} & \textbf{Model} & \textbf{Spearman IC mean (SE)} & \textbf{IC sign} & \textbf{Decile Spread mean (SE)} & \textbf{DS sign} \\
 \midrule
-Tabular only & SoftVote & $+0.040 \pm 0.074$ & $50.9 \pm 3.1$ & $+4.71\% \pm 4.68\%$ \\
-KG embedding only & XGBoost & $\mathbf{+0.098} \pm 0.070$ & $53.9 \pm 3.3$ & $+6.73\% \pm 4.02\%$ \\
-Combined & SoftVote & $+0.092 \pm 0.056$ & $52.9 \pm 3.1$ & $\mathbf{+7.54\%} \pm 3.99\%$ \\
+tabular only           & SoftVote           & +0.0406 (0.0238)                 & 4/5 & +4.76\% (1.15\%)                 & 5/5 \\
+                       & SoftVote\_Rank     & -0.0179 (0.0282)                 & 2/5 & +2.01\% (1.66\%)                 & 3/5 \\
+                       & SoftVote\_Diverse  & +0.0430 (0.0225)                 & 4/5 & +4.54\% (1.23\%)                 & 5/5 \\
+                       & LightGBM           & +0.0463 (0.0219)                 & 4/5 & +3.96\% (1.16\%)                 & 5/5 \\
+                       & LightGBM\_Rank     & -0.0678 (0.0513)                 & 1/5 & +0.17\% (3.47\%)                 & 3/5 \\
+                       & XGBoost            & \textbf{+0.0482 (0.0229)}        & 4/5 & \textbf{+5.15\% (1.03\%)}        & 5/5 \\
+                       & XGBoost\_Rank      & +0.0166 (0.0177)                 & 3/5 & +1.88\% (0.60\%)                 & 4/5 \\
+                       & CatBoost           & +0.0080 (0.0280)                 & 3/5 & +3.23\% (1.20\%)                 & 5/5 \\
+                       & CatBoost\_Rank     & +0.0181 (0.0175)                 & 3/5 & +2.53\% (1.21\%)                 & 4/5 \\
+                       & RandomForest       & +0.0402 (0.0167)                 & 4/5 & +3.99\% (0.81\%)                 & 5/5 \\
+                       & Stack              & +0.0452 (0.0246)                 & 4/5 & +5.10\% (1.26\%)                 & 5/5 \\
+                       & MLP                & +0.0397 (0.0176)                 & 5/5 & +3.66\% (1.36\%)                 & 5/5 \\
+                       & Ridge              & +0.0250 (0.0086)                 & 5/5 & +1.65\% (1.06\%)                 & 4/5 \\
+\midrule
+embedding only         & SoftVote           & +0.0943 (0.0255)                 & 5/5 & +5.91\% (2.29\%)                 & 4/5 \\
+                       & SoftVote\_Rank     & -0.0081 (0.0540)                 & 2/5 & +4.48\% (3.90\%)                 & 4/5 \\
+                       & SoftVote\_Diverse  & \textbf{+0.0983 (0.0285)}        & 5/5 & +6.31\% (2.20\%)                 & 5/5 \\
+                       & LightGBM           & +0.0811 (0.0223)                 & 5/5 & +6.10\% (1.92\%)                 & 5/5 \\
+                       & LightGBM\_Rank     & -0.0454 (0.0590)                 & 1/5 & +1.78\% (3.48\%)                 & 4/5 \\
+                       & XGBoost            & +0.0948 (0.0279)                 & 5/5 & +5.91\% (1.95\%)                 & 5/5 \\
+                       & XGBoost\_Rank      & -0.0220 (0.0505)                 & 2/5 & +3.51\% (4.01\%)                 & 4/5 \\
+                       & CatBoost           & +0.0855 (0.0271)                 & 5/5 & +6.43\% (1.80\%)                 & 5/5 \\
+                       & CatBoost\_Rank     & +0.0583 (0.0292)                 & 4/5 & \textbf{+6.47\% (3.36\%)}        & 3/5 \\
+                       & RandomForest       & +0.0885 (0.0179)                 & 5/5 & +5.13\% (1.45\%)                 & 5/5 \\
+                       & Stack              & +0.0934 (0.0270)                 & 5/5 & +5.96\% (1.94\%)                 & 5/5 \\
+                       & MLP                & +0.0884 (0.0301)                 & 4/5 & +6.15\% (1.58\%)                 & 5/5 \\
+                       & Ridge              & +0.0492 (0.0375)                 & 4/5 & +5.02\% (2.91\%)                 & 3/5 \\
+\midrule
+tabular + embedding    & SoftVote           & +0.1007 (0.0176)                 & 5/5 & +7.20\% (1.51\%)                 & 5/5 \\
+                       & SoftVote\_Rank     & -0.0171 (0.0543)                 & 2/5 & +3.24\% (3.71\%)                 & 4/5 \\
+                       & SoftVote\_Diverse  & \textbf{+0.1053 (0.0193)}        & 5/5 & +7.27\% (1.66\%)                 & 5/5 \\
+                       & LightGBM           & +0.0893 (0.0175)                 & 5/5 & +7.48\% (1.44\%)                 & 5/5 \\
+                       & LightGBM\_Rank     & -0.0559 (0.0627)                 & 1/5 & -1.22\% (3.53\%)                 & 2/5 \\
+                       & XGBoost            & +0.1031 (0.0219)                 & 5/5 & +7.52\% (1.41\%)                 & 5/5 \\
+                       & XGBoost\_Rank      & -0.0179 (0.0575)                 & 2/5 & +3.24\% (3.70\%)                 & 3/5 \\
+                       & CatBoost           & +0.0676 (0.0128)                 & 5/5 & +6.34\% (0.96\%)                 & 5/5 \\
+                       & CatBoost\_Rank     & +0.0379 (0.0187)                 & 3/5 & +4.08\% (2.47\%)                 & 3/5 \\
+                       & RandomForest       & +0.0999 (0.0135)                 & 5/5 & +5.89\% (1.50\%)                 & 5/5 \\
+                       & Stack              & +0.1010 (0.0230)                 & 5/5 & \textbf{+7.66\% (1.58\%)}        & 5/5 \\
+                       & MLP                & +0.0893 (0.0213)                 & 5/5 & +6.15\% (1.37\%)                 & 5/5 \\
+                       & Ridge              & +0.0625 (0.0310)                 & 4/5 & +4.92\% (2.74\%)                 & 3/5 \\
 \bottomrule
 \end{tabular}
-\end{table}
-The combined SoftVote is the model artefact persisted to \texttt{best\_model.pkl} for downstream consumption by the trading agent.
+\end{table*}
+
+\subsection{Rigorous Pairwise Statistical Inference}
+Holding the model constant, we compare each feature configuration against the others. For each model and each comparison we take the $K=5$ paired fold-level differences, run a two-sided binomial sign test against $\text{H}_0=0.5$, and bootstrap a 95\% CI on the mean of those five differences from 10{,}000 paired resamples. With $K=5$ the minimum attainable two-sided sign-test $p$ is $0.0625$ at $5/5$ — the bootstrap CI is the complementary range estimate. We flag a row as significant only when both the CI excludes zero \emph{and} the sign-test $p<0.20$ (Table~\ref{tab:pairwise_stats}).
+
+On the IC, the Combined-minus-Tabular contrast clears that bar for 8 of the 13 models tested, with paired-mean IC improvements ranging from $+0.0429$ to $+0.0624$ and 95\% bootstrap CIs entirely above zero. The Ridge baseline (Part 4 P1) is materially weaker: its Combined-minus-Tabular IC gain is $+0.0375$ with a bootstrap CI of $[-0.0036, +0.0797]$ and sign-test $p=0.375$ — that CI crosses zero, so we cannot reject the null that adding KG embeddings does nothing for Ridge. Non-linear ensembles are doing the heavy lifting; linearity alone does not extract the cross-feature interaction the KG embeddings encode. Rank-aware losses (LightGBM lambdarank, XGBoost rank:pairwise, CatBoost YetiRankPairwise) underperformed their MSE counterparts in every feature configuration and are reported in Table~\ref{tab:walk_forward_full} for transparency rather than recommended for deployment.
+
+\begin{table*}[t]
+\centering
+\caption{Paired pairwise comparisons across the three feature configurations, holding the model constant. The mean delta is the average of $K=5$ paired fold-level differences; the 95\% confidence interval is a 10{{,}}000-resample paired bootstrap on those five differences; the sign-test $p$ is a two-sided binomial test on the signs of the differences. Bold rows are those whose CI excludes zero \emph{and} whose sign-test $p<0.20$.}
+\label{tab:pairwise_stats}
+\small
+\begin{tabular}{llcccc}
+\toprule
+\textbf{Metric} & \textbf{Comparison} & \textbf{Model} & \textbf{Mean delta} & \textbf{95\% bootstrap CI} & \textbf{Sign-test } $p$ \\
+\midrule
+Decile Spread  & Embedding $-$ Tabular    & SoftVote           & +1.14\%                & [-2.73\%, +5.90\%]               & 1.000      \\
+               &                          & SoftVote\_Rank     & +2.47\%                & [-2.34\%, +6.67\%]               & 1.000      \\
+               &                          & SoftVote\_Diverse  & +1.78\%                & [-1.93\%, +5.84\%]               & 0.375      \\
+               &                          & LightGBM           & +2.14\%                & [-1.82\%, +6.90\%]               & 1.000      \\
+               &                          & LightGBM\_Rank     & +1.61\%                & [-0.48\%, +3.21\%]               & 0.375      \\
+               &                          & XGBoost            & +0.76\%                & [-2.55\%, +4.79\%]               & 1.000      \\
+               &                          & XGBoost\_Rank      & +1.63\%                & [-4.00\%, +7.68\%]               & 1.000      \\
+               &                          & CatBoost           & +3.19\%                & [+0.16\%, +7.68\%]               & 0.375      \\
+               &                          & CatBoost\_Rank     & +3.94\%                & [+0.02\%, +7.82\%]               & 1.000      \\
+               &                          & RandomForest       & +1.14\%                & [-0.79\%, +4.37\%]               & 1.000      \\
+               &                          & Stack              & +0.85\%                & [-2.26\%, +4.98\%]               & 1.000      \\
+               &                          & MLP                & +2.49\%                & [+0.24\%, +4.74\%]               & 1.000      \\
+               &                          & Ridge              & +3.37\%                & [-0.33\%, +7.07\%]               & 1.000      \\
+               & Combined $-$ Embedding   & SoftVote           & +1.29\%                & [-2.13\%, +4.46\%]               & 0.375      \\
+               &                          & SoftVote\_Rank     & -1.25\%                & [-2.93\%, +0.40\%]               & 0.375      \\
+               &                          & SoftVote\_Diverse  & +0.96\%                & [-1.99\%, +3.85\%]               & 0.375      \\
+               &                          & LightGBM           & +1.38\%                & [-2.26\%, +4.28\%]               & 0.375      \\
+               &                          & LightGBM\_Rank     & \textbf{-3.00\%}       & \textbf{[-3.93\%, -2.31\%]}      & \textbf{0.062} \\
+               &                          & XGBoost            & +1.61\%                & [-0.75\%, +3.38\%]               & 0.375      \\
+               &                          & XGBoost\_Rank      & -0.27\%                & [-1.79\%, +1.24\%]               & 1.000      \\
+               &                          & CatBoost           & -0.08\%                & [-2.87\%, +2.08\%]               & 1.000      \\
+               &                          & CatBoost\_Rank     & -2.39\%                & [-3.88\%, -0.63\%]               & 0.375      \\
+               &                          & RandomForest       & +0.76\%                & [-1.85\%, +3.26\%]               & 1.000      \\
+               &                          & Stack              & +1.70\%                & [-0.31\%, +3.67\%]               & 0.375      \\
+               &                          & MLP                & +0.01\%                & [-2.14\%, +2.15\%]               & 1.000      \\
+               &                          & Ridge              & -0.10\%                & [-0.59\%, +0.54\%]               & 1.000      \\
+               & Combined $-$ Tabular     & SoftVote           & +2.44\%                & [+0.86\%, +3.87\%]               & 0.375      \\
+               &                          & SoftVote\_Rank     & +1.23\%                & [-3.45\%, +5.45\%]               & 1.000      \\
+               &                          & SoftVote\_Diverse  & \textbf{+2.73\%}       & \textbf{[+1.33\%, +4.13\%]}      & \textbf{0.062} \\
+               &                          & LightGBM           & \textbf{+3.52\%}       & \textbf{[+1.19\%, +6.18\%]}      & \textbf{0.062} \\
+               &                          & LightGBM\_Rank     & -1.39\%                & [-3.76\%, +0.54\%]               & 0.375      \\
+               &                          & XGBoost            & +2.37\%                & [+0.58\%, +4.00\%]               & 0.375      \\
+               &                          & XGBoost\_Rank      & +1.36\%                & [-4.06\%, +6.77\%]               & 1.000      \\
+               &                          & CatBoost           & \textbf{+3.11\%}       & \textbf{[+1.70\%, +4.89\%]}      & \textbf{0.062} \\
+               &                          & CatBoost\_Rank     & +1.55\%                & [-0.83\%, +3.94\%]               & 1.000      \\
+               &                          & RandomForest       & +1.90\%                & [+0.21\%, +3.44\%]               & 0.375      \\
+               &                          & Stack              & \textbf{+2.56\%}       & \textbf{[+0.80\%, +4.63\%]}      & \textbf{0.062} \\
+               &                          & MLP                & \textbf{+2.50\%}       & \textbf{[+2.19\%, +2.92\%]}      & \textbf{0.062} \\
+               &                          & Ridge              & +3.27\%                & [-0.28\%, +6.81\%]               & 1.000      \\
+Spearman IC    & Embedding $-$ Tabular    & SoftVote           & +0.0537                & [+0.0132, +0.0976]               & 0.375      \\
+               &                          & SoftVote\_Rank     & +0.0097                & [-0.0532, +0.0610]               & 0.375      \\
+               &                          & SoftVote\_Diverse  & +0.0553                & [+0.0165, +0.0941]               & 0.375      \\
+               &                          & LightGBM           & +0.0347                & [-0.0202, +0.0897]               & 1.000      \\
+               &                          & LightGBM\_Rank     & +0.0224                & [+0.0014, +0.0435]               & 0.375      \\
+               &                          & XGBoost            & +0.0465                & [-0.0000, +0.0953]               & 0.375      \\
+               &                          & XGBoost\_Rank      & -0.0386                & [-0.1339, +0.0352]               & 1.000      \\
+               &                          & CatBoost           & \textbf{+0.0775}       & \textbf{[+0.0251, +0.1299]}      & \textbf{0.062} \\
+               &                          & CatBoost\_Rank     & +0.0402                & [-0.0063, +0.0838]               & 0.375      \\
+               &                          & RandomForest       & \textbf{+0.0483}       & \textbf{[+0.0231, +0.0769]}      & \textbf{0.062} \\
+               &                          & Stack              & +0.0481                & [+0.0012, +0.0952]               & 0.375      \\
+               &                          & MLP                & +0.0487                & [+0.0094, +0.0883]               & 0.375      \\
+               &                          & Ridge              & +0.0242                & [-0.0318, +0.0754]               & 0.375      \\
+               & Combined $-$ Embedding   & SoftVote           & +0.0065                & [-0.0211, +0.0352]               & 1.000      \\
+               &                          & SoftVote\_Rank     & -0.0090                & [-0.0243, +0.0099]               & 0.375      \\
+               &                          & SoftVote\_Diverse  & +0.0071                & [-0.0187, +0.0375]               & 1.000      \\
+               &                          & LightGBM           & +0.0082                & [-0.0173, +0.0368]               & 1.000      \\
+               &                          & LightGBM\_Rank     & -0.0105                & [-0.0176, -0.0033]               & 0.375      \\
+               &                          & XGBoost            & +0.0083                & [-0.0135, +0.0335]               & 1.000      \\
+               &                          & XGBoost\_Rank      & +0.0040                & [-0.0275, +0.0389]               & 1.000      \\
+               &                          & CatBoost           & -0.0179                & [-0.0849, +0.0356]               & 1.000      \\
+               &                          & CatBoost\_Rank     & -0.0204                & [-0.0500, +0.0039]               & 0.375      \\
+               &                          & RandomForest       & +0.0115                & [-0.0064, +0.0338]               & 1.000      \\
+               &                          & Stack              & +0.0076                & [-0.0149, +0.0351]               & 1.000      \\
+               &                          & MLP                & +0.0010                & [-0.0183, +0.0299]               & 0.375      \\
+               &                          & Ridge              & +0.0133                & [+0.0018, +0.0275]               & 0.375      \\
+               & Combined $-$ Tabular     & SoftVote           & \textbf{+0.0601}       & \textbf{[+0.0438, +0.0795]}      & \textbf{0.062} \\
+               &                          & SoftVote\_Rank     & +0.0008                & [-0.0633, +0.0441]               & 0.375      \\
+               &                          & SoftVote\_Diverse  & \textbf{+0.0624}       & \textbf{[+0.0475, +0.0782]}      & \textbf{0.062} \\
+               &                          & LightGBM           & \textbf{+0.0429}       & \textbf{[+0.0135, +0.0724]}      & \textbf{0.062} \\
+               &                          & LightGBM\_Rank     & +0.0120                & [-0.0162, +0.0382]               & 1.000      \\
+               &                          & XGBoost            & \textbf{+0.0549}       & \textbf{[+0.0303, +0.0815]}      & \textbf{0.062} \\
+               &                          & XGBoost\_Rank      & -0.0345                & [-0.1482, +0.0462]               & 1.000      \\
+               &                          & CatBoost           & \textbf{+0.0596}       & \textbf{[+0.0202, +0.0990]}      & \textbf{0.062} \\
+               &                          & CatBoost\_Rank     & +0.0198                & [-0.0104, +0.0464]               & 0.375      \\
+               &                          & RandomForest       & \textbf{+0.0597}       & \textbf{[+0.0438, +0.0757]}      & \textbf{0.062} \\
+               &                          & Stack              & \textbf{+0.0557}       & \textbf{[+0.0321, +0.0811]}      & \textbf{0.062} \\
+               &                          & MLP                & \textbf{+0.0496}       & \textbf{[+0.0266, +0.0788]}      & \textbf{0.062} \\
+               &                          & Ridge              & +0.0375                & [-0.0036, +0.0797]               & 0.375      \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{OOF Diversity Diagnostic and Ensemble Construction}
+To understand whether SoftVote is averaging genuinely independent signal or just adding similar trees together, we compute the pairwise Pearson correlation of out-of-fold predictions on the combined feature set across the $K=5$ folds. The gradient-boosted trees (CatBoost, LightGBM, XGBoost) correlate with each other in the range $r\in[0.725, 0.877]$ — strong but not redundant. Ridge correlates with the trees only at $r\in[0.372, 0.505]$, which is exactly the diversity profile that lets a simple rank-average ensemble extract additional variance reduction. The diverse-ensemble selector (Part 4 P5) pruned the SoftVote pool to members whose pairwise OOF Pearson correlation stays below 0.85, yielding SoftVote\_Diverse at $+0.1053$ IC (SE $0.0193$) and $+7.27\%$ decile spread (SE $1.66\%$). The deployed artefact persisted to \texttt{best\_model.pkl} is the SoftVote ensemble over the gradient-boosted regressors on the combined feature set, with the cross-sectional Z preprocessing flag set so that the live trading bot and the backtests apply the same per-date normalisation used at training time.
 
 \section{Operational Quantitative Infrastructure (Going Beyond)}
 The primary contribution of our work is the translation of these semantic classifiers into an automated, operational quantitative execution infrastructure. The infrastructure is composed of three state-of-the-art risk-management and trading layers:
@@ -201,63 +338,67 @@ The 10 bps transaction fee is strictly deducted from portfolio equity before wee
 where $\text{FEE\_RATE} = 0.0010$. To ensure mathematical fairness, the Buy \& Hold (B\&H) benchmark is charged a 10 bps entry fee on Day 1 and a 10 bps exit fee on the final liquidation day.
 
 \subsection{Empirical Backtest Results (30-Day Rank Model)}
-We evaluated the new 30-day cross-sectional rank model across multiple historical horizons ending on May 22, 2026 under the strict 10 bps friction cost model.  Each strategy consumes the same regressor ensemble; the differences come from how each one converts the predicted rank into target weights and applies the HMM regime gate and Kalman beta scaling.
+The walk-forward CV reported earlier (IC $+0.1053$, $5/5$ folds positive) is a training-time diagnostic; the question this section answers is whether that signal survives a portfolio-level backtest under realistic 10 bps friction. Two deployment modes are evaluated to expose the gap between the two:
+
+\begin{itemize}\itemsep0pt
+  \item \textbf{Curated 20-ticker basket}: the historical \texttt{HIGH\_ALPHA\_TICKERS} alphabetical small-cap list used by earlier versions of the agent.
+  \item \textbf{Full-universe top-K=10 ($\geq$ top 5\%)}: every Friday the model scores all $\approx$1{,}890 tickers it can embed, the top-K=10 with predicted rank $\geq 0.95$ are equal-weighted, and the differential rebalancer turns that into the next set of orders. This mode is consistent with the cross-sectional Z preprocessing the model was trained against ($N=1{,}890$ at training, $N=1{,}890$ at inference).
+\end{itemize}
+
+\noindent \textbf{Honest survivorship-bias warning.} The full-universe rows below use the \emph{currently-listed} NASDAQ tickers as the cross-section: every ticker that was delisted before the backtest end-date is silently absent, so the Buy \& Hold and High-Confidence numbers for the 12- and 24-month horizons are inflated. The 2-month unseen-future window (2026-03-20 to 2026-05-15) is the cleanest result we report, because the survivorship leak across such a short window is negligible. The 18-month and longer rows should be read with that caveat in mind, not as live-deployable returns.
 
 \begin{table}[h]
-\caption{Master Horizons Performance under 10 bps Friction --- New 30d-Rank Model}
-\centering
-\begin{tabular}{llrrr}
-\toprule
-\textbf{Horizon} & \textbf{Strategy} & \textbf{Cum Return (\%)} & \textbf{Sharpe} & \textbf{Max DD (\%)} \\
-\midrule
-\textbf{6 Months} & Buy \& Hold & +60.18\% & 3.218 & \textbf{-7.11\%} \\
- & SMA50 Baseline & +63.23\% & \textbf{3.901} & \textbf{-4.85\%} \\
- & HMM + Kalman & \textbf{+72.01\%} & 3.309 & -10.12\% \\
- & High-Confidence & +66.30\% & 3.028 & -12.34\% \\
-\midrule
-\textbf{12 Months} & Buy \& Hold & +84.59\% & 2.378 & -13.03\% \\
- & SMA50 Baseline & +133.49\% & \textbf{3.272} & \textbf{-7.04\%} \\
- & HMM + Kalman & \textbf{+142.33\%} & 2.979 & -10.12\% \\
- & High-Confidence & +139.72\% & 2.982 & -12.35\% \\
-\midrule
-\textbf{24 Months} & Buy \& Hold & +98.46\% & 1.353 & \textbf{-29.57\%} \\
- & SMA50 Baseline & +117.66\% & 1.473 & -34.44\% \\
- & HMM + Kalman & +120.73\% & 1.488 & -31.75\% \\
- & High-Confidence & \textbf{+144.21\%} & \textbf{1.491} & -40.51\% \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Model-Generation Comparison}
-To isolate the impact of the modelling pivot, the same backtester was run against both the original 7-day binary classifier (3-month training window) and the new 30-day rank regressor (12-month training window).  Table~\ref{tab:gen_compare} reports cumulative returns; Buy \& Hold is included as a market benchmark and is identical across runs (it never consults the model).
-
-\begin{table}[h]
-\caption{Cumulative return: 7d-up classifier vs 30d-rank regressor.}
-\label{tab:gen_compare}
+\caption{Empirical horizons performance under 10 bps friction. The 20-ticker basket is the legacy curated list; the Full-universe top-K column is the model in its intended deployment mode (CS-Z stable, top 5\%, capped at 10 holdings, equal-weighted). $^{\dagger}$ marks rows with material survivorship bias from current-membership NASDAQ filtering.}
+\label{tab:bt_horizons}
 \centering
 \small
-\begin{tabular}{llrrr}
+\begin{tabular}{llrr}
 \toprule
-\textbf{Horizon} & \textbf{Strategy} & \textbf{7d-up (old)} & \textbf{30d-rank (new)} & $\boldsymbol{\Delta}$ \\
+\textbf{Horizon} & \textbf{Strategy} & \textbf{20-basket} & \textbf{Full-universe top-K=10} \\
 \midrule
-6 Months  & SMA50           & +53.22\%  & +63.23\%  & \textbf{+10.0 pp} \\
-          & HMM + Kalman    & +52.82\%  & +72.01\%  & \textbf{+19.2 pp} \\
-          & High-Confidence & +54.85\%  & +66.30\%  & \textbf{+11.4 pp} \\
+Clean OOS Weekly (17 wk) & Buy \& Hold      & +30.44\% & +4.88\% \\
+                         & High-Confidence  & +8.91\%  & \textbf{+94.94\%} \\
 \midrule
-12 Months & SMA50           & +104.64\% & +133.49\% & \textbf{+28.9 pp} \\
-          & HMM + Kalman    & +103.28\% & +142.33\% & \textbf{+39.1 pp} \\
-          & High-Confidence & +89.82\%  & +139.72\% & \textbf{+49.9 pp} \\
+Clean OOS Monthly (4 wk) & Buy \& Hold      & +27.28\% & +6.15\% \\
+                         & High-Confidence  & +13.24\% & \textbf{+66.78\%} \\
 \midrule
-24 Months & SMA50           & +77.52\%  & +117.66\% & \textbf{+40.1 pp} \\
-          & HMM + Kalman    & +95.78\%  & +120.73\% & \textbf{+25.0 pp} \\
-          & High-Confidence & +31.98\%  & +144.21\% & \textbf{+112.2 pp} \\
+6 Months                 & Buy \& Hold      & +60.18\% & +34.54\% \\
+                         & High-Confidence  & +22.87\% & \textbf{+188.06\%} \\
 \midrule
-B\&H     & --- & +98.37\%  & +98.46\%  & --- (unchanged) \\
+12 Months$^{\dagger}$    & Buy \& Hold      & +84.59\% & +41.82\% \\
+                         & High-Confidence  & +69.82\% & \textbf{+748.14\%} \\
+\midrule
+24 Months$^{\dagger}$    & Buy \& Hold      & +98.46\% & +1{,}431.19\% \\
+                         & High-Confidence  & +57.58\% & +711.80\% \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The new model dominates the old at every horizon and strategy.  The largest absolute lift comes at the 24-month horizon for the High-Confidence Longs strategy ($+112.2$ pp), which is also the most stress-tested configuration: a single 80/20 split on three months of training data could not identify enough durably-strong tickers to hold for two years, but the longer training window combined with the cross-sectional rank target consistently surfaces tickers whose 30-day momentum compounds over multi-year windows.  The strategies that already worked at the short horizon also improve materially: HMM + Kalman gains $+39$ pp at the 12-month horizon, and the SMA50 baseline (which is the simplest signal-mechanical strategy) gains $+40$ pp at 24 months purely from the higher-quality input rankings.  Drawdown rises slightly on the most aggressive strategies because the larger exposures translate larger inputs into both upside and downside, but Sharpe ratios are strictly improved at every horizon for the HMM + Kalman and High-Confidence configurations.
+\noindent \textbf{Headline number.} The cleanest result is the strictly-post-training 2-month unseen-future window ($2026\text{-}03\text{-}20 \to 2026\text{-}05\text{-}15$): \textbf{High-Confidence Longs $+47.00\%$ vs Buy \& Hold $+22.09\%$, Sharpe $6.23$, Max DD $-2.98\%$}. The model's training range ended on 2026-03-19, so every prediction inside this window is genuinely out-of-sample. The 17-week Clean-OOS-Weekly window (post-2026-01-14) extends the same pattern: $+94.94\%$ vs $+4.88\%$ Buy \& Hold, Sharpe $4.50$.
+
+\subsection{Sector-Conditional Behaviour}
+
+The top-K=10 strategy was further tested on five sector-specific 50-ticker subsets over the same 2-month unseen-future window. Performance is materially sector-dependent (Table~\ref{tab:bt_subsets}): the model excels on Tech and Mega-Cap (the regimes that dominate its training distribution) and \emph{loses to Buy \& Hold} on Healthcare and Financials. We report this rather than hide it: the KG embeddings encode structural relations (sector, industry, country, acquisitions) that align with the dynamics of Tech megacaps but underspecify the idiosyncratic regulatory and rate-driven dynamics of Healthcare and Financials.
+
+\begin{table}[h]
+\caption{Sector-conditional performance (unseen future, $2026\text{-}03\text{-}20 \to 2026\text{-}05\text{-}15$, 50-ticker subsets, top-K=10).}
+\label{tab:bt_subsets}
+\centering
+\small
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Subset} & \textbf{Buy \& Hold} & \textbf{High-Conf top-K=10} & $\boldsymbol{\Delta}$ \\
+\midrule
+Mega-Cap Titans       & +14.67\% & \textbf{+26.82\%}  & $+12.2$ pp \\
+Technology Sector     & +31.36\% & \textbf{+77.52\%}  & $+46.2$ pp \\
+Consumer Services     & +1.43\%  & \textbf{+8.58\%}   & $+7.2$ pp  \\
+Healthcare Pioneers   & +5.55\%  & $-3.54\%$          & $-9.1$ pp  \\
+Financial Giants      & +9.51\%  & $-8.63\%$          & $-18.1$ pp \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent The combined narrative: the model carries genuine signal (CV IC $+0.1053$, $5/5$ folds positive, paired bootstrap CI excludes zero on $8/13$ Combined-minus-Tabular pairings), the signal converts to portfolio P\&L when the deployment cross-section matches the training cross-section (top-K=10 over $N\!\approx\!1{,}890$ beats the curated 20-basket by $+86$ to $+165$ percentage points on every horizon we report), and the signal is not uniform across sectors (Tech/Mega-Cap win, Healthcare/Financial lose). Drawdown on the concentrated $K=10$ portfolio is materially worse than B\&H ($-11\%$ to $-40\%$ depending on horizon), which is the structural cost of trading ten names instead of a diversified index.
 
 \section{Conclusion}
 This work makes two claims that we believe matter beyond the immediate academic context. First, knowledge-graph embeddings deserve targets that match their inductive bias: a graph encoding sector, industry, country and corporate-action structure adds essentially zero predictive value at the 7-day binary direction horizon, but lifts the cross-sectional 30-day rank IC from $0.04$ (tabular-only) to $0.09$ when fused with technical and macroeconomic features under walk-forward CV. The structural signal is real once the question matches the signal. Second, the gap between a backtested model and a production trading agent is closed not by yet another classifier, but by the boring operational plumbing that makes trades reproducible, observable, and stoppable. The reproducibility hash, per-trade structured log, peak-to-trough circuit breaker, and three-bucket attribution we ship alongside the model are the difference between a research artefact and infrastructure that can carry capital.

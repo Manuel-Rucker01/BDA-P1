@@ -263,9 +263,16 @@ class TestDataWriting:
 
             for expected in ("nasdaq", "company_history", "us_exchange",
                              "sp500_companies", "forbes_employers",
-                             "company_acquisitions", "companies",
+                             "company_acquisitions",
                              "data_quality_metrics"):
                 assert expected in names, f"missing table: {expected}"
+            # Schema parity: the Trusted Zone must NOT emit a joined/enriched
+            # `companies` entity — that cross-source reconciliation belongs in
+            # the Exploitation Zone.
+            assert "companies" not in names, (
+                "Trusted Zone must not contain the enriched `companies` table "
+                "(schema-parity violation — it belongs in the Exploitation Zone)"
+            )
 
     def test_write_preserves_data(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -278,13 +285,6 @@ class TestDataWriting:
             assert conn.execute("SELECT COUNT(*) FROM nasdaq").fetchone()[0] == 3
             assert conn.execute(
                 "SELECT COUNT(*) FROM us_exchange").fetchone()[0] == 2
-            # The enriched companies table is created downstream of the join
-            assert conn.execute(
-                "SELECT COUNT(*) FROM companies").fetchone()[0] == 3
-            # AAPL must resolve to United States via sp500.Country
-            assert conn.execute(
-                "SELECT country FROM companies WHERE Symbol = 'AAPL'"
-            ).fetchone()[0] == "United States"
             conn.close()
 
 
