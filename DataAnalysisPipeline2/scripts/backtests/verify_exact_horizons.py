@@ -87,7 +87,7 @@ def fetch_company_metadata():
     """).df()
     conn.close()
     
-    trusted_db = os.path.abspath(os.path.join(EXPLOITATION_DIR, "..", "TrustedZone", "TrustedZone.duckdb"))
+    trusted_db = os.path.abspath(os.path.join(EXPLOITATION_DIR, "ExploitationZone.duckdb"))
     conn_t = duckdb.connect(trusted_db, read_only=True)
     df_country = conn_t.execute("SELECT DISTINCT Symbol AS ticker, country FROM companies").df()
     conn_t.close()

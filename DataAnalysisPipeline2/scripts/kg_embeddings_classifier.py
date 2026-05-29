@@ -518,11 +518,11 @@ def load_macro_features(macro_ttl_path: str):
 
 
 def attach_macro_features(df_obs, db_path: str, macro_ttl_path: str):
-    """Join GDP and GDP growth onto each row via the TrustedZone `companies`
-    table (which carries each ticker's resolved HQ country)."""
-    conn = duckdb.connect(os.path.abspath(os.path.join(
-        os.path.dirname(db_path), "..", "TrustedZone", "TrustedZone.duckdb")),
-        read_only=True)
+    """Join GDP and GDP growth onto each row via the Exploitation-Zone
+    `companies` lookup (Symbol→resolved HQ country). The country reconciliation
+    lives in the Exploitation Zone (materialised by graph_generation.py); the
+    Trusted Zone holds only per-source cleaned tables (schema parity)."""
+    conn = duckdb.connect(db_path, read_only=True)
     companies = conn.execute("SELECT Symbol AS ticker, country FROM companies").df()
     conn.close()
     macro = load_macro_features(macro_ttl_path)

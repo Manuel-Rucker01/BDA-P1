@@ -43,6 +43,55 @@ except Exception as _e:
 # ──────────────────────────────────────────────────────────────────────────
 
 
+def inverse_volatility_weights(tickers, vols, target_exposure=1.0,
+                               max_weight=0.25, vol_floor=1e-3, n_cap_iters=4):
+    """Risk-parity-lite intra-basket sizing: w_i proportional to 1/vol_i.
+
+    Higher-volatility names receive less capital so a single volatile name
+    cannot dominate portfolio drawdown. A per-name cap (`max_weight`) is
+    enforced by iteratively clipping and redistributing the excess across the
+    uncapped names, so the result respects the cap and still sums to
+    `target_exposure`.
+
+    Parameters
+    ----------
+    tickers : sequence of symbols
+    vols    : sequence of realized volatilities aligned with `tickers`
+    Returns
+    -------
+    dict ticker -> weight (summing to ~target_exposure)
+    """
+    import numpy as _np
+    tickers = list(tickers)
+    if not tickers:
+        return {}
+    v = _np.maximum(_np.asarray(vols, dtype=float), vol_floor)
+    w = 1.0 / v
+    w = w / w.sum()
+    # Enforce the per-name cap by FREEZING names at the cap and redistributing
+    # the remaining budget only among strictly-free names. Freezing prevents
+    # the ping-pong where an already-capped name gets re-inflated by the next
+    # redistribution. If the cap makes full exposure infeasible
+    # (n_names * max_weight < 1) the book is deliberately left partially in
+    # cash rather than breaching the cap.
+    cap = max_weight
+    capped = _np.zeros(len(w), dtype=bool)
+    for _ in range(n_cap_iters):
+        over = (w > cap + 1e-12) & ~capped
+        if not over.any():
+            break
+        w[over] = cap
+        capped |= over
+        free = ~capped
+        remaining = 1.0 - float(w[capped].sum())
+        if not free.any() or remaining <= 0:
+            w[free] = 0.0
+            break
+        w[free] = w[free] / w[free].sum() * remaining
+    w = w * target_exposure
+    return {t: float(wi) for t, wi in zip(tickers, w)}
+
+
 def compute_rsi(series, period=14):
     delta = series.diff()
     gain = delta.clip(lower=0)
@@ -299,10 +348,9 @@ def load_macro_features(macro_ttl_path: str):
 def fetch_company_metadata():
     """Fetch static sector, industry, market cap, and country info from historical databases."""
     db_path = os.path.join(config.EXPLOITATION_DIR, "ExploitationZone.duckdb")
-    trusted_db = os.path.abspath(os.path.join(config.EXPLOITATION_DIR, "..", "TrustedZone", "TrustedZone.duckdb"))
-    
-    if not os.path.exists(db_path) or not os.path.exists(trusted_db):
-        print("[WARNING] Analytical databases missing. Using default metadata values.")
+
+    if not os.path.exists(db_path):
+        print("[WARNING] Analytical database missing. Using default metadata values.")
         rows = [{"ticker": t, "Sector": "Technology", "Industry": "Software", "MarketCap": 5e11, "eur_rate": 1.0, "jpy_rate": 150.0, "country": "United States"} for t in config.TICKERS]
         return pd.DataFrame(rows)
 
@@ -320,10 +368,12 @@ def fetch_company_metadata():
         """).df()
         conn.close()
         
-        conn_t = duckdb.connect(trusted_db, read_only=True)
+        # Country lookup now lives in the Exploitation Zone (materialised by
+        # graph_generation.py), not the Trusted Zone — read it from the same DB.
+        conn_t = duckdb.connect(db_path, read_only=True)
         df_country = conn_t.execute("SELECT DISTINCT Symbol AS ticker, country FROM companies").df()
         conn_t.close()
-        
+
         df_meta = df_meta.merge(df_country, on="ticker", how="left")
         return df_meta
     except Exception as e:
@@ -774,8 +824,11 @@ class BDATradingAgent:
         self.last_predictions_df = latest_df.copy()
         self.last_feature_matrix = X_full_df.copy()
 
+        if "return_volatility_20d" not in latest_df.columns:
+            latest_df["return_volatility_20d"] = 0.01
         return latest_df[["ticker", "company_close", "pred_rank",
-                          "pred_proba", "kalman_beta"]].sort_values(
+                          "pred_proba", "kalman_beta",
+                          "return_volatility_20d"]].sort_values(
             "pred_rank", ascending=False)
 
     def calculate_target_weights(self, predictions_df, is_bull, strategy="high_confidence"):
@@ -817,21 +870,34 @@ class BDATradingAgent:
                       f"Falling back to top {config.TOP_K_HOLDINGS} by rank.")
                 holdings = predictions_df.sort_values("pred_rank", ascending=False).head(
                     config.TOP_K_HOLDINGS).copy()
+            scheme = getattr(config, "WEIGHTING_SCHEME", "inverse_vol")
             print(f"[Agent] top_k mode: universe={n} | "
                   f"above-top-{config.TOP_PCT_THRESHOLD}% gate={len(gate)} | "
-                  f"held={len(holdings)}")
+                  f"held={len(holdings)} | weighting={scheme}")
 
-            if config.EQUAL_WEIGHT_TOP_K:
-                w_each = config.TARGET_EXPOSURE / max(len(holdings), 1)
-                for _, row in holdings.iterrows():
-                    target_weights[row["ticker"]] = w_each
-            else:
+            if scheme == "inverse_vol" and "return_volatility_20d" in holdings.columns:
+                # Alpha layer already chose the names; size them by 1/vol so
+                # high-volatility names take less capital and don't dominate
+                # the concentrated book's drawdown.
+                w = inverse_volatility_weights(
+                    holdings["ticker"].tolist(),
+                    holdings["return_volatility_20d"].tolist(),
+                    target_exposure=config.TARGET_EXPOSURE,
+                    max_weight=getattr(config, "MAX_POSITION_WEIGHT", 0.25),
+                    vol_floor=getattr(config, "VOL_FLOOR", 1e-3),
+                )
+                target_weights.update(w)
+            elif scheme == "pred_rank":
                 sum_rank = holdings["pred_rank"].sum()
                 if sum_rank > 0:
                     for _, row in holdings.iterrows():
                         target_weights[row["ticker"]] = (
                             row["pred_rank"] / sum_rank
                         ) * config.TARGET_EXPOSURE
+            else:  # "equal" (or inverse_vol fallback when vol column absent)
+                w_each = config.TARGET_EXPOSURE / max(len(holdings), 1)
+                for _, row in holdings.iterrows():
+                    target_weights[row["ticker"]] = w_each
 
         elif strategy == "high_confidence":
             high_longs = predictions_df[

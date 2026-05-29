@@ -56,6 +56,41 @@ except Exception as _e:
 
 
 # ── Top-K selection helper (Part 5) ──────────────────────────────────────────
+def _inverse_vol_weights(sel_df, target_exposure=1.0):
+    """Risk-parity-lite intra-basket sizing controlled by config.WEIGHTING_SCHEME.
+    w_i proportional to 1/realized_vol_i with a per-name cap, so high-volatility
+    names take less capital and don't dominate the concentrated book's drawdown.
+    Falls back to equal weight when scheme != 'inverse_vol' or vol col missing."""
+    import numpy as _np
+    if sel_df is None or len(sel_df) == 0:
+        return {}
+    tickers = sel_df["ticker"].tolist()
+    scheme = getattr(config, "WEIGHTING_SCHEME", "inverse_vol")
+    if scheme != "inverse_vol" or "return_volatility_20d" not in sel_df.columns:
+        w = _np.ones(len(tickers)) / len(tickers)
+    else:
+        v = _np.maximum(sel_df["return_volatility_20d"].to_numpy(dtype=float),
+                        getattr(config, "VOL_FLOOR", 1e-3))
+        w = 1.0 / v
+        w = w / w.sum()
+        cap = getattr(config, "MAX_POSITION_WEIGHT", 0.25)
+        capped = _np.zeros(len(w), dtype=bool)
+        for _ in range(6):
+            over = (w > cap + 1e-12) & ~capped
+            if not over.any():
+                break
+            w[over] = cap
+            capped |= over
+            free = ~capped
+            remaining = 1.0 - float(w[capped].sum())
+            if not free.any() or remaining <= 0:
+                w[free] = 0.0
+                break
+            w[free] = w[free] / w[free].sum() * remaining
+    w = w * target_exposure
+    return {t: float(wi) for t, wi in zip(tickers, w)}
+
+
 def _select_top_k(friday_obs, pct_threshold=None, top_k=None):
     '''Replace fixed 0.53 gate with: top-pct% gate -> cap at K, sorted desc.'''
     if pct_threshold is None:
@@ -273,9 +308,8 @@ def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_emb
         
         # --- D. High-Confidence Longs (P >= 0.53) ---
         high_long_df = _select_top_k(friday_obs)
-        high_long_tickers = high_long_df["ticker"].tolist()
-        high_long_returns = [ticker_returns[t] for t in high_long_tickers if t in ticker_returns]
-        ret_high_long = np.mean(high_long_returns) if high_long_returns else 0.0
+        _hl_w = _inverse_vol_weights(high_long_df, target_exposure=1.0)
+        ret_high_long = sum(wt * ticker_returns.get(t, 0.0) for t, wt in _hl_w.items())
         
         equity_high_long *= (1.0 + ret_high_long)
         hl_values.append(equity_high_long)

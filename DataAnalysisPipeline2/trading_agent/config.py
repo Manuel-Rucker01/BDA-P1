@@ -74,7 +74,27 @@ MIN_ORDER_VALUE = 5.0           # Minimum USD order limit to avoid tiny fraction
 # portfolio.
 TOP_PCT_THRESHOLD = 5.0          # Default: only consider top 5% of ranked universe
 TOP_K_HOLDINGS = 10              # Default: cap actually-held positions at 10
-EQUAL_WEIGHT_TOP_K = True        # Equal-weight the top-K; if False, weight by pred_rank
+EQUAL_WEIGHT_TOP_K = True        # (legacy) equal-weight when WEIGHTING_SCHEME='equal'
+
+# --- Intra-basket position weighting ---
+# How capital is split across the held top-K names. The alpha layer chooses
+# WHICH names to hold; this chooses HOW MUCH of each.
+#   "inverse_vol" : w_i proportional to 1 / realized_vol_i (risk-parity-lite).
+#                   High-volatility names receive less capital, so no single
+#                   name dominates portfolio drawdown — this directly targets
+#                   the idiosyncratic single-name risk that a concentrated
+#                   top-K book is exposed to (and that the HMM/Kalman layers,
+#                   which manage systematic risk, do not address).
+#   "equal"       : equal weight across the held names (legacy behaviour).
+#   "pred_rank"   : weight proportional to predicted rank.
+WEIGHTING_SCHEME = "inverse_vol"
+# Cap on any single position so one ultra-low-volatility name cannot dominate
+# the inverse-vol book. With K=10 the equal-weight baseline is 0.10; 0.25 lets
+# the risk tilt act without letting a single name become the whole portfolio.
+MAX_POSITION_WEIGHT = 0.25
+# Floor on realized volatility used in the 1/vol calculation (guards against
+# division blow-ups on a name with a near-zero trailing vol).
+VOL_FLOOR = 1e-3
 
 # --- Broad-Market Regime Switching ---
 # Enable the S&P 500 trend filter (shut off short exposure in bull regimes)
