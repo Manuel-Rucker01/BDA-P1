@@ -28,7 +28,7 @@ if PIPELINE_DIR not in sys.path:
     sys.path.append(PIPELINE_DIR)
 
 from trading_agent import config
-from trading_agent.bot import GaussianHMM, KalmanBetaFilter, compute_live_features, load_macro_features, fetch_company_metadata
+from trading_agent.bot import GaussianHMM, KalmanBetaFilter, compute_live_features, load_macro_features, fetch_company_metadata, select_top_k_with_sector_cap
 
 _CS_Z = False  # set by main() after pickle load (Part-4 P3)
 
@@ -92,17 +92,24 @@ def _inverse_vol_weights(sel_df, target_exposure=1.0):
 
 
 def _select_top_k(friday_obs, pct_threshold=None, top_k=None):
-    '''Replace fixed 0.53 gate with: top-pct% gate -> cap at K, sorted desc.'''
+    '''top-pct% gate -> sector-capped top-K. Mirrors live
+    bot.calculate_target_weights so the backtest reflects the deployed selector.
+    Defaults come from config (TOP_PCT_THRESHOLD / TOP_K_HOLDINGS /
+    MAX_SECTOR_WEIGHT) and can be overridden via env for A/B runs.'''
     if pct_threshold is None:
-        pct_threshold = float(os.environ.get("BACKTEST_TOP_PCT", "5.0"))
+        pct_threshold = float(os.environ.get(
+            "BACKTEST_TOP_PCT", str(getattr(config, "TOP_PCT_THRESHOLD", 5.0))))
     if top_k is None:
-        top_k = int(os.environ.get("BACKTEST_TOP_K", "10"))
+        top_k = int(os.environ.get(
+            "BACKTEST_TOP_K", str(getattr(config, "TOP_K_HOLDINGS", 20))))
+    max_sec = float(os.environ.get(
+        "BACKTEST_MAX_SECTOR", str(getattr(config, "MAX_SECTOR_WEIGHT", 1.0))))
     cutoff = 1.0 - (pct_threshold / 100.0)
     gated = friday_obs[friday_obs["pred_proba"] >= cutoff].copy()
-    gated = gated.sort_values("pred_proba", ascending=False).head(top_k)
+    gated = gated.sort_values("pred_proba", ascending=False)
     if gated.empty:
-        gated = friday_obs.sort_values("pred_proba", ascending=False).head(top_k).copy()
-    return gated
+        gated = friday_obs.sort_values("pred_proba", ascending=False).copy()
+    return select_top_k_with_sector_cap(gated, top_k, max_sec).copy()
 # ────────────────────────────────────────────────────────────────────────────
 
 def calculate_metrics(portfolio_values):
@@ -115,6 +122,28 @@ def calculate_metrics(portfolio_values):
     drawdowns = (portfolio_values - running_max) / running_max * 100
     max_dd = drawdowns.min()
     return cum_return, sharpe, max_dd
+
+
+def information_ratio(strategy_values, benchmark_values, periods_per_year=52):
+    """Annualised Information Ratio of a strategy vs a benchmark.
+
+        IR = sqrt(P) * mean(active_return) / std(active_return)
+
+    where active_return_t = r_strategy_t - r_benchmark_t (the per-period excess
+    over the benchmark), P = periods per year. IR measures *consistency* of
+    out-performance: high mean excess return with low tracking error. Returns
+    NaN if there is no active-return variation.
+    """
+    s = pd.Series(strategy_values).pct_change().dropna().reset_index(drop=True)
+    b = pd.Series(benchmark_values).pct_change().dropna().reset_index(drop=True)
+    n = min(len(s), len(b))
+    if n < 2:
+        return float("nan")
+    active = s.iloc[:n].to_numpy() - b.iloc[:n].to_numpy()
+    sd = active.std(ddof=1)
+    if sd == 0 or np.isnan(sd):
+        return float("nan")
+    return float(np.sqrt(periods_per_year) * active.mean() / sd)
 
 def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_embeddings, scaler, pca, trained_models, mix_models, tabular_cols, pca_cols, start_date, end_date, initial_equity=10000.0):
     horizon_fridays = [d for d in friday_dates if d >= start_date and d <= end_date]
@@ -318,12 +347,14 @@ def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_emb
     sma_cum, sma_sharpe, sma_dd = calculate_metrics(sma_values)
     hmm_cum, hmm_sharpe, hmm_dd = calculate_metrics(hmm_values)
     hl_cum, hl_sharpe, hl_dd = calculate_metrics(hl_values)
-    
+    hl_ir = information_ratio(hl_values, bh_values)  # vs Buy & Hold benchmark
+
     return {
         "bh_cum": bh_cum, "bh_val": equity_bh, "bh_sharpe": bh_sharpe, "bh_dd": bh_dd,
         "sma_cum": sma_cum, "sma_val": equity_sma, "sma_sharpe": sma_sharpe, "sma_dd": sma_dd,
         "hmm_cum": hmm_cum, "hmm_val": equity_hmm, "hmm_sharpe": hmm_sharpe, "hmm_dd": hmm_dd,
         "hl_cum": hl_cum, "hl_val": equity_high_long, "hl_sharpe": hl_sharpe, "hl_dd": hl_dd,
+        "hl_ir": hl_ir,
         "bulls": bull_weeks, "bears": bear_weeks
     }
 
@@ -331,7 +362,8 @@ def main():
     print("=" * 110)
     print("BDA RIGOROUS OUT-OF-SAMPLE BACKTEST ON UNSEEN MARKET HORIZONS (NO OVERLAP WITH TRAINING)")
     print("=" * 110)
-    print("Model Training Range: 2025-12-22 to 2026-03-19")
+    print("Model Training Range (feature-dates): 2025-03-31 to 2026-01-14 "
+          "(data ends 2026-02-13; last 30d trimmed for the 30d forward target)")
     print("=" * 110)
     
     # 1. Load Model
@@ -415,11 +447,23 @@ def main():
     df_all_feat = compute_live_features(df_full, metadata_df, macro_df)
     
     # 6. Define Non-Overlapping Out-of-Sample Windows
-    # Unseen Past: 2024-05-24 to 2025-12-12 (Ends before 2025-12-22)
-    # Unseen Future: 2026-03-20 to 2026-05-15 (Starts after 2026-03-19)
+    # The deployed model (best_model.pkl) was fit on feature-dates
+    # 2025-03-31 -> 2026-01-14 (data ends 2026-02-13; the last 30 days are
+    # trimmed because the target is a 30-day forward return). Genuinely
+    # out-of-sample (no memorisation) therefore means feature-dates strictly
+    # OUTSIDE that interval -- i.e. before 2025-03-31 OR after 2026-01-14.
+    #
+    #  * Pre-Training OOS  (2023-07-01 -> 2025-03-01): ~20 months the model
+    #    never trained on. Long window / high statistical power, BUT the static
+    #    KG structural embeddings encode the snapshot's corporate structure
+    #    (acquisitions, sector, country), which for a PAST window carries mild
+    #    forward-looking structural information. Read with that caveat +
+    #    current-membership survivorship bias.
+    #  * Post-Training OOS (2026-03-20 -> 2026-05-15): short but the CLEANEST
+    #    read -- no memorisation AND embeddings are contemporaneous.
     oos_horizons = {
-        "Unseen Past OOS (18 Months: 2024-05-24 to 2025-12-12)": ("2024-05-24", "2025-12-12"),
-        "Unseen Future OOS (2 Months: 2026-03-20 to 2026-05-15)": ("2026-03-20", "2026-05-15")
+        "Pre-Training OOS (20 Months: 2023-07-01 to 2025-03-01)": ("2023-07-01", "2025-03-01"),
+        "Post-Training OOS (2 Months: 2026-03-20 to 2026-05-15)": ("2026-03-20", "2026-05-15")
     }
     
     results = {}
@@ -438,21 +482,21 @@ def main():
     print("\n" + "=" * 125)
     print("PURE OUT-OF-SAMPLE (OOS) COMPARISON TABLE (UNSEEN DATA ONLY)")
     print("=" * 125)
-    print(f"{'Horizon (Unseen Window)':<52} | {'Strategy Name':<30} | {'Cum Return':<12} | {'Sharpe':<8} | {'Max DD':<8}")
-    print("-" * 125)
-    
+    print(f"{'Horizon (Unseen Window)':<52} | {'Strategy Name':<30} | {'Cum Return':<12} | {'Sharpe':<8} | {'Max DD':<8} | {'IR vs B&H':<9}")
+    print("-" * 135)
+
     for label, res in results.items():
         # Buy & Hold
-        print(f"{label:<52} | {'Buy & Hold Benchmark':<30} | {res['bh_cum']:>9.2f}% | {res['bh_sharpe']:>7.3f} | {res['bh_dd']:>6.2f}%")
+        print(f"{label:<52} | {'Buy & Hold Benchmark':<30} | {res['bh_cum']:>9.2f}% | {res['bh_sharpe']:>7.3f} | {res['bh_dd']:>6.2f}% | {'--':>9}")
         # SMA50 Baseline
-        print(f"{'':<52} | {'SMA50 Baseline Filter':<30} | {res['sma_cum']:>9.2f}% | {res['sma_sharpe']:>7.3f} | {res['sma_dd']:>6.2f}%")
+        print(f"{'':<52} | {'SMA50 Baseline Filter':<30} | {res['sma_cum']:>9.2f}% | {res['sma_sharpe']:>7.3f} | {res['sma_dd']:>6.2f}% | {'--':>9}")
         # HMM + Kalman
-        print(f"{'':<52} | {'HMM + Kalman Beta Upgraded':<30} | {res['hmm_cum']:>9.2f}% | {res['hmm_sharpe']:>7.3f} | {res['hmm_dd']:>6.2f}%")
+        print(f"{'':<52} | {'HMM + Kalman Beta Upgraded':<30} | {res['hmm_cum']:>9.2f}% | {res['hmm_sharpe']:>7.3f} | {res['hmm_dd']:>6.2f}% | {'--':>9}")
         # High Confidence Longs
-        print(f"{'':<52} | {'High-Confidence Longs':<30} | {res['hl_cum']:>9.2f}% | {res['hl_sharpe']:>7.3f} | {res['hl_dd']:>6.2f}%")
-        print("-" * 125)
-        
-    print("=" * 125)
+        print(f"{'':<52} | {'High-Confidence Longs':<30} | {res['hl_cum']:>9.2f}% | {res['hl_sharpe']:>7.3f} | {res['hl_dd']:>6.2f}% | {res.get('hl_ir', float('nan')):>9.3f}")
+        print("-" * 135)
+
+    print("=" * 135)
     
     # Save a detailed comparison results file in brain/artifact directory
     artifact_path = "/Users/manuelruckerabella/.gemini/antigravity/brain/5ff25afd-4ae7-4146-9d7d-4675e86fc3e6/unseen_oos_comparison.md"
@@ -461,12 +505,12 @@ def main():
     with open(artifact_path, "w") as f:
         f.write("# Pure Out-of-Sample (OOS) Backtest on Unseen Market Windows\n\n")
         f.write("> [!IMPORTANT]\n")
-        f.write("> To guarantee complete mathematical validation and prove that the bot possesses genuine predictive capabilities (without looking in-sample or overfitting), we isolated the **model's training range (2025-12-22 to 2026-03-19)**.\n")
-        f.write("> All evaluations in this report are conducted strictly on **100% unseen out-of-sample data** which was completely omitted from training.\n\n")
-        
+        f.write("> The deployed model was fit on feature-dates **2025-03-31 to 2026-01-14** (data ends 2026-02-13; the last 30 days are trimmed for the 30-day forward target). Genuine out-of-sample therefore means feature-dates strictly outside that interval.\n")
+        f.write("> Both windows below are out-of-sample (no memorisation). The Pre-Training window additionally carries (a) current-membership survivorship bias and (b) mild static-embedding look-ahead on slow-moving structural features; the Post-Training window is the cleanest read.\n\n")
+
         f.write("## Non-Overlapping Out-of-Sample Windows\n")
-        f.write("1. **Unseen Past OOS**: `2024-05-24` to `2025-12-12` (18 Months / 81 weeks) of past economic conditions.\n")
-        f.write("2. **Unseen Future OOS**: `2026-03-20` to `2026-05-15` (2 Months / 9 weeks) of recent future economic conditions.\n\n")
+        f.write("1. **Pre-Training OOS**: `2023-07-01` to `2025-03-01` (~20 Months) -- model never trained on it; survivorship + static-embedding caveats apply.\n")
+        f.write("2. **Post-Training OOS**: `2026-03-20` to `2026-05-15` (2 Months / 9 weeks) -- cleanest read, no memorisation, contemporaneous embeddings.\n\n")
         
         f.write("## Performance Audit Table\n\n")
         f.write("| Unseen Horizon | Strategy Name | Cumulative Return (%) | Ending Value ($) | Annualized Sharpe | Max Drawdown (%) |\n")

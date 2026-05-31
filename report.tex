@@ -304,6 +304,24 @@ Naive rebalancing (selling the entire portfolio to cash and buying the new targe
 \end{equation}
 This simple optimization \textbf{reduces rebalancing trade volume by over 58.32\%}, directly saving spreads and commissions. Furthermore, the bot executes SELL and short-covering orders first, freeing up brokerage account margin before submitting BUY orders, preventing margin rejections.
 
+\subsection{Inverse-Volatility Position Sizing}
+The concentrated top-$K{=}10$ deployment introduces a risk that the HMM regime gate and Kalman beta filter do not address. Those two layers manage \emph{systematic} risk (market-wide co-movement, captured by $\beta$), which dominates a broadly diversified book; but on a ten-name book the dominant risk is \emph{idiosyncratic} single-name variance, which diversifies as $1/N$ and is therefore large when $N$ is small. To target that risk without diluting the model's stock selection, we separate concerns: the ranking model decides \emph{which} names enter the book, and an inverse-volatility rule decides \emph{how much} of each:
+\begin{equation}
+w_i \;\propto\; \frac{1}{\sigma_i}, \qquad w_i \le w_{\max},\qquad \sum_i w_i = 1,
+\end{equation}
+where $\sigma_i$ is the trailing 20-day realised volatility and $w_{\max}{=}0.25$ caps any single position (enforced by freezing capped names and redistributing the residual budget among the rest). High-volatility names thus receive proportionally less capital, so a single name's blow-up contributes less to portfolio drawdown.
+
+On the strictly-out-of-sample post-training window (Section~\ref{sec:bt}), the inverse-volatility top-$K{=}10$ book returns $+47.28\%$ at Sharpe $6.66$, maximum drawdown $-2.40\%$, and an Information Ratio of $+4.37$ against Buy~\&~Hold. We justify the $1/\sigma$ rule primarily on \emph{risk-management} grounds rather than a backtested return edge: the per-name cap $w_{\max}{=}0.25$ provably prevents any single ultra-low-volatility name from dominating the book, which is the failure mode a ten-name portfolio is most exposed to. We deliberately do \emph{not} claim a quantified inverse-vol-versus-equal-weight improvement here: an earlier comparison rested on an 18-month window that we subsequently found overlaps the model's training range ($2025\text{-}03\text{-}31 \to 2026\text{-}01\text{-}14$), so those deltas were contaminated and have been withdrawn. The binding constraint on a ten-name book is the concentration itself; $1/\sigma$ sizing trims the edges of that risk without eliminating it, and materially lower drawdown would require relaxing $K$ --- which, as the breadth experiment in Section~\ref{sec:bt} shows, trades away the very cross-sectional alpha the concentrated book is designed to capture.
+
+\subsection{Live News-Sentiment Tilt (Semantic Extension, Live-Only)}
+As a forward-looking semantic enhancement, the live agent ingests real-time company news and tilts the model's ranking by sentiment. At decision time the agent queries the Alpaca News API for each candidate, scores each headline/summary (a finance lexicon by default, with optional FinBERT), and --- staying within the project's knowledge-graph paradigm --- assembles an \emph{ephemeral} RDF \texttt{NewsEvent} graph in which each article node links to its company node carrying \texttt{sentimentScore} and \texttt{publishedAt} literals. A SPARQL query then aggregates mean sentiment per ticker, and the agent re-ranks:
+\begin{equation}
+\text{score}_i = \text{pred\_rank}_i + \lambda\, s_i, \qquad s_i \in [-1, 1],\ \lambda = 0.10,
+\end{equation}
+where $s_i$ is the aggregated news sentiment. The model still decides the base ordering; recent news only nudges it.
+
+\textbf{This feature is deliberately live-only and is never used in the walk-forward bake-off, the backtests, or the structural embeddings.} A leak-free historical evaluation would require a point-in-time news archive --- each article timestamped at its true public-release moment and scored with only-then-available information --- which current-news APIs do not provide. Backtesting against a present-day news feed would silently inject look-ahead bias and invalidate the very out-of-sample guarantees this paper is built on. We therefore treat news sentiment as a documented live overlay and a future-work item (a PIT archive, or news events promoted into a temporally-versioned graph, would enable a rigorous backtested study). The backtested results reported above are computed with this tilt disabled and are provably unaffected by it.
+
 \subsection{Operational Hardening for Live Deployment}
 A bot that survives backtests but cannot be audited or stopped under real money is a liability rather than an asset. Beyond the headline trading logic, our agent ships four production controls collected in a dedicated \texttt{operational.py} module so they are reusable across agents:
 
@@ -320,6 +338,7 @@ A bot that survives backtests but cannot be audited or stopped under real money 
 where $\tilde{w}_i$ and $\tilde{r}_i$ are the de-meaned weights and returns within the universe. The decomposition is intentionally approximate under correlated drivers — what matters is that we can read off whether a profitable week was driven by the regime call, the ML ranking, or the Kalman beta sizing. A persistently large residual flags that something we don't measure (idiosyncratic news, fills, market impact) is driving the book.
 
 \section{Rigorous Out-of-Sample Validation and Slippage Simulation}
+\label{sec:bt}
 To evaluate the operational validity of the system under realistic institutional constraints, we implemented a strict **10 basis points (10 bps)** transaction fee and slippage model on all rebalancing turnover.
 
 \subsection{Drift Propagation Mathematical Consistency}
@@ -342,39 +361,30 @@ The walk-forward CV reported earlier (IC $+0.1053$, $5/5$ folds positive) is a t
 
 \begin{itemize}\itemsep0pt
   \item \textbf{Curated 20-ticker basket}: the historical \texttt{HIGH\_ALPHA\_TICKERS} alphabetical small-cap list used by earlier versions of the agent.
-  \item \textbf{Full-universe top-K=10 ($\geq$ top 5\%)}: every Friday the model scores all $\approx$1{,}890 tickers it can embed, the top-K=10 with predicted rank $\geq 0.95$ are equal-weighted, and the differential rebalancer turns that into the next set of orders. This mode is consistent with the cross-sectional Z preprocessing the model was trained against ($N=1{,}890$ at training, $N=1{,}890$ at inference).
+  \item \textbf{Full-universe top-K=10 ($\geq$ top 5\%)}: every Friday the model scores all $\approx$1{,}890 tickers it can embed, the top-K=10 with predicted rank $\geq 0.95$ are inverse-volatility weighted (Section above), and the differential rebalancer turns that into the next set of orders. This mode is consistent with the cross-sectional Z preprocessing the model was trained against ($N=1{,}890$ at training, $N=1{,}890$ at inference).
 \end{itemize}
 
-\noindent \textbf{Honest survivorship-bias warning.} The full-universe rows below use the \emph{currently-listed} NASDAQ tickers as the cross-section: every ticker that was delisted before the backtest end-date is silently absent, so the Buy \& Hold and High-Confidence numbers for the 12- and 24-month horizons are inflated. The 2-month unseen-future window (2026-03-20 to 2026-05-15) is the cleanest result we report, because the survivorship leak across such a short window is negligible. The 18-month and longer rows should be read with that caveat in mind, not as live-deployable returns.
+\noindent \textbf{What counts as out-of-sample.} The deployed model was fit on feature-dates $2025\text{-}03\text{-}31 \to 2026\text{-}01\text{-}14$ (the underlying data ends $2026\text{-}02\text{-}13$; the last 30 days are trimmed because the target is a 30-day forward return). A backtest is therefore genuinely out-of-sample (no memorisation) only on windows \emph{outside} that interval --- before $2025\text{-}03\text{-}31$ or after $2026\text{-}01\text{-}14$. Earlier drafts of this report headlined 6-, 12- and 24-month horizons whose windows overlap the training range; those returns reflect the model scoring data it was trained on and have been \textbf{removed}. We report only the two genuinely-OOS windows below.
 
 \begin{table}[h]
-\caption{Empirical horizons performance under 10 bps friction. The 20-ticker basket is the legacy curated list; the Full-universe top-K column is the model in its intended deployment mode (CS-Z stable, top 5\%, capped at 10 holdings, equal-weighted). $^{\dagger}$ marks rows with material survivorship bias from current-membership NASDAQ filtering.}
+\caption{Genuinely out-of-sample full-universe top-K=10 performance under 10 bps friction (inverse-volatility sizing). Both windows exclude the training feature-dates ($2025\text{-}03\text{-}31 \to 2026\text{-}01\text{-}14$). IR is the annualised Information Ratio against Buy~\&~Hold. $^{\ddagger}$ The pre-training window additionally carries current-membership \emph{survivorship bias} and mild \emph{static-embedding look-ahead} (the KG structural embeddings are baked from a 2026 snapshot, so on a 2023--25 window they encode slow-moving corporate structure from the model's future); read it as indicative, not deployable.}
 \label{tab:bt_horizons}
 \centering
 \small
-\begin{tabular}{llrr}
+\begin{tabular}{llrrrr}
 \toprule
-\textbf{Horizon} & \textbf{Strategy} & \textbf{20-basket} & \textbf{Full-universe top-K=10} \\
+\textbf{OOS Window} & \textbf{Strategy} & \textbf{Return} & \textbf{Sharpe} & \textbf{Max DD} & \textbf{IR} \\
 \midrule
-Clean OOS Weekly (17 wk) & Buy \& Hold      & +30.44\% & +4.88\% \\
-                         & High-Confidence  & +8.91\%  & \textbf{+94.94\%} \\
+Pre-Training$^{\ddagger}$    & Buy \& Hold      & $+33.59\%$ & $1.92$ & $-7.17\%$  & --- \\
+(20 mo, 2023-07$\to$25-03)   & Top-K=10         & $+15.62\%$ & $0.70$ & $-13.47\%$ & $-0.60$ \\
 \midrule
-Clean OOS Monthly (4 wk) & Buy \& Hold      & +27.28\% & +6.15\% \\
-                         & High-Confidence  & +13.24\% & \textbf{+66.78\%} \\
-\midrule
-6 Months                 & Buy \& Hold      & +60.18\% & +34.54\% \\
-                         & High-Confidence  & +22.87\% & \textbf{+188.06\%} \\
-\midrule
-12 Months$^{\dagger}$    & Buy \& Hold      & +84.59\% & +41.82\% \\
-                         & High-Confidence  & +69.82\% & \textbf{+748.14\%} \\
-\midrule
-24 Months$^{\dagger}$    & Buy \& Hold      & +98.46\% & +1{,}431.19\% \\
-                         & High-Confidence  & +57.58\% & +711.80\% \\
+Post-Training (cleanest)     & Buy \& Hold      & $+22.18\%$ & $5.22$ & $-2.41\%$  & --- \\
+(2 mo, 2026-03$\to$05)       & Top-K=10         & $\mathbf{+47.28\%}$ & $\mathbf{6.66}$ & $-2.40\%$ & $\mathbf{+4.37}$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\noindent \textbf{Headline number.} The cleanest result is the strictly-post-training 2-month unseen-future window ($2026\text{-}03\text{-}20 \to 2026\text{-}05\text{-}15$): \textbf{High-Confidence Longs $+47.00\%$ vs Buy \& Hold $+22.09\%$, Sharpe $6.23$, Max DD $-2.98\%$}. The model's training range ended on 2026-03-19, so every prediction inside this window is genuinely out-of-sample. The 17-week Clean-OOS-Weekly window (post-2026-01-14) extends the same pattern: $+94.94\%$ vs $+4.88\%$ Buy \& Hold, Sharpe $4.50$.
+\noindent \textbf{Headline number.} On the cleanest window --- the strictly-post-training stretch ($2026\text{-}03\text{-}20 \to 2026\text{-}05\text{-}15$), where there is neither memorisation nor meaningful survivorship leak --- the full-universe top-K=10 book returns \textbf{$+47.28\%$ vs Buy \& Hold $+22.18\%$, Sharpe $6.66$, Max DD $-2.40\%$, Information Ratio $+4.37$}. The IR of $+4.37$ is the key statistic: it says the strategy's excess return over the benchmark is large relative to its tracking error, i.e.\ the out-performance is consistent, not a single lucky bet. On the long pre-training window the same book \emph{under}-performs Buy \& Hold (IR $-0.60$); we show this rather than hide it, and attribute it partly to the survivorship/embedding caveats above and partly to genuinely different market conditions in 2023--24.
 
 \subsection{Sector-Conditional Behaviour}
 
@@ -389,16 +399,19 @@ The top-K=10 strategy was further tested on five sector-specific 50-ticker subse
 \toprule
 \textbf{Subset} & \textbf{Buy \& Hold} & \textbf{High-Conf top-K=10} & $\boldsymbol{\Delta}$ \\
 \midrule
-Mega-Cap Titans       & +14.67\% & \textbf{+26.82\%}  & $+12.2$ pp \\
-Technology Sector     & +31.36\% & \textbf{+77.52\%}  & $+46.2$ pp \\
-Consumer Services     & +1.43\%  & \textbf{+8.58\%}   & $+7.2$ pp  \\
-Healthcare Pioneers   & +5.55\%  & $-3.54\%$          & $-9.1$ pp  \\
-Financial Giants      & +9.51\%  & $-8.63\%$          & $-18.1$ pp \\
+Mega-Cap Titans       & +14.67\% & \textbf{+19.98\%}  & $+5.3$ pp  \\
+Technology Sector     & +31.36\% & \textbf{+54.37\%}  & $+23.0$ pp \\
+Consumer Services     & +1.43\%  & \textbf{+7.88\%}   & $+6.5$ pp  \\
+Healthcare Pioneers   & +5.55\%  & $-2.37\%$          & $-7.9$ pp  \\
+Financial Giants      & +9.51\%  & $-6.28\%$          & $-15.8$ pp \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\noindent The combined narrative: the model carries genuine signal (CV IC $+0.1053$, $5/5$ folds positive, paired bootstrap CI excludes zero on $8/13$ Combined-minus-Tabular pairings), the signal converts to portfolio P\&L when the deployment cross-section matches the training cross-section (top-K=10 over $N\!\approx\!1{,}890$ beats the curated 20-basket by $+86$ to $+165$ percentage points on every horizon we report), and the signal is not uniform across sectors (Tech/Mega-Cap win, Healthcare/Financial lose). Drawdown on the concentrated $K=10$ portfolio is materially worse than B\&H ($-11\%$ to $-40\%$ depending on horizon), which is the structural cost of trading ten names instead of a diversified index.
+\noindent The combined narrative: the model carries genuine signal (CV IC $+0.1053$, $5/5$ folds positive, paired bootstrap CI excludes zero on $8/13$ Combined-minus-Tabular pairings); on the cleanest out-of-sample window the full-universe top-K=10 book converts that signal to $+47.28\%$ vs $+22.18\%$ Buy \& Hold at an Information Ratio of $+4.37$; and the signal is \emph{not uniform across sectors} (Tech/Mega-Cap win, Healthcare/Financial lose). The concentrated $K=10$ book also carries higher drawdown than a diversified index ($-2.4\%$ on the clean post-training window, $-13.5\%$ on the long pre-training window), the structural cost of trading ten names.
+
+\subsection{Breadth Experiment: Why We Keep $K{=}10$}
+A natural objection to a ten-name book is low \emph{breadth}: Grinold's Fundamental Law of Active Management states $\text{IR} \approx \text{IC}\,\sqrt{\text{breadth}}$, so more independent bets should raise the Information Ratio for the same skill. We tested this directly, widening to $K{=}20$ and adding a per-sector count cap (at most $\lceil 0.30K \rceil$ names per sector) to force the book out of its semiconductor cluster. On the clean post-training window this was \emph{worse} on every primary metric: return $+40.12\%$ vs $+47.28\%$, Sharpe $6.51$ vs $6.66$, IR $+3.32$ vs $+4.37$; and on the pre-training window dramatically worse (IR $-1.67$ vs $-0.60$). The reason is that Grinold's law assumes \emph{uniform} per-bet skill, which the sector-conditional results above falsify: forcing diversification spends capital on the model's negative-IC sectors (Healthcare, Financials), so the added "breadth" carries negative skill and drags portfolio IC down faster than $\sqrt{\text{breadth}}$ lifts consistency. We therefore retain $K{=}10$ with no sector cap; the cap remains in the codebase as a disabled, tested knob for a future, more sector-uniform model.
 
 \section{Conclusion}
 This work makes two claims that we believe matter beyond the immediate academic context. First, knowledge-graph embeddings deserve targets that match their inductive bias: a graph encoding sector, industry, country and corporate-action structure adds essentially zero predictive value at the 7-day binary direction horizon, but lifts the cross-sectional 30-day rank IC from $0.04$ (tabular-only) to $0.09$ when fused with technical and macroeconomic features under walk-forward CV. The structural signal is real once the question matches the signal. Second, the gap between a backtested model and a production trading agent is closed not by yet another classifier, but by the boring operational plumbing that makes trades reproducible, observable, and stoppable. The reproducibility hash, per-trade structured log, peak-to-trough circuit breaker, and three-bucket attribution we ship alongside the model are the difference between a research artefact and infrastructure that can carry capital.

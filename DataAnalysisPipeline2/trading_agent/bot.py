@@ -92,6 +92,46 @@ def inverse_volatility_weights(tickers, vols, target_exposure=1.0,
     return {t: float(wi) for t, wi in zip(tickers, w)}
 
 
+def select_top_k_with_sector_cap(gate_sorted_df, top_k, max_sector_frac,
+                                  sector_col="Sector"):
+    """Pick the top-K names from a rank-sorted candidate frame while capping how
+    many may come from any single sector, so the book spans several sectors
+    instead of clustering in one.
+
+    The cap is a per-sector COUNT: max_per_sector = max(1, round(top_k *
+    max_sector_frac)). Names are admitted in descending rank order; a name is
+    skipped only if its sector is already full. If sector caps make it
+    impossible to reach K (too few sectors represented), the shortfall is then
+    filled by the highest-ranked remaining names ignoring the cap, so the book
+    always holds K names when K candidates exist.
+
+    Falls back to a plain head(top_k) when the cap is disabled or the sector
+    column is missing.
+    """
+    if (max_sector_frac is None or max_sector_frac >= 1.0
+            or sector_col not in gate_sorted_df.columns):
+        return gate_sorted_df.head(top_k)
+    max_per_sector = max(1, int(round(top_k * max_sector_frac)))
+    chosen, counts = [], {}
+    for idx, row in gate_sorted_df.iterrows():
+        sec = row.get(sector_col, "UNKNOWN")
+        if sec is None or (isinstance(sec, float) and pd.isna(sec)):
+            sec = "UNKNOWN"
+        if counts.get(sec, 0) < max_per_sector:
+            chosen.append(idx)
+            counts[sec] = counts.get(sec, 0) + 1
+        if len(chosen) >= top_k:
+            break
+    if len(chosen) < top_k:  # under-filled: relax cap, fill by rank
+        chosen_set = set(chosen)
+        for idx in gate_sorted_df.index:
+            if idx not in chosen_set:
+                chosen.append(idx)
+                if len(chosen) >= top_k:
+                    break
+    return gate_sorted_df.loc[chosen]
+
+
 def compute_rsi(series, period=14):
     delta = series.diff()
     gain = delta.clip(lower=0)
@@ -826,10 +866,61 @@ class BDATradingAgent:
 
         if "return_volatility_20d" not in latest_df.columns:
             latest_df["return_volatility_20d"] = 0.01
+        if "Sector" not in latest_df.columns:
+            latest_df["Sector"] = "UNKNOWN"
         return latest_df[["ticker", "company_close", "pred_rank",
                           "pred_proba", "kalman_beta",
-                          "return_volatility_20d"]].sort_values(
+                          "return_volatility_20d", "Sector"]].sort_values(
             "pred_rank", ascending=False)
+
+    def apply_news_sentiment_tilt(self, predictions_df):
+        """LIVE-ONLY: tilt the model's predicted rank by real-time news
+        sentiment, then re-rank. The model decides the base ordering; recent
+        news nudges it. This runs ONLY in the live path — it is never part of
+        the backtests or the structural embeddings (no PIT news archive exists
+        to backtest it without look-ahead bias).
+
+            tilted = pred_rank + λ · sentiment       (sentiment ∈ [-1, 1])
+            pred_rank ← percentile-rank(tilted)
+
+        Fails soft: if news/sentiment is unavailable the predictions are
+        returned unchanged.
+        """
+        if not getattr(config, "USE_NEWS_SENTIMENT", False):
+            return predictions_df
+        try:
+            from . import news_sentiment
+        except Exception:
+            import news_sentiment  # script-mode fallback
+        try:
+            tickers = predictions_df["ticker"].tolist()
+            agg = news_sentiment.get_live_sentiment(
+                tickers, config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY,
+                lookback_days=getattr(config, "NEWS_LOOKBACK_DAYS", 7),
+            )
+            if not agg:
+                print("[News] no sentiment available — predictions unchanged.")
+                predictions_df["news_sentiment"] = 0.0
+                predictions_df["news_n"] = 0
+                return predictions_df
+
+            df = predictions_df.copy()
+            df["news_sentiment"] = df["ticker"].map(
+                lambda t: agg.get(t, {}).get("sentiment", 0.0)).astype(float)
+            df["news_n"] = df["ticker"].map(
+                lambda t: agg.get(t, {}).get("n", 0)).astype(int)
+
+            lam = float(getattr(config, "NEWS_TILT_LAMBDA", 0.10))
+            tilted = df["pred_rank"].astype(float) + lam * df["news_sentiment"]
+            df["pred_rank"] = pd.Series(tilted).rank(pct=True).values
+            df["pred_proba"] = df["pred_rank"]
+            n_tilted = int((df["news_n"] > 0).sum())
+            print(f"[News] applied sentiment tilt (λ={lam}) to {n_tilted} names "
+                  f"with news coverage; re-ranked {len(df)} predictions.")
+            return df.sort_values("pred_rank", ascending=False)
+        except Exception as e:
+            print(f"[News] sentiment tilt failed ({e}); predictions unchanged.")
+            return predictions_df
 
     def calculate_target_weights(self, predictions_df, is_bull, strategy="high_confidence"):
         """
@@ -864,16 +955,22 @@ class BDATradingAgent:
             pct_cutoff = 1.0 - (config.TOP_PCT_THRESHOLD / 100.0)
             gate = predictions_df[predictions_df["pred_rank"] >= pct_cutoff].copy()
             gate = gate.sort_values("pred_rank", ascending=False)
-            holdings = gate.head(config.TOP_K_HOLDINGS).copy()
+            max_sec = getattr(config, "MAX_SECTOR_WEIGHT", 1.0)
+            holdings = select_top_k_with_sector_cap(
+                gate, config.TOP_K_HOLDINGS, max_sec).copy()
             if holdings.empty:
                 print(f"[Agent] No tickers above the top {config.TOP_PCT_THRESHOLD}% gate. "
                       f"Falling back to top {config.TOP_K_HOLDINGS} by rank.")
-                holdings = predictions_df.sort_values("pred_rank", ascending=False).head(
-                    config.TOP_K_HOLDINGS).copy()
+                fallback = predictions_df.sort_values("pred_rank", ascending=False)
+                holdings = select_top_k_with_sector_cap(
+                    fallback, config.TOP_K_HOLDINGS, max_sec).copy()
             scheme = getattr(config, "WEIGHTING_SCHEME", "inverse_vol")
+            n_sectors = holdings["Sector"].nunique() if "Sector" in holdings.columns else 0
             print(f"[Agent] top_k mode: universe={n} | "
                   f"above-top-{config.TOP_PCT_THRESHOLD}% gate={len(gate)} | "
-                  f"held={len(holdings)} | weighting={scheme}")
+                  f"held={len(holdings)} across {n_sectors} sectors "
+                  f"(<= {max(1, round(config.TOP_K_HOLDINGS * max_sec))}/sector) | "
+                  f"weighting={scheme}")
 
             if scheme == "inverse_vol" and "return_volatility_20d" in holdings.columns:
                 # Alpha layer already chose the names; size them by 1/vol so

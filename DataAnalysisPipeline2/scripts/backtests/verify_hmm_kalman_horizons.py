@@ -28,7 +28,7 @@ if ROOT_DIR not in sys.path:
     sys.path.append(ROOT_DIR)
 
 from trading_agent import config
-from trading_agent.bot import GaussianHMM, KalmanBetaFilter, compute_live_features, load_macro_features, fetch_company_metadata
+from trading_agent.bot import GaussianHMM, KalmanBetaFilter, compute_live_features, load_macro_features, fetch_company_metadata, select_top_k_with_sector_cap
 from ExploitationZone.geopolitical_macroeconomic import get_pit_macro_indicators
 
 _CS_Z = False  # set by main() after pickle load (Part-4 P3)
@@ -93,17 +93,24 @@ def _inverse_vol_weights(sel_df, target_exposure=1.0):
 
 
 def _select_top_k(friday_obs, pct_threshold=None, top_k=None):
-    '''Replace fixed 0.53 gate with: top-pct% gate -> cap at K, sorted desc.'''
+    '''top-pct% gate -> sector-capped top-K. Mirrors live
+    bot.calculate_target_weights so the backtest reflects the deployed selector.
+    Defaults come from config (TOP_PCT_THRESHOLD / TOP_K_HOLDINGS /
+    MAX_SECTOR_WEIGHT) and can be overridden via env for A/B runs.'''
     if pct_threshold is None:
-        pct_threshold = float(os.environ.get("BACKTEST_TOP_PCT", "5.0"))
+        pct_threshold = float(os.environ.get(
+            "BACKTEST_TOP_PCT", str(getattr(config, "TOP_PCT_THRESHOLD", 5.0))))
     if top_k is None:
-        top_k = int(os.environ.get("BACKTEST_TOP_K", "10"))
+        top_k = int(os.environ.get(
+            "BACKTEST_TOP_K", str(getattr(config, "TOP_K_HOLDINGS", 20))))
+    max_sec = float(os.environ.get(
+        "BACKTEST_MAX_SECTOR", str(getattr(config, "MAX_SECTOR_WEIGHT", 1.0))))
     cutoff = 1.0 - (pct_threshold / 100.0)
     gated = friday_obs[friday_obs["pred_proba"] >= cutoff].copy()
-    gated = gated.sort_values("pred_proba", ascending=False).head(top_k)
+    gated = gated.sort_values("pred_proba", ascending=False)
     if gated.empty:
-        gated = friday_obs.sort_values("pred_proba", ascending=False).head(top_k).copy()
-    return gated
+        gated = friday_obs.sort_values("pred_proba", ascending=False).copy()
+    return select_top_k_with_sector_cap(gated, top_k, max_sec).copy()
 # ────────────────────────────────────────────────────────────────────────────
 
 def get_rolling_vintage_embeddings(base_embeddings, current_date_str, db_path):

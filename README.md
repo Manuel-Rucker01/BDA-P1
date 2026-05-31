@@ -187,43 +187,45 @@ python3 -m DataAnalysisPipeline2.trading_agent.run --universe high_alpha --strat
 
 # Execute live order rebalancing directly on Alpaca (requires credentials in .env)
 python3 -m DataAnalysisPipeline2.trading_agent.run --universe high_alpha --strategy high_confidence --live
+
+# Production deployment: full universe, concentrated top-K, inverse-vol sizing, news tilt
+python3 -m DataAnalysisPipeline2.trading_agent.run --universe full --strategy top_k --top-pct 5 --top-k 10 --live
 ```
+
+> **Live News-Sentiment Tilt (semantic extension, live-only).** At live decision time the bot pulls real-time company news (Alpaca News API), scores each headline (finance lexicon by default, optional FinBERT), builds an *ephemeral* RDF `NewsEvent` graph linking articles to company nodes with `sentimentScore` literals, and aggregates per-ticker sentiment via **SPARQL** — then tilts the model's ranking by `score = pred_rank + λ·sentiment` (λ=0.10). **This is live-only and never enters the backtests or the structural embeddings:** a leak-free historical study would require a point-in-time news archive (current-news APIs would inject look-ahead bias). It is a documented forward-looking overlay; all reported backtest numbers are computed with it disabled and are provably unaffected. Disable with `USE_NEWS_SENTIMENT=0`.
+
 *For comprehensive instructions, setup specifications, and cron scheduling guidelines, see the [Operations & Implementation Manual](file:///Users/manuelruckerabella/Workspace/UNI/Q6/BDA/BDA-P1/implementation.md).*
 
 ---
 
 ## 📊 Summary of Friction-Adjusted Horizons Backtests
 
-The empirical out-of-sample backtests evaluate capital performance under a strict 10 basis points transaction cost model, with the passive Buy & Hold benchmark charged entry/exit fees on entry and exit. The model is run in its intended deployment mode: every Friday it scores all ~1,890 modelled tickers, the top 5% by predicted rank are kept, capped at the top **K=10** names, equal-weighted. This matches the cross-section size used during training, which is required for the per-date cross-sectional Z preprocessing to behave consistently.
+The empirical out-of-sample backtests evaluate capital performance under a strict 10 basis points transaction cost model, with the passive Buy & Hold benchmark charged entry/exit fees on entry and exit. The model is run in its intended deployment mode: every Friday it scores all ~1,890 modelled tickers, the top 5% by predicted rank are kept, capped at the top **K=10** names, then sized by **inverse-volatility weighting** (`w_i ∝ 1/σ_i`, capped at 25% per name). This matches the cross-section size used during training, which is required for the per-date cross-sectional Z preprocessing to behave consistently.
 
-> ⚠️ **Survivorship-bias warning.** The 12- and 24-month rows below use the current NASDAQ universe, so tickers that delisted in those windows are silently absent. The 17-week Clean OOS and the 2-month Unseen Future windows are the cleanest results — both are strictly post the model's training range (which ended 2026-03-19).
+> **Risk control — inverse-volatility sizing.** The HMM regime gate and Kalman β filter manage *systematic* risk, which dominates a diversified book; but a concentrated 10-name book is dominated by *idiosyncratic* single-name risk. The model selects *which* names to hold; the `1/σ` rule (per-name cap `0.25`) decides *how much*, so high-volatility names receive less capital. We justify it on **risk-management** grounds (the cap provably stops one name dominating the book) rather than a backtested return edge — an earlier inverse-vol-vs-equal-weight comparison rested on an 18-month window we later found overlaps training, so those deltas were withdrawn.
 
-### Full-universe top-K=10 backtests (the production deployment mode)
+> ⚠️ **What counts as out-of-sample.** The deployed model was fit on feature-dates `2025-03-31 → 2026-01-14` (data ends `2026-02-13`; last 30 days trimmed for the 30-day forward target). Only windows *outside* that interval are genuinely OOS. Earlier drafts headlined 6/12/24-month horizons whose windows **overlap training** (the model scoring data it learned from); those have been **removed**. We report the two genuinely-OOS windows below. The **pre-training** window additionally carries current-membership survivorship bias + mild static-embedding look-ahead, so it is indicative, not deployable.
 
-| Horizon | Strategy | Cumulative Return | Sharpe | Max DD |
-| :--- | :--- | :---: | :---: | :---: |
-| **Clean OOS Weekly** (17 wk, post 2026‑01‑14) | Buy & Hold | +4.88% | 0.828 | -7.17% |
-| | High-Confidence Long-Only | **+94.94%** | **4.504** | -11.07% |
-| **Clean OOS Monthly** (4 reb, post 2026‑01‑14) | Buy & Hold | +6.15% | 3.193 | **-2.77%** |
-| | High-Confidence Long-Only | **+66.78%** | **6.736** | -4.88% |
-| **Unseen Future** (2 mo, 2026‑03‑20 → 2026‑05‑15) | Buy & Hold | +22.09% | 5.198 | **-2.41%** |
-| | High-Confidence Long-Only | **+47.00%** | **6.233** | -2.98% |
-| 📅 6 Months | Buy & Hold | +34.54% | 2.162 | -6.18% |
-| | High-Confidence Long-Only | **+188.06%** | **5.547** | -11.07% |
-| 📅 12 Months ⚠️ | Buy & Hold | +41.82% | 2.308 | -6.14% |
-| | High-Confidence Long-Only | **+748.14%** | **6.683** | -11.08% |
-| 📅 24 Months ⚠️ | Buy & Hold | +1,431.19% | 0.815 | -19.45% |
-| | High-Confidence Long-Only | +711.80% | 2.765 | -40.16% |
+### Genuinely out-of-sample full-universe top-K=10 backtests (production deployment mode)
+
+| OOS Window | Strategy | Return | Sharpe | Max DD | IR vs B&H |
+| :--- | :--- | :---: | :---: | :---: | :---: |
+| **Pre-Training** ‡ (20 mo, 2023‑07 → 2025‑03) | Buy & Hold | +33.59% | 1.92 | -7.17% | — |
+| | Top-K=10 | +15.62% | 0.70 | -13.47% | -0.60 |
+| **Post-Training** (2 mo, 2026‑03‑20 → 2026‑05‑15) | Buy & Hold | +22.18% | 5.22 | -2.41% | — |
+| | **Top-K=10 (cleanest)** | **+47.28%** | **6.66** | **-2.40%** | **+4.37** |
+
+‡ pre-training window: survivorship + static-embedding caveats apply — read as indicative.
 
 ### Sector-conditional behaviour (2-month unseen future, 50-ticker subsets)
 
 | Subset | Buy & Hold | High-Confidence Top-K=10 | Δ |
 | :--- | :---: | :---: | :---: |
-| Mega-Cap Titans | +14.67% | **+26.82%** | +12.2 pp |
-| Technology Sector | +31.36% | **+77.52%** | +46.2 pp |
-| Consumer Services | +1.43% | **+8.58%** | +7.2 pp |
-| Healthcare Pioneers | +5.55% | -3.54% | -9.1 pp |
-| Financial Giants | +9.51% | -8.63% | -18.1 pp |
+| Mega-Cap Titans | +14.67% | **+19.98%** | +5.3 pp |
+| Technology Sector | +31.36% | **+54.37%** | +23.0 pp |
+| Consumer Services | +1.43% | **+7.88%** | +6.5 pp |
+| Healthcare Pioneers | +5.55% | -2.37% | -7.9 pp |
+| Financial Giants | +9.51% | -6.28% | -15.8 pp |
 
-*The headline result is the strictly-post-training **2-month unseen future window**: High-Confidence Longs `+47.00%` vs Buy & Hold `+22.09%`, Sharpe `6.23`, Max DD `-2.98%`. The model carries genuine cross-sectional rank signal (walk-forward CV IC `+0.1053`, 5/5 folds positive), and that signal translates into portfolio P&L when the deployment cross-section matches the training cross-section (full universe → top-K=10). Sector-conditional results are mixed: the model wins decisively on Tech and Mega-Cap names (which dominate the training distribution) but loses to Buy & Hold on Healthcare and Financials, where structural KG embeddings underspecify the dominant sector-specific dynamics. The concentrated K=10 portfolio also runs materially higher drawdown than a diversified index (`-11%` to `-40%` depending on horizon).*
+*The headline result is the strictly-post-training **2-month window**: Top-K=10 `+47.28%` vs Buy & Hold `+22.18%`, Sharpe `6.66`, Max DD `-2.40%`, **Information Ratio `+4.37`** (excess return over benchmark is large relative to tracking error → consistent, not a lucky single bet). The model carries genuine cross-sectional rank signal (walk-forward CV IC `+0.1053`, 5/5 folds positive). Sector-conditional results are mixed: it wins on Tech/Mega-Cap (which dominate the training distribution) but loses to Buy & Hold on Healthcare/Financials. The concentration is deliberate: a **breadth experiment** widening to K=20 with a per-sector cap was **worse** (post-training IR `+3.32` vs `+4.37`) because the model's skill is sector-concentrated — forcing diversification spends capital on its negative-IC sectors. We keep K=10.*
 

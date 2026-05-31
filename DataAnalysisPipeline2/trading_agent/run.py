@@ -202,6 +202,11 @@ def main():
                   f"{rank_val * 100:>18.2f}% | {row['kalman_beta']:>11.2f}")
         print("-" * 75)
 
+        # 4b. LIVE-ONLY: tilt predictions by real-time news sentiment
+        #     (Alpaca news → RDF news-event graph → SPARQL → per-ticker score).
+        #     Never used in backtests or embeddings — no PIT archive to do so safely.
+        predictions = agent.apply_news_sentiment_tilt(predictions)
+
         # 5. Compute target weights
         weights = agent.calculate_target_weights(predictions, is_bull, strategy=args.strategy)
         

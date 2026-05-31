@@ -73,8 +73,20 @@ MIN_ORDER_VALUE = 5.0           # Minimum USD order limit to avoid tiny fraction
 # the model was trained with AND produces a concentrated, low-overhead
 # portfolio.
 TOP_PCT_THRESHOLD = 5.0          # Default: only consider top 5% of ranked universe
-TOP_K_HOLDINGS = 10              # Default: cap actually-held positions at 10
+TOP_K_HOLDINGS = 10              # Cap actually-held positions at 10.
 EQUAL_WEIGHT_TOP_K = True        # (legacy) equal-weight when WEIGHTING_SCHEME='equal'
+
+# --- Sector concentration cap (DISABLED by default; kept as a tested knob) ---
+# A per-sector COUNT cap on the top-K book, derived from this fraction:
+#   max_names_per_sector = max(1, round(TOP_K_HOLDINGS * MAX_SECTOR_WEIGHT)).
+# Intent was to raise effective breadth (Grinold: IR ~ IC*sqrt(breadth)). We
+# A/B-tested it (K=20 + cap 0.30) against the K=10 book on the clean OOS windows
+# and it was WORSE on return, Sharpe and IR — because this model's skill is
+# sector-conditional (strong in Tech/Mega-Cap, negative in Healthcare/Financials,
+# per the subsets backtest), so forcing sector diversification adds low/negative-IC
+# bets and dilutes the concentrated edge. Grinold's law assumes uniform per-bet
+# skill, which does not hold here. Left at 1.0 (no cap); set <1.0 to re-enable.
+MAX_SECTOR_WEIGHT = 1.0
 
 # --- Intra-basket position weighting ---
 # How capital is split across the held top-K names. The alpha layer chooses
@@ -109,4 +121,15 @@ KALMAN_R = 1e-1                 # Measurement noise covariance (trust in daily p
 # --- Quantitative Trading Upgrades ---
 FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 ALPACA_CHECK_BORROWABILITY = True # Enable Alpaca Shortable / Easy-to-Borrow (ETB) check
+
+# --- Live News-Sentiment Tilt (LIVE-ONLY — never backtested) ---
+# A real-time news-sentiment signal applied as a small tilt on the model's
+# predicted rank at LIVE decision time only. It is deliberately kept out of the
+# backtests and the structural KG/embeddings: a leak-free backtest would need a
+# point-in-time historical news archive, which current-news APIs do not provide.
+# Pipeline: Alpaca News -> sentiment -> ephemeral RDF news-event graph ->
+# SPARQL aggregation -> per-ticker score. Disable by setting USE_NEWS_SENTIMENT=0.
+USE_NEWS_SENTIMENT = os.getenv("USE_NEWS_SENTIMENT", "1") == "1"
+NEWS_TILT_LAMBDA = float(os.getenv("NEWS_TILT_LAMBDA", "0.10"))  # tilt strength
+NEWS_LOOKBACK_DAYS = int(os.getenv("NEWS_LOOKBACK_DAYS", "7"))
 
