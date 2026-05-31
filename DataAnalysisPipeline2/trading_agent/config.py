@@ -129,7 +129,11 @@ ALPACA_CHECK_BORROWABILITY = True # Enable Alpaca Shortable / Easy-to-Borrow (ET
 # point-in-time historical news archive, which current-news APIs do not provide.
 # Pipeline: Alpaca News -> sentiment -> ephemeral RDF news-event graph ->
 # SPARQL aggregation -> per-ticker score. Disable by setting USE_NEWS_SENTIMENT=0.
-USE_NEWS_SENTIMENT = os.getenv("USE_NEWS_SENTIMENT", "1") == "1"
+# Default OFF in the v2 (news-in-training) adoption: news is now a MODEL feature
+# (PIT news_* columns trained into the model + computed live in run_inference),
+# so the post-hoc tilt would double-count the same signal. Set to 1 only if
+# running the older tilt-on-a-news-free model.
+USE_NEWS_SENTIMENT = os.getenv("USE_NEWS_SENTIMENT", "0") == "1"
 NEWS_TILT_LAMBDA = float(os.getenv("NEWS_TILT_LAMBDA", "0.10"))  # tilt strength
 NEWS_LOOKBACK_DAYS = int(os.getenv("NEWS_LOOKBACK_DAYS", "7"))
 
