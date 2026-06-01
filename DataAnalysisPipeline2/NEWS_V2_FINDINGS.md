@@ -29,3 +29,17 @@ lift is small vs the ~0.043 fold-to-fold std and a 4/5 sign test is p≈0.19 —
 **promising, not statistically conclusive** at n=5 folds. Caveats: news coverage
 is skewed to large caps; PIT integrity assumed from Alpaca timestamps;
 entity-resolution uses current symbols.
+
+## Portfolio-level clean-OOS validation (post-training window, full universe)
+
+Same backtest harness; news model vs news-free baseline on 2026-03-20→2026-05-15:
+
+| Strategy / model        | Cum Return | Sharpe | Max DD  | IR vs B&H |
+|-------------------------|-----------:|-------:|--------:|----------:|
+| Buy & Hold              |    +22.18% |   5.22 |  -2.41% |        -- |
+| Top-K=10, news-free     |    +47.28% |   6.66 |  -2.40% |    +4.37  |
+| **Top-K=10, news model**|  **+57.49%** | 6.55 | -3.39% |  **+4.52** |
+
+Verdict: the CV IC lift converts to portfolio P&L — **+10.2 pp return and higher IR**,
+at slightly higher volatility. Adopted into the deployed model (PIT features
+computed live; v1 tilt disabled). Caveat: a single 2-month / 9-rebalance window.

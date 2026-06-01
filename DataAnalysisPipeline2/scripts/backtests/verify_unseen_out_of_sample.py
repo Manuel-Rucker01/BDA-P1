@@ -498,6 +498,10 @@ def main():
         "Pre-Training OOS (20 Months: 2023-07-01 to 2025-03-01)": ("2023-07-01", "2025-03-01"),
         "Post-Training OOS (2 Months: 2026-03-20 to 2026-05-15)": ("2026-03-20", "2026-05-15")
     }
+    # BACKTEST_POST_ONLY=1 restricts to the clean post-training window (avoids a
+    # huge 2023-25 news fetch when validating the news-feature model).
+    if os.environ.get("BACKTEST_POST_ONLY", "0") == "1":
+        oos_horizons = {k: v for k, v in oos_horizons.items() if k.startswith("Post-Training")}
     
     results = {}
     for label, dates in oos_horizons.items():
