@@ -749,6 +749,40 @@ class BDATradingAgent:
 
         latest_df = latest_df.merge(emb_df, on="ticker", how="inner")
 
+        # ── Point-in-time news features (only if the loaded model expects them) ──
+        # A news-trained model carries news_* columns in self.tabular_cols. We
+        # compute the SAME as-of features live (articles strictly before today)
+        # via the canonical provider, so live inference matches training. Names
+        # with no recent news get 0 (no signal). Fails soft to zeros.
+        news_cols = [c for c in self.tabular_cols if c.startswith("news_")]
+        if news_cols:
+            for c in news_cols:
+                if c not in latest_df.columns:
+                    latest_df[c] = 0.0
+            try:
+                try:
+                    from . import news_sentiment as _ns
+                except Exception:
+                    import news_sentiment as _ns
+                as_of = pd.to_datetime(latest_df["Date"]).max()
+                nf = _ns.compute_asof_news_features(
+                    latest_df["ticker"].unique().tolist(), [as_of])
+                if nf is not None and not nf.empty:
+                    nf = nf.drop(columns=["Date"]).set_index("ticker")
+                    for c in news_cols:
+                        if c in nf.columns:
+                            latest_df[c] = (latest_df["ticker"].map(nf[c])
+                                            .astype(float).fillna(0.0).values)
+                    cov = int((latest_df.get("news_count_7d", 0) > 0).sum())
+                    print(f"[News-feat] PIT news features for {len(news_cols)} cols; "
+                          f"{cov}/{len(latest_df)} names have coverage (as-of {as_of.date()}).")
+                else:
+                    print("[News-feat] no news returned; news features = 0.")
+            except Exception as e:
+                print(f"[News-feat] failed ({e}); news features = 0.")
+            for c in news_cols:
+                latest_df[c] = latest_df[c].fillna(0.0)
+
         # Scale features using standard scaling
         X_tab = latest_df[self.tabular_cols].fillna(0).values.astype(np.float32)
         X_emb = latest_df[self.pca_cols].fillna(0).values.astype(np.float32)

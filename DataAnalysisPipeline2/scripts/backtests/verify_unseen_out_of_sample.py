@@ -29,6 +29,39 @@ if PIPELINE_DIR not in sys.path:
 
 from trading_agent import config
 from trading_agent.bot import GaussianHMM, KalmanBetaFilter, compute_live_features, load_macro_features, fetch_company_metadata, select_top_k_with_sector_cap
+from trading_agent.news_sentiment import compute_asof_news_features
+
+
+def augment_with_news(df_all_feat, friday_dates, start_date, end_date, tabular_cols):
+    """If the loaded model expects news_* features, build as-of PIT news features
+    for this window's Friday rebalance dates and LEFT-merge them onto a copy of
+    df_all_feat (names/dates with no news -> 0). No-op otherwise."""
+    import pandas as pd
+    news_cols = [c for c in tabular_cols if c.startswith("news_")]
+    if not news_cols:
+        return df_all_feat
+    fridays = [d for d in friday_dates if start_date <= d <= end_date]
+    if not fridays:
+        return df_all_feat
+    tickers = df_all_feat["ticker"].unique().tolist()
+    nf = compute_asof_news_features(tickers, fridays)
+    out = df_all_feat.copy()
+    out["Date"] = pd.to_datetime(out["Date"]).dt.tz_localize(None)
+    if nf is None or nf.empty:
+        for c in news_cols:
+            out[c] = 0.0
+        print(f"[News-feat] window {start_date}..{end_date}: no news; features=0.")
+        return out
+    nf["Date"] = pd.to_datetime(nf["Date"]).dt.tz_localize(None)
+    out = out.merge(nf, on=["ticker", "Date"], how="left")
+    for c in news_cols:
+        if c not in out.columns:
+            out[c] = 0.0
+        out[c] = out[c].fillna(0.0)
+    cov = int((out.get("news_count_7d", 0) > 0).sum())
+    print(f"[News-feat] window {start_date}..{end_date}: joined {len(news_cols)} "
+          f"news cols; {cov} (ticker,Friday) rows have coverage.")
+    return out
 
 _CS_Z = False  # set by main() after pickle load (Part-4 P3)
 
@@ -465,13 +498,18 @@ def main():
         "Pre-Training OOS (20 Months: 2023-07-01 to 2025-03-01)": ("2023-07-01", "2025-03-01"),
         "Post-Training OOS (2 Months: 2026-03-20 to 2026-05-15)": ("2026-03-20", "2026-05-15")
     }
+    # BACKTEST_POST_ONLY=1 restricts to the clean post-training window (avoids a
+    # huge 2023-25 news fetch when validating the news-feature model).
+    if os.environ.get("BACKTEST_POST_ONLY", "0") == "1":
+        oos_horizons = {k: v for k, v in oos_horizons.items() if k.startswith("Post-Training")}
     
     results = {}
     for label, dates in oos_horizons.items():
         start_date, end_date = dates
         print(f"\nRunning backtest for {label}...")
+        df_win = augment_with_news(df_all_feat, friday_dates, start_date, end_date, tabular_cols)
         res = run_backtest_unseen(
-            df_all_feat, df_full, gspc_df, friday_dates, company_embeddings,
+            df_win, df_full, gspc_df, friday_dates, company_embeddings,
             scaler, pca, trained_models, mix_models, tabular_cols, pca_cols,
             start_date, end_date, initial_equity=10000.0
         )

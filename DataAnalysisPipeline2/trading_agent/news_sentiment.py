@@ -266,3 +266,137 @@ def get_live_sentiment(tickers: List[str], api_key: str, secret_key: str,
     print(f"[News] sentiment via {sentiment_backend_name()} for "
           f"{len(agg)} tickers (of {len(tickers)} requested).")
     return agg
+
+
+# ── Point-in-time news FEATURES (shared by training, live, and backtests) ─────
+# These are the *backtested-feature* counterpart to the live tilt above. They
+# are the single canonical implementation: scripts/build_news_features.py (the
+# training parquet builder), the live bot, and the backtests all call the same
+# functions, so the feature definitions can never silently diverge.
+
+NEWS_FEATURE_COLS = ["news_sent_mean_7d", "news_count_7d", "news_sent_mean_30d",
+                     "news_sent_momentum", "news_sent_std_7d"]
+_NEWS_LB_SHORT = 7    # days
+_NEWS_LB_LONG = 30    # days
+
+
+def fetch_historical_news(tickers, start, end, chunk_size: int = 40):
+    """Fetch every (article,ticker) record over [start, end] and score it with
+    the FROZEN lexicon. alpaca-py auto-paginates internally up to ``limit`` —
+    ``limit=None`` returns the full date range. Returns DataFrame
+    [ticker, created_at(UTC), sentiment]; fails soft to empty."""
+    import pandas as pd
+    try:
+        from alpaca.data.historical.news import NewsClient
+        from alpaca.data.requests import NewsRequest
+    except Exception as e:
+        print(f"[News] alpaca client unavailable: {e}")
+        return pd.DataFrame(columns=["ticker", "created_at", "sentiment"])
+    key, secret = _get_creds()
+    if not key or not secret:
+        print("[News] no Alpaca credentials — skipping news features.")
+        return pd.DataFrame(columns=["ticker", "created_at", "sentiment"])
+    client = NewsClient(key, secret)
+    requested = set(tickers)
+    rows, tickers = [], list(tickers)
+    for ci in range(0, len(tickers), chunk_size):
+        chunk = tickers[ci:ci + chunk_size]
+        try:
+            req = NewsRequest(symbols=",".join(chunk), start=start, end=end,
+                              limit=None, include_content=False)
+            resp = client.get_news(req)
+        except Exception as e:
+            print(f"[News] historical fetch error (chunk {ci//chunk_size}): {e}")
+            continue
+        arts = getattr(resp, "data", None)
+        if isinstance(arts, dict):
+            arts = arts.get("news", [])
+        elif arts is None:
+            arts = getattr(resp, "news", []) or []
+        for a in arts:
+            created = getattr(a, "created_at", None)
+            syms = getattr(a, "symbols", []) or []
+            hit = [s for s in syms if s in requested]
+            if not hit or created is None:
+                continue
+            s = score_text(f"{getattr(a,'headline','') or ''}. "
+                           f"{getattr(a,'summary','') or ''}".strip())
+            if s is None:
+                continue
+            for sym in hit:
+                rows.append((sym, pd.Timestamp(created), float(s)))
+    df = pd.DataFrame(rows, columns=["ticker", "created_at", "sentiment"])
+    if not df.empty:
+        df["created_at"] = pd.to_datetime(df["created_at"], utc=True)
+    return df
+
+
+def build_asof_news_features(raw_df, grid_df):
+    """For each (ticker, Date) in grid_df, aggregate news published STRICTLY
+    BEFORE Date over rolling 7/30-day windows (no same-day/future leak).
+    Returns DataFrame keyed (ticker, Date) with NEWS_FEATURE_COLS."""
+    import numpy as np
+    import pandas as pd
+    cols = ["ticker", "Date"] + NEWS_FEATURE_COLS
+    if raw_df is None or raw_df.empty or grid_df is None or grid_df.empty:
+        return pd.DataFrame(columns=cols)
+    raw_df = raw_df.copy()
+    raw_df["news_date"] = (raw_df["created_at"].dt.tz_convert("UTC")
+                           .dt.normalize().dt.tz_localize(None))
+    daily = (raw_df.groupby(["ticker", "news_date"])
+             .agg(s=("sentiment", "sum"),
+                  sq=("sentiment", lambda x: float(np.sum(np.square(x)))),
+                  n=("sentiment", "size")).reset_index())
+    by_ticker = {t: g.sort_values("news_date") for t, g in daily.groupby("ticker")}
+    grid_df = grid_df.copy()
+    grid_df["Date"] = pd.to_datetime(grid_df["Date"]).dt.tz_localize(None)
+    feats = []
+    for t, g in grid_df.groupby("ticker"):
+        d = by_ticker.get(t)
+        if d is None:
+            continue
+        nd = d["news_date"].values.astype("datetime64[ns]")
+        s_sum, s_sq, n = d["s"].values, d["sq"].values, d["n"].values
+        for date in pd.unique(g["Date"]):
+            date = pd.Timestamp(date)
+            lo7 = (date - pd.Timedelta(days=_NEWS_LB_SHORT)).to_datetime64()
+            lo30 = (date - pd.Timedelta(days=_NEWS_LB_LONG)).to_datetime64()
+            hi = date.to_datetime64()
+            m7, m30 = (nd >= lo7) & (nd < hi), (nd >= lo30) & (nd < hi)
+            n7, n30 = n[m7].sum(), n[m30].sum()
+            if n7 == 0 and n30 == 0:
+                continue
+            mean7 = s_sum[m7].sum() / n7 if n7 > 0 else 0.0
+            mean30 = s_sum[m30].sum() / n30 if n30 > 0 else 0.0
+            std7 = float(np.sqrt(max(s_sq[m7].sum() / n7 - mean7 ** 2, 0.0))) if n7 > 1 else 0.0
+            feats.append((t, date, mean7, int(n7), mean30, mean7 - mean30, std7))
+    return pd.DataFrame(feats, columns=cols)
+
+
+def compute_asof_news_features(tickers, dates):
+    """Orchestrator for LIVE and BACKTEST callers: fetch the news window needed
+    to cover ``dates`` and return as-of (ticker, Date) features. ``dates`` is an
+    iterable of decision dates. Fails soft to an empty (correctly-typed) frame.
+    """
+    import pandas as pd
+    dts = pd.to_datetime(pd.Series(list(dates))).dt.tz_localize(None)
+    if dts.empty:
+        return pd.DataFrame(columns=["ticker", "Date"] + NEWS_FEATURE_COLS)
+    start = (dts.min() - pd.Timedelta(days=_NEWS_LB_LONG + 2)).to_pydatetime().replace(tzinfo=_dt.timezone.utc)
+    end = (dts.max() + pd.Timedelta(days=1)).to_pydatetime().replace(tzinfo=_dt.timezone.utc)
+    raw = fetch_historical_news(list(tickers), start, end)
+    grid = pd.MultiIndex.from_product([list(tickers), dts.unique()],
+                                      names=["ticker", "Date"]).to_frame(index=False)
+    return build_asof_news_features(raw, grid)
+
+
+def _get_creds():
+    """Read Alpaca credentials, working in both package and script import modes."""
+    try:
+        from .config import ALPACA_API_KEY, ALPACA_SECRET_KEY
+    except Exception:
+        try:
+            from config import ALPACA_API_KEY, ALPACA_SECRET_KEY
+        except Exception:
+            return None, None
+    return ALPACA_API_KEY, ALPACA_SECRET_KEY

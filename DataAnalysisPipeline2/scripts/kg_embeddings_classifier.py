@@ -534,6 +534,37 @@ def attach_macro_features(df_obs, db_path: str, macro_ttl_path: str):
     return df
 
 
+def attach_news_features(df_obs, news_parquet_path):
+    """LEFT JOIN point-in-time news-sentiment features (built by
+    scripts/build_news_features.py) onto the observation frame on (ticker, Date).
+
+    Gated by env USE_NEWS_FEATURES=1 (v2 experiment). Names/dates with no news
+    coverage get 0 (news_count_7d=0), which the model can read as "no signal".
+    The join is strictly as-of (the parquet only contains articles published
+    before each Date), so no look-ahead is introduced.
+    """
+    if os.environ.get("USE_NEWS_FEATURES", "0") != "1":
+        return df_obs
+    if not os.path.exists(news_parquet_path):
+        print(f"  -> [news] USE_NEWS_FEATURES=1 but {news_parquet_path} missing; skipping.")
+        return df_obs
+    nf = pd.read_parquet(news_parquet_path)
+    if nf.empty:
+        print("  -> [news] feature parquet empty; skipping.")
+        return df_obs
+    news_cols = [c for c in nf.columns if c not in ("ticker", "Date")]
+    df = df_obs.copy()
+    df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
+    nf["Date"] = pd.to_datetime(nf["Date"]).dt.tz_localize(None)
+    df = df.merge(nf, on=["ticker", "Date"], how="left")
+    for c in news_cols:
+        df[c] = df[c].fillna(0.0)
+    covered = int((df["news_count_7d"] > 0).sum()) if "news_count_7d" in df else 0
+    print(f"  -> [news] joined {len(news_cols)} PIT news features; "
+          f"{covered}/{len(df)} observations have news coverage.")
+    return df
+
+
 def build_feature_matrices(df_obs, company_embeddings, embed_dim_real):
     print("\n[5/5] Building feature matrices...")
     embed_cols = [f"emb_{i}" for i in range(embed_dim_real)]
@@ -1689,6 +1720,7 @@ def main():
 
     df_obs = load_observation_features(DB_PATH)
     df_obs = attach_macro_features(df_obs, DB_PATH, MACRO_KG_PATH)
+    df_obs = attach_news_features(df_obs, os.path.join(EXPLOITATION_DIR, "news_features.parquet"))
     feature_sets, y_rank, y_ret, merged, pca, tabular_cols, pca_cols = (
         build_feature_matrices(df_obs, company_embeddings, embed_dim_real)
     )
