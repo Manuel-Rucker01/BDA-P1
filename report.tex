@@ -30,7 +30,7 @@
 
 \IEEEtitleabstractindextext{%
 \begin{abstract}
-Traditional quantitative finance pipelines rely on isolated tabular datasets and short-horizon binary classifiers, which fail to capture the relational structure of corporate markets and suffer from high transaction costs and silent failure modes when deployed. This paper presents an end-to-end operational semantic trading infrastructure. We construct a multi-layered financial and macroeconomic Knowledge Graph (KG) in our Exploitation Zone, linking corporate structures, sectors, and World Bank macroeconomic indicators via RDFLib. On top of this data fabric we deploy two analytical pipelines: a multi-graph SPARQL querying engine and a graph-neural-network pipeline in which RotatE structural embeddings are PCA-compressed and merged with technical and macroeconomic indicators to \emph{regress the 30-day cross-sectional rank} of each stock. The pivot to a relative-ordering target unlocks the structural KG signal: across an expanding-window walk-forward CV with $K{=}5$ folds and a 30-day embargo, the tabular-only soft-vote ensemble reaches a fold-mean Spearman information coefficient (IC) of only $0.040 \pm 0.074$, KG-only features alone climb to $0.098 \pm 0.070$ (XGBoost), and the combined set lands at $0.092 \pm 0.056$ with a decile long-short spread of $+7.54\% \pm 3.99\%$ per month. The semantic ranker drives an institutional-grade operational layer: a 2-state Gaussian Hidden Markov Model gates regime exposure, a state-space Kalman Beta Filter sizes systematic risk, and a differential portfolio optimiser executes only the weight deltas at a strict 10 basis points transaction-cost charge. The live agent is hardened with three production controls absent from typical academic prototypes: a reproducibility hash that stamps every order with its model fingerprint and feature snapshot, a peak-to-trough drawdown circuit breaker, and a three-bucket HMM/ML/Kalman performance attribution log.
+Traditional quantitative finance pipelines rely on isolated tabular datasets and short-horizon binary classifiers, which fail to capture the relational structure of corporate markets and suffer from high transaction costs and silent failure modes when deployed. This paper presents an end-to-end operational semantic trading infrastructure. We construct a multi-layered financial and macroeconomic Knowledge Graph (KG) in our Exploitation Zone, linking corporate structures, sectors, and World Bank macroeconomic indicators via RDFLib. On top of this data fabric we deploy two analytical pipelines: a multi-graph SPARQL querying engine and a graph-neural-network pipeline in which RotatE structural embeddings are PCA-compressed and merged with technical and macroeconomic indicators to \emph{regress the 30-day cross-sectional rank} of each stock. The pivot to a relative-ordering target unlocks the structural KG signal: across an expanding-window walk-forward CV with $K{=}5$ folds and a 30-day embargo, the best tabular-only ensemble reaches a fold-mean Spearman information coefficient (IC) of only $+0.048$ (SE $0.023$), KG-only features climb to $+0.098$ (SE $0.029$), and the combined diverse soft-vote ensemble lands at $+0.105$ (SE $0.019$, $5/5$ folds positive) with a long-short decile spread of $+7.27\%$ per month. The semantic ranker drives an institutional-grade operational layer: a 2-state Gaussian Hidden Markov Model gates regime exposure, a state-space Kalman Beta Filter sizes systematic risk, an inverse-volatility rule sizes a concentrated top-K=10 book, and a differential portfolio optimiser executes only the weight deltas at a strict 10 basis points transaction-cost charge. On the strictly-post-training out-of-sample window the deployed book returns $+47.28\%$ versus $+22.18\%$ Buy~\&~Hold (Information Ratio $+4.37$). We further promote real-time news into a leak-controlled point-in-time sentiment feature, which lifts the combined IC to $+0.114$ and the out-of-sample return to $+57.49\%$, reported with explicit caveats. The live agent is hardened with three production controls absent from typical academic prototypes: a reproducibility hash that stamps every order with its model fingerprint and feature snapshot, a peak-to-trough drawdown circuit breaker, and a three-bucket HMM/ML/Kalman performance attribution log.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -47,6 +47,42 @@ Semantic Data Engineering, Knowledge Graphs, Relational Graph Embeddings, Hidden
 The academic objective of this project is to extend a classical tabular machine learning pipeline (developed in Phase 1) into an end-to-end semantic data science pipeline (Phase 2). P1 established a structured data lake (Landing, Formatted, and Trusted zones) to clean historical NASDAQ tick prices and train baseline Multi-Layer Perceptrons (MLP) and Random Forests. P2 transforms this architecture by embedding a **Knowledge Graph (KG)** into the Exploitation Zone. 
 
 However, we recognized that simply feeding static relational embeddings into a classifier is insufficient to add real-world value. Therefore, we went far beyond the standard guidelines. We developed a complete, production-grade **Algorithmic Trading Bot CLI runner** that operates under a strict **10 basis points (10 bps)** transaction fee model. It dynamically adjusts market exposures using a **Gaussian Hidden Markov Model (HMM)** and scales short exposures using a time-varying **Kalman Beta Filter**—creating an institutional-grade, closed-loop trading infrastructure.
+
+\section{System Architecture and Design Rationale}
+\label{sec:arch}
+Before detailing each component, we give the end-to-end map and---because every block was a deliberate choice over named alternatives---the reasoning behind it. The system is a single directed flow from raw data to broker orders:
+\begin{center}
+\small
+\textbf{Landing} $\to$ \textbf{Formatted} $\to$ \textbf{Trusted} (Denial Constraints) $\to$ \textbf{Exploitation} (Knowledge Graph) $\to$ \{SPARQL analytics; RotatE embeddings\} $\to$ \textbf{feature fusion} $\to$ \textbf{diverse-ensemble rank model} $\to$ \textbf{operational overlay} (HMM regime $\cdot$ Kalman $\beta$ $\cdot$ inverse-vol sizing $\cdot$ differential rebalancer) $\to$ \textbf{Alpaca orders}.
+\end{center}
+
+Two principles drove the design. \emph{First, separation of concerns}: the supervised model answers only ``which stocks rank highest over the next 30 days,'' and every other economic judgement---when to be in the market, how much systematic risk to carry, how to split capital, how to trade cheaply---is handled by an explicit, individually-testable layer rather than being implicitly baked into one black-box predictor. \emph{Second, honesty under deployment}: each choice is validated under a leak-aware walk-forward protocol, and components that cannot be validated without look-ahead (e.g.\ live news as a tilt, before the PIT feature existed) are quarantined from the backtests. Table~\ref{tab:design} summarises the decisions; the rest of the paper substantiates each one.
+
+\begin{table*}[tbp]
+\centering
+\caption{Architectural decisions and their rationale. Each layer was selected over concrete alternatives for the reason in the final column; the section that substantiates it is cited inline.}
+\label{tab:design}
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{@{}p{2.5cm}p{3.4cm}p{10.3cm}@{}}
+\toprule
+\textbf{Layer / Decision} & \textbf{Choice made} & \textbf{Why this choice (and the alternative we rejected)} \\
+\midrule
+Data fabric & RDF Knowledge Graph in the Exploitation Zone (\S\ref{sec:arch}ff.) & Markets are inherently \emph{relational} (sector, industry, supply-chain, sovereign exposure). Flat SQL tables cannot express multi-hop risk paths; the KG lets a single SPARQL query traverse company\,$\to$\,country\,$\to$\,border\,$\to$\,geopolitical-tension, and gives the ML pipeline a structural substrate to embed. \\
+Structural embedding & RotatE (complex-space rotations) & RotatE represents relations as unit-modulus rotations, so it can model \emph{symmetric}, \emph{inverse}, and \emph{compositional} relations. We rejected TransE (cannot model symmetry/1-to-N) and plain DistMult (cannot model anti-symmetry); both lose corporate-taxonomy structure RotatE preserves. \\
+Dimensionality & PCA $256\!\to\!16$ ($\approx$79\% variance) & The raw 256-dim embedding would swamp the 41 tabular features and overfit on noisy financial data. PCA balances the two signal sources; we verified empirically that the \emph{uncompressed} fusion underperformed tabular-only, while the compressed fusion strictly improved it. \\
+Prediction target & Cross-sectional 30-day \emph{rank} (PERCENT\_RANK) & The original 7-day binary direction is dominated by microstructure noise the (near-static) KG cannot help with. A relative 30-day rank is drift-invariant, matches how a long-short book is actually built, and is the target on which the KG signal finally pays off (IC $0.04\!\to\!0.11$). \\
+Validation & Expanding walk-forward CV, $K{=}5$, 30-day embargo & A single 80/20 split cannot separate IC $0.07$ from $0.04$ on 3 months of test data, and ignores temporal leakage. The embargo equals the label horizon so no train row's forward window overlaps a test row. \\
+Predictor & Diverse soft-vote ensemble (decorrelated trees + MLP) & No single learner dominated across folds; a correlation-pruned ensemble (members kept only if pairwise OOF corr $<0.85$) is more stable than any one model. We kept a Ridge and MLP baseline so the gain is argued against a fair non-linear floor, not a missing one. Rank-aware losses (lambdarank etc.) underperformed MSE and were dropped. \\
+Regime gate & 2-state Gaussian HMM on S\&P 500 & Buying through a structural bear market is the dominant drawdown source. An unsupervised HMM infers latent bull/bear states from index returns and disables shorts in bull regimes---a market-wide judgement that does not belong in a per-stock ranker. \\
+Systematic risk & State-space Kalman $\beta$ filter & Rolling-window $\beta$ lags regime shifts; a Kalman filter tracks time-varying $\beta$ recursively and reacts to a shock on the same bar, letting us shrink size on high-$\beta$ names instantly. \\
+Position sizing & Inverse-volatility, capped at 25\% (\S\ref{sec:bt}) & On a concentrated book the dominant risk is \emph{idiosyncratic}, which HMM/Kalman (systematic-risk layers) do not address. $1/\sigma$ sizing with a per-name cap provably stops one low-vol name dominating the book. \\
+Portfolio breadth & Full-universe scoring, hold top-K=10 & Scoring all $\approx$1{,}890 names preserves the cross-section the model was trained on; trading only the top 10 concentrates conviction. A breadth experiment (K=20 + sector cap) was \emph{worse} because the model's skill is sector-conditional---documented in \S\ref{sec:bt}, not hidden. \\
+Execution & Differential rebalancer, 10 bps friction & Liquidate-and-rebuy burns spreads; trading only weight \emph{deltas} cut turnover $\sim$58\%. Sells execute before buys to free margin. \\
+News signal & PIT news features in the model (was: live tilt) & News is genuinely predictive but needs point-in-time handling; we first shipped it as a live-only tilt (un-backtestable), then built strict as-of features and validated them (\S\ref{sec:bt}). \\
+\bottomrule
+\end{tabular}
+\end{table*}
 
 \section{The Semantic Data Engineering Pipeline}
 The system's backbone is a structured, semantic DataOps pipeline. The data flows sequentially across four defined zones:
@@ -116,7 +152,7 @@ Several engineered features rank a ticker against its same-date peers (\texttt{P
 \subsection{Walk-Forward Bake-Off Results}
 Table~\ref{tab:walk_forward_full} reports the full $K=5$ walk-forward bake-off (mean and SE across folds, plus the count of folds in which each metric was positive). On the tabular-only configuration the predictive signal is modest (best model XGBoost at $+0.0482$ IC, SE $0.0229$). Structural KGE features alone carry substantially more signal (SoftVote\_Diverse reaches $+0.0983$ IC, SE $0.0285$). Fusing tabular and embedding features delivers the best combination of signal and stability: SoftVote\_Diverse achieves $+0.1053$ IC (SE $0.0193$, 5/5 folds positive) and Stack maximises the long/short decile spread at $+7.66\%$ (SE $1.58\%$, 5/5 folds positive). Cross-sectional Z standardisation (Part 4 P3) and the small MLP regressor (Part 4 P4) participate in the bake-off so the paper can argue from a fair non-linear baseline, not a missing one.
 
-\begin{table*}[t]
+\begin{table*}[tbp]
 \centering
 \caption{Walk-Forward Bake-Off summary. Mean and standard error ($\text{SE}=\sigma/\sqrt{K}$) across $K=5$ expanding folds, with a 30-day embargo between train and test. The IC sign and DS sign columns report how many of the $K$ folds had a positive metric (a one-sided binomial sign test against $\text{H}_0=0.5$).}
 \label{tab:walk_forward_full}
@@ -175,7 +211,7 @@ Holding the model constant, we compare each feature configuration against the ot
 
 On the IC, the Combined-minus-Tabular contrast clears that bar for 8 of the 13 models tested, with paired-mean IC improvements ranging from $+0.0429$ to $+0.0624$ and 95\% bootstrap CIs entirely above zero. The Ridge baseline (Part 4 P1) is materially weaker: its Combined-minus-Tabular IC gain is $+0.0375$ with a bootstrap CI of $[-0.0036, +0.0797]$ and sign-test $p=0.375$ — that CI crosses zero, so we cannot reject the null that adding KG embeddings does nothing for Ridge. Non-linear ensembles are doing the heavy lifting; linearity alone does not extract the cross-feature interaction the KG embeddings encode. Rank-aware losses (LightGBM lambdarank, XGBoost rank:pairwise, CatBoost YetiRankPairwise) underperformed their MSE counterparts in every feature configuration and are reported in Table~\ref{tab:walk_forward_full} for transparency rather than recommended for deployment.
 
-\begin{table*}[t]
+\begin{table*}[tbp]
 \centering
 \caption{Paired pairwise comparisons across the three feature configurations, holding the model constant. The mean delta is the average of $K=5$ paired fold-level differences; the 95\% confidence interval is a 10{{,}}000-resample paired bootstrap on those five differences; the sign-test $p$ is a two-sided binomial test on the signs of the differences. Bold rows are those whose CI excludes zero \emph{and} whose sign-test $p<0.20$.}
 \label{tab:pairwise_stats}
@@ -371,7 +407,7 @@ The walk-forward CV reported earlier (IC $+0.1053$, $5/5$ folds positive) is a t
 
 \noindent \textbf{What counts as out-of-sample.} The deployed model was fit on feature-dates $2025\text{-}03\text{-}31 \to 2026\text{-}01\text{-}14$ (the underlying data ends $2026\text{-}02\text{-}13$; the last 30 days are trimmed because the target is a 30-day forward return). A backtest is therefore genuinely out-of-sample (no memorisation) only on windows \emph{outside} that interval --- before $2025\text{-}03\text{-}31$ or after $2026\text{-}01\text{-}14$. Earlier drafts of this report headlined 6-, 12- and 24-month horizons whose windows overlap the training range; those returns reflect the model scoring data it was trained on and have been \textbf{removed}. We report only the two genuinely-OOS windows below.
 
-\begin{table}[h]
+\begin{table}[htbp]
 \caption{Genuinely out-of-sample full-universe top-K=10 performance under 10 bps friction (inverse-volatility sizing). Both windows exclude the training feature-dates ($2025\text{-}03\text{-}31 \to 2026\text{-}01\text{-}14$). IR is the annualised Information Ratio against Buy~\&~Hold. $^{\ddagger}$ The pre-training window additionally carries current-membership \emph{survivorship bias} and mild \emph{static-embedding look-ahead} (the KG structural embeddings are baked from a 2026 snapshot, so on a 2023--25 window they encode slow-moving corporate structure from the model's future); read it as indicative, not deployable.}
 \label{tab:bt_horizons}
 \centering
@@ -395,7 +431,7 @@ Post-Training (cleanest)     & Buy \& Hold      & $+22.18\%$ & $5.22$ & $-2.41\%
 
 The top-K=10 strategy was further tested on five sector-specific 50-ticker subsets over the same 2-month unseen-future window. Performance is materially sector-dependent (Table~\ref{tab:bt_subsets}): the model excels on Tech and Mega-Cap (the regimes that dominate its training distribution) and \emph{loses to Buy \& Hold} on Healthcare and Financials. We report this rather than hide it: the KG embeddings encode structural relations (sector, industry, country, acquisitions) that align with the dynamics of Tech megacaps but underspecify the idiosyncratic regulatory and rate-driven dynamics of Healthcare and Financials.
 
-\begin{table}[h]
+\begin{table}[htbp]
 \caption{Sector-conditional performance (unseen future, $2026\text{-}03\text{-}20 \to 2026\text{-}05\text{-}15$, 50-ticker subsets, top-K=10).}
 \label{tab:bt_subsets}
 \centering
