@@ -79,6 +79,7 @@ Systematic risk & State-space Kalman $\beta$ filter & Rolling-window $\beta$ lag
 Position sizing & Inverse-volatility, capped at 25\% (\S\ref{sec:bt}) & On a concentrated book the dominant risk is \emph{idiosyncratic}, which HMM/Kalman (systematic-risk layers) do not address. $1/\sigma$ sizing with a per-name cap provably stops one low-vol name dominating the book. \\
 Portfolio breadth & Full-universe scoring, hold top-K=10 & Scoring all $\approx$1{,}890 names preserves the cross-section the model was trained on; trading only the top 10 concentrates conviction. A breadth experiment (K=20 + sector cap) was \emph{worse} because the model's skill is sector-conditional---documented in \S\ref{sec:bt}, not hidden. \\
 Execution & Differential rebalancer, 10 bps friction & Liquidate-and-rebuy burns spreads; trading only weight \emph{deltas} cut turnover $\sim$58\%. Sells execute before buys to free margin. \\
+Rebalance cadence & Monthly (first Friday) & The target is a 30-day forward rank, so the trading cadence must match that horizon. A head-to-head test (\S\ref{sec:cadence}) found weekly rebalancing churns the signal on sub-horizon noise---net $+3\%$ vs monthly's $+22\%$ over the 20-month window, with $4\times$ worse Sharpe and double the drawdown. We rejected weekly. \\
 News signal & PIT news features in the model (was: live tilt) & News is genuinely predictive but needs point-in-time handling; we first shipped it as a live-only tilt (un-backtestable), then built strict as-of features and validated them (\S\ref{sec:bt}). \\
 \bottomrule
 \end{tabular}
@@ -453,6 +454,32 @@ Financial Giants      & +9.51\%  & $-6.28\%$          & $-15.8$ pp \\
 
 \subsection{Breadth Experiment: Why We Keep $K{=}10$}
 A natural objection to a ten-name book is low \emph{breadth}: Grinold's Fundamental Law of Active Management states $\text{IR} \approx \text{IC}\,\sqrt{\text{breadth}}$, so more independent bets should raise the Information Ratio for the same skill. We tested this directly, widening to $K{=}20$ and adding a per-sector count cap (at most $\lceil 0.30K \rceil$ names per sector) to force the book out of its semiconductor cluster. On the clean post-training window this was \emph{worse} on every primary metric: return $+40.12\%$ vs $+47.28\%$, Sharpe $6.51$ vs $6.66$, IR $+3.32$ vs $+4.37$; and on the pre-training window dramatically worse (IR $-1.67$ vs $-0.60$). The reason is that Grinold's law assumes \emph{uniform} per-bet skill, which the sector-conditional results above falsify: forcing diversification spends capital on the model's negative-IC sectors (Healthcare, Financials), so the added "breadth" carries negative skill and drags portfolio IC down faster than $\sqrt{\text{breadth}}$ lifts consistency. We therefore retain $K{=}10$ with no sector cap; the cap remains in the codebase as a disabled, tested knob for a future, more sector-uniform model.
+
+\subsection{Rebalance Cadence: Why We Rebalance Monthly}
+\label{sec:cadence}
+The supervised target is a \emph{30-day} forward cross-sectional rank, so the natural trading cadence is one that lets each ranking play out over roughly that horizon. We tested this directly on the deployed (news-trained) full-universe top-$K{=}10$ book, comparing a \textbf{weekly} schedule (every Friday---the model's native grid, used for the tables above) against a \textbf{monthly} schedule (first Friday of each month, held to the next), both net of the same 10 bps one-way turnover charge (Table~\ref{tab:cadence}).
+
+\begin{table}[htbp]
+\caption{Weekly vs.\ monthly rebalancing of the deployed top-$K{=}10$ book, net of 10 bps one-way turnover cost. Monthly holds each book to roughly the model's 30-day target horizon. Sharpe/IR are annualised at $52$/yr (weekly) and $12$/yr (monthly). $^{\ddagger}$Pre-training window carries the survivorship / static-embedding caveats of Table~\ref{tab:bt_horizons}.}
+\label{tab:cadence}
+\centering
+\small
+\begin{tabular}{llrrrr}
+\toprule
+\textbf{OOS Window} & \textbf{Cadence} & \textbf{Net Ret.} & \textbf{Sharpe} & \textbf{Max DD} & \textbf{IR} \\
+\midrule
+Pre-Training$^{\ddagger}$  & Weekly (41) & $+3.12\%$           & $0.29$          & $-19.3\%$         & $-1.14$ \\
+(20 mo)                    & Monthly (10)& $\mathbf{+21.91\%}$ & $\mathbf{1.21}$ & $\mathbf{-7.2\%}$ & $\mathbf{+0.13}$ \\
+\midrule
+Post-Training (clean)      & Weekly (8)  & $+56.71\%$          & $6.47$          & $-3.5\%$          & $4.42$ \\
+(2 mo)                     & Monthly (3) & $+56.62\%$          & $\mathbf{9.45}$ & $\mathbf{0.0\%}$  & $\mathbf{9.05}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two findings stand out. On the statistically-meaningful 20-month window, \textbf{monthly beats weekly by $+18.8$ points of net return} ($+21.91\%$ vs $+3.12\%$), with roughly $4\times$ the Sharpe ($1.21$ vs $0.29$), half the maximum drawdown ($-7.2\%$ vs $-19.3\%$), and a positive rather than deeply negative Information Ratio. On the short clean window the two cadences are a return tie ($\sim\!56.6\%$ each), but monthly is markedly more risk-efficient (Sharpe $9.45$ vs $6.47$, zero drawdown, double the IR).
+
+Crucially, this is \emph{not} primarily a transaction-cost story: the \emph{gross} returns already diverge ($+22.70\%$ vs $+4.66\%$ over the 20-month window), and friction explains only $\sim\!1.5$ points of the weekly shortfall. The dominant mechanism is signal-horizon alignment---re-ranking weekly churns a 30-day-horizon signal on week-to-week noise, exiting names before the thesis matures and chasing freshly top-ranked names that then mean-revert, which is what drives the $-19\%$ weekly drawdown. (Per-rebalance turnover is in fact \emph{higher} monthly, $0.66$ vs $0.36$, because a month accumulates more drift; but trading $4\times$ less often more than compensates.) We therefore deploy the agent on a \textbf{monthly} rebalance; the weekly tables above are the conservative, higher-friction reference. A weekly risk-only check of the HMM regime gate and the drawdown circuit breaker between monthly rebalances remains sensible---but the alpha decision is taken monthly.
 
 \section{Conclusion}
 This work makes two claims that we believe matter beyond the immediate academic context. First, knowledge-graph embeddings deserve targets that match their inductive bias: a graph encoding sector, industry, country and corporate-action structure adds essentially zero predictive value at the 7-day binary direction horizon, but lifts the cross-sectional 30-day rank IC from $0.04$ (tabular-only) to $0.09$ when fused with technical and macroeconomic features under walk-forward CV. The structural signal is real once the question matches the signal. Second, the gap between a backtested model and a production trading agent is closed not by yet another classifier, but by the boring operational plumbing that makes trades reproducible, observable, and stoppable. The reproducibility hash, per-trade structured log, peak-to-trough circuit breaker, and three-bucket attribution we ship alongside the model are the difference between a research artefact and infrastructure that can carry capital.

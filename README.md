@@ -231,3 +231,16 @@ The empirical out-of-sample backtests evaluate capital performance under a stric
 
 *The headline result is the strictly-post-training **2-month window**: Top-K=10 `+47.28%` vs Buy & Hold `+22.18%`, Sharpe `6.66`, Max DD `-2.40%`, **Information Ratio `+4.37`** (excess return over benchmark is large relative to tracking error → consistent, not a lucky single bet). The model carries genuine cross-sectional rank signal (walk-forward CV IC `+0.1053`, 5/5 folds positive). Sector-conditional results are mixed: it wins on Tech/Mega-Cap (which dominate the training distribution) but loses to Buy & Hold on Healthcare/Financials. The concentration is deliberate: a **breadth experiment** widening to K=20 with a per-sector cap was **worse** (post-training IR `+3.32` vs `+4.37`) because the model's skill is sector-concentrated — forcing diversification spends capital on its negative-IC sectors. We keep K=10.*
 
+### Rebalance cadence: monthly, not weekly
+
+The target is a **30-day** forward rank, so the trading cadence should match that horizon. We A/B-tested weekly (every Friday) vs monthly (first Friday of each month) on the deployed top-K=10 book, **net of 10 bps** one-way turnover cost:
+
+| OOS Window | Cadence | # Rebal | Net Return | Sharpe | Max DD | IR vs B&H |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| **Pre-Training** ‡ (20 mo) | Weekly | 41 | +3.12% | 0.29 | -19.3% | -1.14 |
+| | **Monthly** | 10 | **+21.91%** | **1.21** | **-7.2%** | **+0.13** |
+| **Post-Training** (2 mo) | Weekly | 8 | +56.71% | 6.47 | -3.5% | 4.42 |
+| | **Monthly** | 3 | +56.62% | **9.45** | **0.0%** | **9.05** |
+
+On the meaningful 20-month window **monthly beats weekly by +18.8 pts of net return**, ~4× the Sharpe, half the drawdown, positive vs negative IR; on the short clean window returns tie but monthly is far more risk-efficient. This is **not mainly a cost effect** — *gross* returns already diverge (+22.70% vs +4.66%); the dominant cause is signal-horizon mismatch (weekly churns a 30-day signal on noise). **We deploy monthly**; the weekly tables above are the conservative reference. *(Reproduce: `BACKTEST_FULL_UNIVERSE=1 BACKTEST_COMPARE_REBAL=1 python3 -m DataAnalysisPipeline2.scripts.backtests.verify_unseen_out_of_sample` — or run the script directly.)*
+

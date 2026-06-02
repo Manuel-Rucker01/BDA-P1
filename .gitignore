@@ -7,3 +7,4 @@ __pycache__.DS_Store
 
 # Generated backtest artifact
 DataAnalysisPipeline2/scripts/backtests/unseen_oos_comparison.md
+DataAnalysisPipeline2/scripts/backtests/rebal_compare_full.md
