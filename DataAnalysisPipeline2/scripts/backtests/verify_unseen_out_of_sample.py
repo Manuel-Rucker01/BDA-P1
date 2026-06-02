@@ -145,12 +145,12 @@ def _select_top_k(friday_obs, pct_threshold=None, top_k=None):
     return select_top_k_with_sector_cap(gated, top_k, max_sec).copy()
 # ────────────────────────────────────────────────────────────────────────────
 
-def calculate_metrics(portfolio_values):
+def calculate_metrics(portfolio_values, periods_per_year=52):
     returns = pd.Series(portfolio_values).pct_change().dropna()
     if returns.empty or returns.std() == 0:
         return 0.0, 0.0, 0.0
     cum_return = (portfolio_values[-1] - portfolio_values[0]) / portfolio_values[0] * 100
-    sharpe = np.sqrt(52) * returns.mean() / returns.std()
+    sharpe = np.sqrt(periods_per_year) * returns.mean() / returns.std()
     running_max = pd.Series(portfolio_values).cummax()
     drawdowns = (portfolio_values - running_max) / running_max * 100
     max_dd = drawdowns.min()
@@ -178,8 +178,34 @@ def information_ratio(strategy_values, benchmark_values, periods_per_year=52):
         return float("nan")
     return float(np.sqrt(periods_per_year) * active.mean() / sd)
 
-def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_embeddings, scaler, pca, trained_models, mix_models, tabular_cols, pca_cols, start_date, end_date, initial_equity=10000.0):
-    horizon_fridays = [d for d in friday_dates if d >= start_date and d <= end_date]
+def build_rebalance_schedule(friday_dates, start_date, end_date, freq="weekly"):
+    """Rebalance dates within [start, end] for the requested cadence.
+
+      * weekly  -> every Friday (matches the model's native trading grid).
+      * monthly -> the FIRST Friday of each calendar month. The book picked on
+                   that Friday is then held until the next month's first Friday,
+                   so the holding period matches the model's 30-day target
+                   horizon (which is *why* monthly is the natural cadence).
+
+    Both schedules are strict subsets of the same Friday grid, so the as-of
+    news features and price lookups built for the weekly grid already cover the
+    monthly dates -- no recomputation needed.
+    """
+    win = [d for d in friday_dates if start_date <= d <= end_date]
+    if freq == "weekly":
+        return win
+    seen, monthly = set(), []
+    for d in win:
+        ym = d[:7]  # 'YYYY-MM'
+        if ym not in seen:
+            seen.add(ym)
+            monthly.append(d)
+    return monthly
+
+
+def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_embeddings, scaler, pca, trained_models, mix_models, tabular_cols, pca_cols, start_date, end_date, initial_equity=10000.0, rebalance_dates=None, periods_per_year=52, cost_bps=0.0):
+    horizon_fridays = (list(rebalance_dates) if rebalance_dates is not None
+                       else [d for d in friday_dates if d >= start_date and d <= end_date])
     if not horizon_fridays:
         return None
     
@@ -192,12 +218,19 @@ def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_emb
     equity_sma = initial_equity
     equity_hmm = initial_equity
     equity_high_long = initial_equity
-    
+    equity_high_long_net = initial_equity   # top-K book net of turnover cost
+
     bh_values = [initial_equity]
     sma_values = [initial_equity]
     hmm_values = [initial_equity]
     hl_values = [initial_equity]
-    
+    hl_net_values = [initial_equity]
+
+    # Net-of-cost bookkeeping for the deployed top-K strategy.
+    prev_hl_w = {}
+    total_turnover = 0.0
+    n_rebalances = 0
+
     bull_weeks = 0
     bear_weeks = 0
     
@@ -233,6 +266,7 @@ def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_emb
             sma_values.append(equity_sma)
             hmm_values.append(equity_hmm)
             hl_values.append(equity_high_long)
+            hl_net_values.append(equity_high_long_net)
             continue
             
         # KG projection
@@ -372,15 +406,29 @@ def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_emb
         high_long_df = _select_top_k(friday_obs)
         _hl_w = _inverse_vol_weights(high_long_df, target_exposure=1.0)
         ret_high_long = sum(wt * ticker_returns.get(t, 0.0) for t, wt in _hl_w.items())
-        
+
         equity_high_long *= (1.0 + ret_high_long)
         hl_values.append(equity_high_long)
+
+        # Net-of-cost: turnover = sum |w_new - w_old| over the union of names;
+        # one-way friction is cost_bps. Weekly rebalancing turns the book over
+        # ~4x as often as monthly, so this is where a higher cadence is paid for.
+        names = set(_hl_w) | set(prev_hl_w)
+        turnover = sum(abs(_hl_w.get(t, 0.0) - prev_hl_w.get(t, 0.0)) for t in names)
+        cost = turnover * (cost_bps / 10000.0)
+        equity_high_long_net *= (1.0 + ret_high_long - cost)
+        hl_net_values.append(equity_high_long_net)
+        prev_hl_w = _hl_w
+        total_turnover += turnover
+        n_rebalances += 1
         
-    bh_cum, bh_sharpe, bh_dd = calculate_metrics(bh_values)
-    sma_cum, sma_sharpe, sma_dd = calculate_metrics(sma_values)
-    hmm_cum, hmm_sharpe, hmm_dd = calculate_metrics(hmm_values)
-    hl_cum, hl_sharpe, hl_dd = calculate_metrics(hl_values)
-    hl_ir = information_ratio(hl_values, bh_values)  # vs Buy & Hold benchmark
+    bh_cum, bh_sharpe, bh_dd = calculate_metrics(bh_values, periods_per_year)
+    sma_cum, sma_sharpe, sma_dd = calculate_metrics(sma_values, periods_per_year)
+    hmm_cum, hmm_sharpe, hmm_dd = calculate_metrics(hmm_values, periods_per_year)
+    hl_cum, hl_sharpe, hl_dd = calculate_metrics(hl_values, periods_per_year)
+    hl_ir = information_ratio(hl_values, bh_values, periods_per_year)  # vs Buy & Hold benchmark
+    hl_net_cum, hl_net_sharpe, hl_net_dd = calculate_metrics(hl_net_values, periods_per_year)
+    hl_net_ir = information_ratio(hl_net_values, bh_values, periods_per_year)
 
     return {
         "bh_cum": bh_cum, "bh_val": equity_bh, "bh_sharpe": bh_sharpe, "bh_dd": bh_dd,
@@ -388,6 +436,11 @@ def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_emb
         "hmm_cum": hmm_cum, "hmm_val": equity_hmm, "hmm_sharpe": hmm_sharpe, "hmm_dd": hmm_dd,
         "hl_cum": hl_cum, "hl_val": equity_high_long, "hl_sharpe": hl_sharpe, "hl_dd": hl_dd,
         "hl_ir": hl_ir,
+        "hl_net_cum": hl_net_cum, "hl_net_val": equity_high_long_net,
+        "hl_net_sharpe": hl_net_sharpe, "hl_net_dd": hl_net_dd, "hl_net_ir": hl_net_ir,
+        "n_rebalances": n_rebalances, "total_turnover": total_turnover,
+        "avg_turnover": (total_turnover / n_rebalances) if n_rebalances else 0.0,
+        "cost_bps": cost_bps, "periods_per_year": periods_per_year,
         "bulls": bull_weeks, "bears": bear_weeks
     }
 
@@ -503,7 +556,15 @@ def main():
     if os.environ.get("BACKTEST_POST_ONLY", "0") == "1":
         oos_horizons = {k: v for k, v in oos_horizons.items() if k.startswith("Post-Training")}
     
+    # Weekly-vs-monthly rebalance comparison (opt-in so the default run and the
+    # report's headline numbers stay reproducible). When BACKTEST_COMPARE_REBAL=1
+    # each window is also run under a weekly and a monthly schedule, net of a
+    # per-rebalance turnover cost (BACKTEST_COST_BPS, default 10bps one-way).
+    COMPARE_REBAL = os.environ.get("BACKTEST_COMPARE_REBAL", "0") == "1"
+    COST_BPS = float(os.environ.get("BACKTEST_COST_BPS", "10"))
+
     results = {}
+    compare_results = {}
     for label, dates in oos_horizons.items():
         start_date, end_date = dates
         print(f"\nRunning backtest for {label}...")
@@ -515,6 +576,19 @@ def main():
         )
         if res:
             results[label] = res
+
+        if COMPARE_REBAL:
+            cmp = {}
+            for freq, ppy in (("weekly", 52), ("monthly", 12)):
+                sched = build_rebalance_schedule(friday_dates, start_date, end_date, freq)
+                print(f"   [rebal-compare] {freq:<7}: {len(sched)} rebalances "
+                      f"| cost={COST_BPS:.0f}bps | annualise={ppy}/yr")
+                cmp[freq] = run_backtest_unseen(
+                    df_win, df_full, gspc_df, friday_dates, company_embeddings,
+                    scaler, pca, trained_models, mix_models, tabular_cols, pca_cols,
+                    start_date, end_date, initial_equity=10000.0,
+                    rebalance_dates=sched, periods_per_year=ppy, cost_bps=COST_BPS)
+            compare_results[label] = cmp
             
     # 7. Print Master Results Table
     print("\n" + "=" * 125)
@@ -535,11 +609,67 @@ def main():
         print("-" * 135)
 
     print("=" * 135)
-    
-    # Save a detailed comparison results file in brain/artifact directory
-    artifact_path = "/Users/manuelruckerabella/.gemini/antigravity/brain/5ff25afd-4ae7-4146-9d7d-4675e86fc3e6/unseen_oos_comparison.md"
+
+    # ── Weekly-vs-Monthly rebalance comparison (deployed top-K book) ──────────
+    rebal_md = None
+    if COMPARE_REBAL and compare_results:
+        print("\n" + "=" * 135)
+        print(f"WEEKLY vs MONTHLY REBALANCE — deployed top-K book, net of {COST_BPS:.0f}bps one-way turnover cost")
+        print("=" * 135)
+        print(f"{'Horizon (Unseen Window)':<52} | {'Cadence':<8} | {'#Rebal':>6} | "
+              f"{'AvgTurn':>7} | {'Gross':>9} | {'Net':>9} | {'Sharpe':>7} | {'MaxDD':>7} | {'IR vs B&H':>9}")
+        print("-" * 135)
+        rebal_lines = []
+        for label, cmp in compare_results.items():
+            for i, freq in enumerate(("weekly", "monthly")):
+                r = cmp.get(freq)
+                if not r:
+                    continue
+                wlabel = label if i == 0 else ""
+                print(f"{wlabel:<52} | {freq:<8} | {r['n_rebalances']:>6d} | "
+                      f"{r['avg_turnover']:>7.3f} | {r['hl_cum']:>8.2f}% | {r['hl_net_cum']:>8.2f}% | "
+                      f"{r['hl_net_sharpe']:>7.3f} | {r['hl_net_dd']:>6.2f}% | {r['hl_net_ir']:>9.3f}")
+                rebal_lines.append((label, freq, r))
+            # quick verdict per window
+            w, m = cmp.get("weekly"), cmp.get("monthly")
+            if w and m:
+                winner = "MONTHLY" if m["hl_net_cum"] >= w["hl_net_cum"] else "WEEKLY"
+                gap = m["hl_net_cum"] - w["hl_net_cum"]
+                print(f"{'':<52} | -> net winner: {winner} (monthly - weekly = {gap:+.2f} pts net return)")
+            print("-" * 135)
+        print("=" * 135)
+
+        # Build a markdown block to append to the artifact.
+        rebal_md = ["\n## Weekly vs Monthly Rebalance (deployed top-K book)\n",
+                    f"\nNet of **{COST_BPS:.0f} bps** one-way turnover cost. Monthly = first Friday of each "
+                    "month, held to the next (matches the model's 30-day target horizon). "
+                    "Sharpe/IR annualised at 52/yr (weekly) and 12/yr (monthly).\n\n",
+                    "| Unseen Horizon | Cadence | # Rebalances | Avg Turnover | Gross Return | "
+                    "Net Return | Net Sharpe | Net Max DD | Net IR vs B&H |\n",
+                    "| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |\n"]
+        for label, cmp in compare_results.items():
+            for freq in ("weekly", "monthly"):
+                r = cmp.get(freq)
+                if not r:
+                    continue
+                rebal_md.append(
+                    f"| {label} | {freq} | {r['n_rebalances']} | {r['avg_turnover']:.3f} | "
+                    f"{r['hl_cum']:+.2f}% | {r['hl_net_cum']:+.2f}% | {r['hl_net_sharpe']:.3f} | "
+                    f"{r['hl_net_dd']:.2f}% | {r['hl_net_ir']:.3f} |\n")
+        rebal_md = "".join(rebal_md)
+
+    # Save a detailed comparison results file. Defaults to a repo-local path so
+    # the run never crashes on a missing external directory; override with
+    # BACKTEST_ARTIFACT to point elsewhere.
+    artifact_path = os.environ.get(
+        "BACKTEST_ARTIFACT",
+        os.path.join(SCRIPT_DIR, "unseen_oos_comparison.md"))
+    try:
+        os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
+    except Exception:
+        pass
     print(f"[Exporting] Writing detailed comparisons to {artifact_path}...")
-    
+
     with open(artifact_path, "w") as f:
         f.write("# Pure Out-of-Sample (OOS) Backtest on Unseen Market Windows\n\n")
         f.write("> [!IMPORTANT]\n")
@@ -565,7 +695,10 @@ def main():
         f.write("1. **Outperformance in Unseen Past**: During the 18 months of past unseen market data (before the model's training range), the **HMM + Kalman Upgraded** strategy yielded **+72.15%** outperforming SMA50 baseline (+66.45%) and drastically compressed maximum drawdowns. Meanwhile, **High-Confidence Longs** compounded to **+175.26%**, beating Buy & Hold (+66.52%) by a massive margin.\n")
         f.write("2. **Robustness in Unseen Future**: In the recent 2 months of unseen future data (following the training range), the **High-Confidence Longs** strategy gained **+6.20%** outperforming broad benchmarks.\n")
         f.write("3. **Scientific Proof of Predictive Power**: This rigorous separation mathematically validates that the Soft-Voting Ensemble + GCN Relational KGE architecture does *not* rely on in-sample leakage, proving real quantitative efficacy.\n")
-        
+
+        if rebal_md:
+            f.write(rebal_md)
+
     print("[Success] master unseen OOS comparisons compiled cleanly.")
 
 if __name__ == "__main__":

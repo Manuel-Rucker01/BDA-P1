@@ -4,3 +4,6 @@ __pycache__.DS_Store
 
 # Local agent tooling
 .claude/
+
+# Generated backtest artifact
+DataAnalysisPipeline2/scripts/backtests/unseen_oos_comparison.md
