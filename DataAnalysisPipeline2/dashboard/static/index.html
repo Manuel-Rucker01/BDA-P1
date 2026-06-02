@@ -23,6 +23,7 @@
     <button class="tab active" data-tab="run">① Run &amp; Propose</button>
     <button class="tab" data-tab="portfolio">② Portfolio</button>
     <button class="tab" data-tab="history">③ History</button>
+    <button class="tab" data-tab="about">④ About &amp; Login</button>
   </nav>
 
   <main>
@@ -130,6 +131,41 @@
         </table>
       </div>
     </section>
+
+    <!-- ────────────── TAB 4: ABOUT & LOGIN ────────────── -->
+    <section id="tab-about" class="tab-panel">
+      <div class="card">
+        <h2>About this dashboard</h2>
+        <p>This dashboard proposes a portfolio using ML models under the hood. It is designed to help non-technical users understand and run the same pipeline an analyst would.</p>
+        <p><b>What the model does</b>: It analyses many signals (price history, fundamental/alternative features, knowledge-graph embeddings) and ranks stocks by expected alpha. The top-K strategy concentrates on the highest ranked names; other strategies trade more conservatively.</p>
+        <p><b>Strategies</b>:
+          <ul>
+            <li><b>Concentrated top-K</b>: picks the top N ranked names and allocates by inverse volatility.</li>
+            <li><b>High-confidence long</b>: only long positions with high model confidence.</li>
+            <li><b>Regime-filtered L/S</b>: adjusts long/short exposure depending on detected market regime (bull/bear).</li>
+          </ul>
+        </p>
+        <p><b>Important:</b> This is a tool for research and paper trading. It is <i>not</i> investment advice. Models can be wrong; backtests may not represent live results. Use small sizes and paper accounts first.</p>
+      </div>
+
+      <div class="card">
+        <h2>Profile & Alpaca configuration</h2>
+        <p id="profile-status" class="hint">Loading…</p>
+        <form id="profile-form" onsubmit="return false;">
+          <label>Your name<br><input id="profile-name" type="text" /></label>
+          <label><input id="profile-use-env" type="checkbox" /> Use Alpaca API key from environment variables (ALPACA_API_KEY / ALPACA_API_SECRET)</label>
+          <div id="env-info" class="hint"></div>
+          <label>Alpaca API Key<br><input id="profile-alpaca-key" type="text" /></label>
+          <label>Alpaca API Secret<br><input id="profile-alpaca-secret" type="password" /></label>
+          <label><input id="profile-paper-trading" type="checkbox" /> Use paper trading (recommended)</label>
+          <div class="form-row">
+            <button id="btn-save-profile" class="btn btn-primary">Save profile</button>
+            <span class="hint">If you choose environment, your stored keys will be ignored.</span>
+          </div>
+        </form>
+      </div>
+    </section>
+
   </main>
 
   <div id="toast" class="toast hidden"></div>
