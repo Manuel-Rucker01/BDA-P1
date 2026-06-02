@@ -24,6 +24,7 @@ Then open http://127.0.0.1:8000
 from __future__ import annotations
 
 import os
+import json
 
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -55,7 +56,20 @@ def static_files(fname):
 # --------------------------------------------------------------------------- #
 @app.route("/api/status")
 def api_status():
-    return jsonify(svc.server_status())
+    status = svc.server_status()
+    # Merge in saved profile / environment availability
+    try:
+        profile = load_profile()
+    except Exception:
+        profile = {}
+    env_key = os.getenv("ALPACA_API_KEY") or os.getenv("APCA_API_KEY")
+    env_secret = os.getenv("ALPACA_API_SECRET") or os.getenv("APCA_API_SECRET")
+    configured = bool((profile.get("use_env") and env_key and env_secret) or (profile.get("alpaca_key") and profile.get("alpaca_secret")) or (env_key and env_secret))
+    status["alpaca_configured"] = configured
+    if "paper_trading" in profile:
+        status["paper_trading"] = profile.get("paper_trading")
+    status["profile"] = {"name": profile.get("name"), "use_env": profile.get("use_env", False)}
+    return jsonify(status)
 
 
 @app.route("/api/run", methods=["POST"])
@@ -96,6 +110,55 @@ def api_portfolio():
 @app.route("/api/history")
 def api_history():
     return jsonify(svc.get_history())
+
+
+# -------------------- simple profile storage -------------------- #
+PROFILE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.json")
+
+
+def load_profile():
+    if os.path.exists(PROFILE_FILE):
+        try:
+            with open(PROFILE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_profile(p):
+    try:
+        with open(PROFILE_FILE, "w") as f:
+            json.dump(p, f)
+    except Exception:
+        pass
+
+
+@app.route("/api/profile", methods=["GET", "POST"])
+def api_profile():
+    if request.method == "GET":
+        profile = load_profile()
+        env_key = os.getenv("ALPACA_API_KEY") or os.getenv("APCA_API_KEY")
+        env_secret = os.getenv("ALPACA_API_SECRET") or os.getenv("APCA_API_SECRET")
+        profile["env_available"] = bool(env_key and env_secret)
+        # Mask stored secrets for safety
+        if not profile.get("use_env", False):
+            if "alpaca_key" in profile:
+                profile["alpaca_key"] = "*****"
+            if "alpaca_secret" in profile:
+                profile["alpaca_secret"] = "*****"
+        return jsonify({"ok": True, "profile": profile})
+    else:
+        body = request.get_json(silent=True) or {}
+        use_env = bool(body.get("use_env"))
+        profile = {"name": body.get("name")}
+        profile["use_env"] = use_env
+        profile["paper_trading"] = bool(body.get("paper_trading"))
+        if not use_env:
+            profile["alpaca_key"] = body.get("alpaca_key")
+            profile["alpaca_secret"] = body.get("alpaca_secret")
+        save_profile(profile)
+        return jsonify({"ok": True, "profile": {"name": profile.get("name"), "use_env": profile.get("use_env")}})
 
 
 if __name__ == "__main__":

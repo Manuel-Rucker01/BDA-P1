@@ -30,6 +30,7 @@ $$(".tab").forEach((btn) => {
     $(`#tab-${btn.dataset.tab}`).classList.add("active");
     if (btn.dataset.tab === "portfolio") loadPortfolio();
     if (btn.dataset.tab === "history") loadHistory();
+    if (btn.dataset.tab === "about") loadProfile();
   });
 });
 
@@ -278,4 +279,59 @@ function drawChart(id, type, data) {
 }
 
 // ─────────────────────────── init ───────────────────────────
+
+// Profile / About view logic
+async function loadProfile() {
+  try {
+    const r = await api('/api/profile');
+    if (!r.ok) { toast('Could not load profile.', 'err'); return; }
+    const p = r.profile || {};
+    $('#profile-name').value = p.name || '';
+    $('#profile-use-env').checked = !!p.use_env;
+    $('#profile-paper-trading').checked = !!p.paper_trading;
+    $('#env-info').textContent = p.env_available ? 'Environment Alpaca keys detected' : 'No Alpaca env keys detected';
+    if (p.use_env) {
+      $('#profile-alpaca-key').value = '';
+      $('#profile-alpaca-secret').value = '';
+      $('#profile-alpaca-key').disabled = true;
+      $('#profile-alpaca-secret').disabled = true;
+    } else {
+      $('#profile-alpaca-key').value = (p.alpaca_key === '*****') ? '' : (p.alpaca_key || '');
+      $('#profile-alpaca-secret').value = '';
+      $('#profile-alpaca-key').disabled = false;
+      $('#profile-alpaca-secret').disabled = false;
+    }
+    $('#profile-status').textContent = `Hello ${p.name || 'user'}. Alpaca: ${p.env_available ? 'env keys' : (p.alpaca_key ? 'stored keys' : 'not configured')}`;
+  } catch (e) { console.error(e); toast('Error loading profile', 'err'); }
+}
+
+// Toggle form fields when checkbox changes
+$('#profile-use-env').addEventListener('change', (e) => {
+  const useEnv = e.target.checked;
+  $('#profile-alpaca-key').disabled = useEnv;
+  $('#profile-alpaca-secret').disabled = useEnv;
+});
+
+$('#btn-save-profile').addEventListener('click', async () => {
+  const body = {
+    name: $('#profile-name').value,
+    use_env: $('#profile-use-env').checked,
+    alpaca_key: $('#profile-alpaca-key').value,
+    alpaca_secret: $('#profile-alpaca-secret').value,
+    paper_trading: $('#profile-paper-trading').checked,
+  };
+  const r = await api('/api/profile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (r.ok) {
+    toast('Profile saved', 'ok');
+    await loadStatus();
+    await loadProfile();
+  } else {
+    toast('Failed to save profile', 'err');
+  }
+});
+
 loadStatus();
