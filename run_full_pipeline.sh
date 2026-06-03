@@ -1,37 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  BDA-P2  —  Large-Scale Data Engineering & Algorithmic Trading (P1 + P2)
-#  Cross-platform runner for macOS and Windows (via Git Bash).
-#
-#  Place this file at the repository ROOT (the BDA-P2/ folder, next to
-#  requirements.txt and run_preprocessing.py). It cd's to its own location,
-#  so it works no matter where you invoke it from.
-#
+
 #  USAGE
-#    ./run_pipeline.sh <command>
-#
-#  COMMANDS
-#    verify       Check the large artefacts are real files, not LFS stubs
-#    ingest       Step 1  - Landing Zone ingestion (fetches from external APIs)
-#    format       Step 2  - Formatted Zone standardization (Spark -> DuckDB)
-#    trusted      Step 3  - Trusted Zone data quality
-#    graphs       Step 4  - Exploitation Zone: integration + RDF graphs
-#    preprocess   Steps 2-4 in one go, via run_preprocessing.py
-#    test         Run all unit tests (formatted / trusted / macro graph)
-#    analyze      Step 5  - SPARQL analytical queries
-#    classify     Baseline classifiers (MLP + RandomForest)
-#    train        Step 6  - Retrain RotatE embeddings + soft-voting ensemble
-#    backtest     Step 7  - Out-of-sample backtests (strict 10 bps friction)
-#    bot-dry      Step 8  - Trading bot, simulated DRY RUN (safe, no orders)
-#    bot-live     Step 8  - Trading bot, LIVE orders on Alpaca (real money!)
-#    bot-prod     Step 8  - Full universe, top-K, LIVE (real money!)
-#    pipeline     Full safe run: ingest -> ... -> backtest -> bot-dry
-#    all          Alias for "pipeline"
-#
-#  EXAMPLES
-#    ./run_pipeline.sh verify
-#    ./run_pipeline.sh pipeline
-#    ./run_pipeline.sh bot-dry
+#    ./run_pipeline.sh all
 # =============================================================================
 
 set -euo pipefail
