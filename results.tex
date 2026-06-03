@@ -29,37 +29,13 @@
 \maketitle
 
 \section{Introduction}
-This directory provides a consolidated mathematical and statistical compendium of all empirical results obtained throughout the execution of the \textbf{Large-Scale Data Engineering and Algorithmic Trading (P1 + P2)} pipeline. 
+This directory provides a consolidated mathematical and statistical compendium of all empirical results obtained throughout the execution of the \textbf{Large-Scale Data Engineering and Algorithmic Trading (P2)} pipeline.
 
-The tables cover all test configurations, including Phase 1 Auto-ARIMA time series, Phase 2 Knowledge Graph Embedding (RotatE) soft-voting ensembles, frictionless baseline trend filters, dynamic Hidden Markov Model (HMM) + Kalman state-space risk models, strict 10 basis points (10 bps) transaction friction comparisons over multiple horizons, 100\% unseen out-of-sample future subsets, and the volume-savings metrics of our Differential Portfolio Rebalancing Optimizer.
-
----
-
-\section{Phase 1: Time Series Auto-ARIMA Predictability Results}
-Univariate Auto-ARIMA models were fitted to index prices, exchange rates, returns, and rolling volatilities over 62 unique daily observations, split into 80\% training (49 samples) and 20\% out-of-sample test validation (13 samples). 
-
-\begin{table}[h!]
-\centering
-\caption{Auto-ARIMA Univariate Predictability Metrics}
-\begin{tabular}{llrrrrr}
-\toprule
-\textbf{Time Series} & \textbf{ARIMA Order} & \textbf{AIC} & \textbf{RMSE} & \textbf{MAE} & \textbf{MAPE (\%)} & \textbf{Directional Acc (\%)} \\
-\midrule
-\texttt{JPY\_USD Price} & ARIMA(2,0,0) & 124.20 & 1.1100 & 0.9300 & 0.60\% & 50.0\% (Random) \\
-\texttt{EUR\_USD Price} & ARIMA(0,1,0) & -418.70 & 0.0097 & 0.0083 & 0.97\% & 0.0\% (Stationary) \\
-\texttt{SP500\_Close Price} & ARIMA(0,1,0) & 505.50 & 78.9900 & 71.0500 & 1.04\% & 0.0\% (Stationary) \\
-\texttt{SP500\_Returns (\%)} & ARIMA(1,0,1) & 98.10 & 0.7230 & 0.6030 & 111.05\% & 66.7\% (Small sample) \\
-\texttt{EUR\_Returns (\%)} & ARIMA(0,0,1) & 38.00 & 0.4280 & 0.3080 & 100.76\% & 0.0\% (White Noise) \\
-\texttt{JPY\_Returns (\%)} & ARIMA(1,0,0) & 82.00 & 0.4760 & 0.3900 & 128.23\% & 50.0\% (Random Walk) \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\textbf{Takeaway:} Price level forecasting is highly predictable under short-term horizons (MAPE $< 1\%$) due to strong trend persistence. However, daily returns represent a random walk with high noise, rendering MAPE metrics $>100\%$, which proves the necessity of multi-variable machine learning ensembles and GNN semantic graph features.
+The tables cover all test configurations, including the Knowledge Graph Embedding (RotatE) soft-voting ensembles, frictionless baseline trend filters, dynamic Hidden Markov Model (HMM) + Kalman state-space risk models, strict 10 basis points (10 bps) transaction friction comparisons over multiple horizons, 100\% unseen out-of-sample future subsets, and the volume-savings metrics of our Differential Portfolio Rebalancing Optimizer.
 
 ---
 
-\section{Phase 2: Relational GNN Graph Embeddings vs. Tabular Classifier Bake-Off}
+\section{Relational GNN Graph Embeddings vs. Tabular Classifier Bake-Off}
 We retrained the PyTorch \textbf{RotatE} relational graph embedding model on our expanded 12-month Exploitation Zone master dataset (representing **481,027 observations**). Table 2 summarizes the performance bake-off across feature sets and boosting classifiers under a strict temporal 80/20 train/test split.
 
 \begin{table}[h!]

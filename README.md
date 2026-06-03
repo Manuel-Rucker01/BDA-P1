@@ -1,4 +1,4 @@
-# Large-Scale Data Engineering and Algorithmic Trading with Knowledge Graphs (P1 + P2)
+# Large-Scale Data Engineering and Algorithmic Trading with Knowledge Graphs (P2)
 
 **Authors:** Yufeng Chen, Marc Delgado, Manuel Rucker  
 **Institution:** Universitat Politècnica de Catalunya (UPC)  
