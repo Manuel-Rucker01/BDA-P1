@@ -1,0 +1,25 @@
+# Python
+.venv
+venv/
+env/
+.pytest_cache
+__pycache__/
+*.pyc
+*.pyo
+
+# OS
+.DS_Store
+
+# Local agent tooling
+.claude/
+
+# Secrets — NEVER commit real credentials. Use .env.template as the reference.
+*.env
+.env
+DataAnalysisPipeline2/trading_agent/.env
+
+# Live agent runtime logs / state
+DataAnalysisPipeline2/trading_agent/agent_logs/
+
+# Generated backtest artefacts
+DataAnalysisPipeline2/scripts/backtests/*_comparison*.md

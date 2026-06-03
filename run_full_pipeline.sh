@@ -1,9 +1,26 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  BDA-P2  —  Large-Scale Data Engineering & Algorithmic Trading (P1 + P2)
-
+#
 #  USAGE
-#    ./run_pipeline.sh all
+#    ./run_full_pipeline.sh <command>
+#
+#  COMMANDS
+#    all | pipeline   Full safe pipeline (ingest -> backtest -> simulated bot)
+#    verify           Check the large artefacts are real (not Git-LFS stubs)
+#    ingest           Landing Zone ingestion
+#    format           Formatted Zone standardization
+#    trusted          Trusted Zone data quality
+#    preprocess       Formatted + Trusted via the bundled orchestrator
+#    test             Run all unit tests
+#    graphs           Exploitation Zone graph generation
+#    analyze          SPARQL analytical inferences
+#    classify         Baseline MLP + RandomForest classifiers
+#    train            RETRAIN embeddings + ensemble (OVERWRITES best_model.pkl)
+#    backtest         Out-of-sample backtest, 10 bps friction (news-aware)
+#    bot-dry          Trading bot, simulated, no orders
+#    bot-live         Trading bot, LIVE high_alpha (real orders; asks confirm)
+#    bot-prod         Trading bot, LIVE full-universe top-K (real orders)
 # =============================================================================
 
 set -euo pipefail
@@ -126,14 +143,28 @@ cmd_classify() {
 }
 
 # ---- Step 6: Retrain embeddings + ensemble ---------------------------------
+#  WARNING: this overwrites the delivered ExploitationZone/best_model.pkl. We
+#  back it up first, and reproduce the *news-trained* model (USE_NEWS_FEATURES=1,
+#  using the shipped ExploitationZone/news_features.parquet) so the regenerated
+#  model stays consistent with the news-aware backtest and the live bot.
 cmd_train() {
-    run "$PY" DataAnalysisPipeline2/scripts/kg_embeddings_classifier.py
+    echo ""
+    echo "NOTE: 'train' RETRAINS and overwrites ExploitationZone/best_model.pkl"
+    echo "      (the delivered ~46MB model). A timestamped backup is made first."
+    if [ -f ExploitationZone/best_model.pkl ]; then
+        cp ExploitationZone/best_model.pkl \
+           "ExploitationZone/best_model.pkl.bak.$(date +%Y%m%d_%H%M%S)"
+    fi
+    run_sh "USE_NEWS_FEATURES=1 $PY DataAnalysisPipeline2/scripts/kg_embeddings_classifier.py"
 }
 
-# ---- Step 7: Out-of-sample backtests (10 bps friction) ---------------------
+# ---- Step 7: Out-of-sample backtest (10 bps friction) ----------------------
+#  The deployed best_model.pkl carries point-in-time news_* features, so we run
+#  the news-aware verifier. (verify_hmm_kalman_horizons.py and
+#  verify_subsets_comparison.py are NOT news-aware and would KeyError on the
+#  news columns; run them only against a news-free model.)
 cmd_backtest() {
-    run_sh "PYTHONPATH=DataAnalysisPipeline2/scripts $PY DataAnalysisPipeline2/scripts/backtests/verify_hmm_kalman_horizons.py"
-    run_sh "PYTHONPATH=DataAnalysisPipeline2/scripts $PY DataAnalysisPipeline2/scripts/backtests/verify_subsets_comparison.py"
+    run_sh "PYTHONPATH=DataAnalysisPipeline2/scripts $PY DataAnalysisPipeline2/scripts/backtests/verify_unseen_out_of_sample.py"
 }
 
 # ---- Step 8: Trading bot ----------------------------------------------------
@@ -166,6 +197,9 @@ cmd_bot_prod() {
 }
 
 # ---- Full safe pipeline (no live trading) ----------------------------------
+#  Uses the delivered ExploitationZone/best_model.pkl as-is; model (re)training
+#  is the separate, destructive 'train' step and is intentionally NOT part of
+#  'all', so a full run cannot silently overwrite the shipped model.
 cmd_pipeline() {
     cmd_verify
     cmd_ingest
@@ -175,11 +209,12 @@ cmd_pipeline() {
     cmd_graphs
     cmd_analyze
     cmd_classify
-    cmd_train
     cmd_backtest
     cmd_bot_dry
     echo ""
     echo "=== Full pipeline complete (ingest -> backtest -> simulated bot run). ==="
+    echo "    Note: 'all' uses the shipped best_model.pkl; run 'train' separately"
+    echo "    (destructive) to regenerate it."
 }
 
 usage() {
