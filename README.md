@@ -2,7 +2,7 @@
 
 **Authors:** Yufeng Chen, Marc Delgado, Manuel Rucker  
 **Institution:** Universitat Politècnica de Catalunya (UPC)  
-**Date:** 23rd May 2026  
+**Date:** June 3rd 2026  
 
 ---
 
@@ -42,20 +42,17 @@ This project implements a fully integrated, semantic quantitative trading and in
 │   ├── test_macroeconomic_graph.py   # Tests for macro graph relations
 │   └── best_model.pkl                # Baked ensemble classifiers, scaler, and PCA state
 ├── DataAnalysisPipeline1/        # Classical ARIMA time series modeling
-│   ├── scripts/arima_models.py       # Auto-ARIMA prices vs. returns forecasting
-│   └── scripts/arima_results_validation.py # ARIMA validation & performance heatmap plot
+│   ├── sparql_analysis.py               # Pattern-matching SPARQL engine
 ├── DataAnalysisPipeline2/        # Advanced ML, SPARQL, and live trading agent
 │   ├── scripts/
 │   │   ├── stock_prediction_mlp.py          # Classical MLP classifier
 │   │   ├── stock_prediction_random_forest.py # Classical RandomForest classifier
-│   │   ├── sparql_analysis.py               # Pattern-matching SPARQL engine
 │   │   └── kg_embeddings_classifier.py      # Retrains PyTorch RotatE KGE & ensemble
 │   └── trading_agent/            # Modular automated quantitative trading bot
 │       ├── config.py                 # Path resolutions and trading constants
 │       ├── bot.py                    # Agent engine (HMM, Kalman, Alpaca rebalancing)
 │       └── run.py                    # Production CLI runner
 ├── implementation.md             # Operations, setup, and deployment manual
-├── report.tex                    # Professional 5-page LaTeX academic project report
 └── requirements.txt              # Unified dependencies configuration
 ```
 
