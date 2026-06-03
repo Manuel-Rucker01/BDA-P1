@@ -130,8 +130,6 @@ cmd_graphs() {
 }
 
 # ---- Step 5: SPARQL analytical inferences ----------------------------------
-#  Note: the ARIMA scripts referenced in the README are not part of this
-#  bundle, so only the SPARQL analysis is run here.
 cmd_analyze() {
     run "$PY" DataAnalysisPipeline1/sparql_analysis.py
 }

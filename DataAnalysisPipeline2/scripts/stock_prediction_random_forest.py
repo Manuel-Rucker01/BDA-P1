@@ -11,7 +11,7 @@ from imblearn.pipeline import Pipeline as ImbPipeline
 
 # --- Configuration ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "ExploitationZone"))
+EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "ExploitationZone"))
 DB_PATH = os.path.join(EXPLOITATION_DIR, "ExploitationZone.duckdb")
 
 def train_rf_v5():

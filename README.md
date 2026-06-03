@@ -10,7 +10,7 @@
 
 This project implements a fully integrated, semantic quantitative trading and investment infrastructure across two distinct phases. 
 
-* **Phase 1 (P1)**: Constructed a classical, high-capacity tabular data lake. Raw stock market prices and currency indicators are ingested, standardized into relational structures via PySpark/DuckDB, cleaned using rigorous data quality rules, and fed into ARIMA time series and baseline machine learning classifiers (RandomForest and MLP) to predict 7-day stock price direction.
+* **Phase 1 (P1)**: Constructed a classical, high-capacity tabular data lake. Raw stock market prices and currency indicators are ingested, standardized into relational structures via PySpark/DuckDB, cleaned using rigorous data quality rules, and fed into baseline machine learning classifiers (RandomForest and MLP) to predict 7-day stock price direction.
 * **Phase 2 (P2)**: Integrates an advanced **Knowledge Graph (KG)** semantic layer. Cleaned relational data is mapped into linked RDF graphs, enriched with live sovereign macroeconomic and geopolitical parameters queried from World Bank and geopolitical APIs, and analyzed through two distinct pipelines:
   1. **SPARQL Analytical Engine**: Evaluates cross-graph queries that link corporate taxonomy straight to geopolitical borders and regional risk indicators.
   2. **GNN Structural Embeddings & Ensemble ML**: Trains a **RotatE** relational graph model in PyTorch, projects structural company embeddings through PCA, and integrates them with tabular indicators inside a soft-voting classifier ensemble (`CatBoost`, `XGBoost`, `LightGBM`, `RandomForest`).
@@ -41,8 +41,9 @@ This project implements a fully integrated, semantic quantitative trading and in
 │   ├── macroeconomic_graph.ttl       # Output Turtle Graph (~2K triples)
 │   ├── test_macroeconomic_graph.py   # Tests for macro graph relations
 │   └── best_model.pkl                # Baked ensemble classifiers, scaler, and PCA state
-├── DataAnalysisPipeline1/        # Classical ARIMA time series modeling
+├── DataAnalysisPipeline1/        # SPARQL analytics & knowledge-graph inspection
 │   ├── sparql_analysis.py               # Pattern-matching SPARQL engine
+│   └── inspect_graph_main.py            # Knowledge-graph inspection utility
 ├── DataAnalysisPipeline2/        # Advanced ML, SPARQL, and live trading agent
 │   ├── scripts/
 │   │   ├── stock_prediction_mlp.py          # Classical MLP classifier
@@ -148,15 +149,11 @@ python3 ExploitationZone/graph_generation.py
 python3 ExploitationZone/geopolitical_macroeconomic.py
 ```
 
-### 5. Analytical Inferences (ARIMA & SPARQL)
-Execute pattern-matching time-series and semantic queries:
+### 5. Analytical Inferences (SPARQL)
+Execute semantic cross-graph queries over the knowledge graph:
 ```bash
-# Run Pipeline 1: Auto-ARIMA models comparison
-python3 DataAnalysisPipeline1/scripts/arima_models.py
-python3 DataAnalysisPipeline1/scripts/arima_results_validation.py
-
-# Run Pipeline 2a: SPARQL analytical queries (including cross-graph borders queries)
-python3 DataAnalysisPipeline2/scripts/sparql_analysis.py
+# SPARQL analytical queries (including cross-graph borders queries)
+python3 DataAnalysisPipeline1/sparql_analysis.py
 ```
 
 ### 6. Relational Graph Embeddings and Retraining
