@@ -20,6 +20,7 @@ ROOT_DIR = os.path.abspath(os.path.join(PIPELINE_DIR, ".."))
 EXPLOITATION_DIR = os.path.join(ROOT_DIR, "ExploitationZone")
 MODEL_PATH = os.path.join(EXPLOITATION_DIR, "best_model.pkl")
 MACRO_KG_PATH = os.path.join(EXPLOITATION_DIR, "macroeconomic_graph.ttl")
+RESULTS_DIR = os.path.join(PIPELINE_DIR, "results")
 
 # Ensure trading_agent and ExploitationZone can be imported
 if PIPELINE_DIR not in sys.path:
@@ -676,7 +677,8 @@ def main():
     print("=" * 125)
     
     # Save a detailed comparison results file in brain/artifact directory
-    artifact_path = "/Users/manuelruckerabella/.gemini/antigravity/brain/5ff25afd-4ae7-4146-9d7d-4675e86fc3e6/horizon_comparison.md"
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    artifact_path = os.path.join(RESULTS_DIR, "horizon_comparison.md")
     print(f"[Exporting] Writing detailed comparisons to {artifact_path}...")
     
     with open(artifact_path, "w") as f:

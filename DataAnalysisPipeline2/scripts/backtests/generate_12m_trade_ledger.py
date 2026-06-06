@@ -21,7 +21,7 @@ ROOT_DIR = os.path.abspath(os.path.join(PIPELINE_DIR, ".."))
 EXPLOITATION_DIR = os.path.join(ROOT_DIR, "ExploitationZone")
 MODEL_PATH = os.path.join(EXPLOITATION_DIR, "best_model.pkl")
 MACRO_KG_PATH = os.path.join(EXPLOITATION_DIR, "macroeconomic_graph.ttl")
-ARTIFACTS_DIR = "/Users/manuelruckerabella/.gemini/antigravity/brain/5ff25afd-4ae7-4146-9d7d-4675e86fc3e6"
+ARTIFACTS_DIR = os.path.join(PIPELINE_DIR, "results")
 DECISIONS_LOG_PATH = os.path.join(ARTIFACTS_DIR, "decisions_log.md")
 
 # Ensure trading_agent can be imported
@@ -505,6 +505,7 @@ Below is the chronological weekly ledger of all model decisions, ticker allocati
 *Report generated automatically on {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')} (Current Local Time).*
 """
 
+    os.makedirs(ARTIFACTS_DIR, exist_ok=True)
     with open(DECISIONS_LOG_PATH, "w") as f:
         f.write(md_content)
 
