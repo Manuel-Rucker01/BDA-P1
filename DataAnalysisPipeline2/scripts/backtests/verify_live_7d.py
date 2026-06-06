@@ -271,7 +271,7 @@ def main():
     latest_df = latest_df.merge(emb_df, on="ticker", how="inner")
     
     # Extract matrices
-    X_tab = latest_df[tabular_cols].fillna(0).values.astype(np.float32)
+    X_tab = latest_df.reindex(columns=tabular_cols, fill_value=0).fillna(0).values.astype(np.float32)
     X_emb = latest_df[pca_cols].fillna(0).values.astype(np.float32)
     X_full = np.concatenate([X_tab, X_emb], axis=1)
     

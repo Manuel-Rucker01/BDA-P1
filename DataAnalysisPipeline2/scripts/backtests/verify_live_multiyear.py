@@ -265,7 +265,7 @@ def main():
         friday_obs = friday_obs.merge(emb_df, on="ticker", how="inner")
         
         # Prepare inputs
-        X_tab = friday_obs[tabular_cols].fillna(0).values.astype(np.float32)
+        X_tab = friday_obs.reindex(columns=tabular_cols, fill_value=0).fillna(0).values.astype(np.float32)
         X_emb = friday_obs[pca_cols].fillna(0).values.astype(np.float32)
         X_full = np.concatenate([X_tab, X_emb], axis=1)
         X_full_s = scaler.transform(X_full)

@@ -301,7 +301,7 @@ def run_backtest_for_horizon(df_all_feat, df_full, gspc_df, friday_dates, compan
         emb_df["ticker"] = found_tickers
         friday_obs = friday_obs.merge(emb_df, on="ticker", how="inner")
         
-        X_tab = friday_obs[tabular_cols].fillna(0).values.astype(np.float32)
+        X_tab = friday_obs.reindex(columns=tabular_cols, fill_value=0).fillna(0).values.astype(np.float32)
         X_emb = friday_obs[pca_cols].fillna(0).values.astype(np.float32)
         X_full = np.concatenate([X_tab, X_emb], axis=1)
         if _CS_Z:
