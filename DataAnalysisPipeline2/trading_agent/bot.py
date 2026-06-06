@@ -6,6 +6,7 @@ determines the S&P 500 market regime, and dispatches optimized differential trad
 
 import os
 import pickle
+import sys
 import numpy as np
 import pandas as pd
 import duckdb
@@ -18,6 +19,12 @@ from .operational import (
     PerformanceAttribution,
     build_decision_context, save_feature_snapshot, write_decision_row,
 )
+
+_PIPELINE_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+if _PIPELINE_DIR not in sys.path:
+    sys.path.append(_PIPELINE_DIR)
+
+from features.macro_provider import get_macro_features_for_date, load_static_macro_features
 
 # --- Helper Technical Indicators ---
 
@@ -90,6 +97,163 @@ def inverse_volatility_weights(tickers, vols, target_exposure=1.0,
         w[free] = w[free] / w[free].sum() * remaining
     w = w * target_exposure
     return {t: float(wi) for t, wi in zip(tickers, w)}
+
+
+def portfolio_exposure_summary(weights):
+    """Return long/short/gross/net exposure for a signed weight mapping."""
+    vals = np.asarray(list(weights.values()), dtype=float) if weights else np.asarray([], dtype=float)
+    if vals.size == 0:
+        return {"long": 0.0, "short": 0.0, "gross": 0.0, "net": 0.0}
+    long_exposure = float(vals[vals > 0].sum())
+    short_exposure = float(-vals[vals < 0].sum())
+    return {
+        "long": long_exposure,
+        "short": short_exposure,
+        "gross": long_exposure + short_exposure,
+        "net": float(vals.sum()),
+    }
+
+
+def enforce_portfolio_constraints(weights, *, max_gross, max_net, max_short,
+                                  max_long, max_position, tol=1e-10):
+    """Clip and scale signed weights to satisfy portfolio exposure guardrails.
+
+    The transformation only reduces exposure: per-name clips first, side caps
+    second, then gross/net caps. This keeps rank-based allocations intact within
+    each side while ensuring the final book cannot exceed configured limits.
+    """
+    if not weights:
+        return {}
+
+    capped = {
+        t: float(np.clip(w, -max_position, max_position))
+        for t, w in weights.items()
+    }
+
+    for _ in range(4):
+        summary = portfolio_exposure_summary(capped)
+        long_exp = summary["long"]
+        short_exp = summary["short"]
+
+        if long_exp > max_long + tol and long_exp > 0:
+            scale = max_long / long_exp
+            capped = {t: (w * scale if w > 0 else w) for t, w in capped.items()}
+        if short_exp > max_short + tol and short_exp > 0:
+            scale = max_short / short_exp
+            capped = {t: (w * scale if w < 0 else w) for t, w in capped.items()}
+
+        summary = portfolio_exposure_summary(capped)
+        if summary["gross"] > max_gross + tol and summary["gross"] > 0:
+            scale = max_gross / summary["gross"]
+            capped = {t: w * scale for t, w in capped.items()}
+
+        summary = portfolio_exposure_summary(capped)
+        net = summary["net"]
+        if net > max_net + tol and summary["long"] > 0:
+            allowed_long = max(max_net + summary["short"], 0.0)
+            scale = min(1.0, allowed_long / summary["long"])
+            capped = {t: (w * scale if w > 0 else w) for t, w in capped.items()}
+        elif net < -max_net - tol and summary["short"] > 0:
+            allowed_short = max(max_net + summary["long"], 0.0)
+            scale = min(1.0, allowed_short / summary["short"])
+            capped = {t: (w * scale if w < 0 else w) for t, w in capped.items()}
+
+    return {t: (0.0 if abs(w) < tol else float(w)) for t, w in capped.items()}
+
+
+def assert_portfolio_invariants(weights, *, max_gross, max_net, max_short,
+                                max_long, max_position, tol=1e-8):
+    """Raise if a signed weight mapping breaches configured exposure limits."""
+    summary = portfolio_exposure_summary(weights)
+    max_abs_name = max((abs(float(w)) for w in weights.values()), default=0.0)
+    checks = {
+        "gross": summary["gross"] <= max_gross + tol,
+        "net": abs(summary["net"]) <= max_net + tol,
+        "short": summary["short"] <= max_short + tol,
+        "long": summary["long"] <= max_long + tol,
+        "position": max_abs_name <= max_position + tol,
+    }
+    if not all(checks.values()):
+        failed = ", ".join(k for k, ok in checks.items() if not ok)
+        raise AssertionError(
+            f"Portfolio invariant breach ({failed}): "
+            f"long={summary['long']:.6f}, short={summary['short']:.6f}, "
+            f"gross={summary['gross']:.6f}, net={summary['net']:.6f}, "
+            f"max_abs_position={max_abs_name:.6f}"
+        )
+    return summary
+
+
+def build_regime_filtered_weights(predictions_df, *, is_bull,
+                                  target_exposure=1.0,
+                                  confidence_threshold=0.02,
+                                  max_gross=1.0,
+                                  max_net=1.0,
+                                  max_short=0.30,
+                                  max_long=1.0,
+                                  max_position=0.25,
+                                  apply_kalman_short_scaling=True):
+    """Build regime-filtered long/short weights with explicit invariants."""
+    if predictions_df is None or predictions_df.empty:
+        return {}, {"long": 0.0, "short": 0.0, "gross": 0.0, "net": 0.0}
+
+    df = predictions_df.copy()
+    if "pred_rank" not in df.columns:
+        df["pred_rank"] = df["pred_proba"]
+
+    # Centre at 0.5 so a uniform random ranker produces zero weights.
+    df["raw_weight"] = df["pred_rank"].astype(float) - 0.5
+
+    if apply_kalman_short_scaling and "kalman_beta" in df.columns:
+        def scale_short(row):
+            w = row["raw_weight"]
+            if w < 0:
+                beta = row.get("kalman_beta", 1.0)
+                if pd.isna(beta):
+                    beta = 1.0
+                return w / max(abs(beta), 0.5)
+            return w
+        df["raw_weight"] = df.apply(scale_short, axis=1)
+
+    longs = df[df["raw_weight"] >= confidence_threshold].copy()
+    shorts = pd.DataFrame() if is_bull else df[df["raw_weight"] <= -confidence_threshold].copy()
+
+    if longs.empty and shorts.empty:
+        return {}, {"long": 0.0, "short": 0.0, "gross": 0.0, "net": 0.0}
+
+    weights = {}
+    long_budget = min(float(target_exposure), float(max_long), float(max_gross))
+    short_budget = 0.0 if is_bull else min(float(max_short), float(max_gross))
+
+    if not longs.empty and long_budget > 0:
+        long_sum = float(longs["raw_weight"].sum())
+        if long_sum > 0:
+            longs["target_weight"] = (longs["raw_weight"] / long_sum) * long_budget
+            weights.update(longs.set_index("ticker")["target_weight"].to_dict())
+
+    if not shorts.empty and short_budget > 0:
+        short_sum = float(shorts["raw_weight"].abs().sum())
+        if short_sum > 0:
+            shorts["target_weight"] = (shorts["raw_weight"] / short_sum) * short_budget
+            weights.update(shorts.set_index("ticker")["target_weight"].to_dict())
+
+    weights = enforce_portfolio_constraints(
+        weights,
+        max_gross=float(max_gross),
+        max_net=float(max_net),
+        max_short=float(max_short),
+        max_long=float(max_long),
+        max_position=float(max_position),
+    )
+    summary = assert_portfolio_invariants(
+        weights,
+        max_gross=float(max_gross),
+        max_net=float(max_net),
+        max_short=float(max_short),
+        max_long=float(max_long),
+        max_position=float(max_position),
+    )
+    return weights, summary
 
 
 def select_top_k_with_sector_cap(gate_sorted_df, top_k, max_sector_frac,
@@ -349,41 +513,8 @@ class KalmanBetaFilter:
 # --- Semantic and Database Loaders ---
 
 def load_macro_features(macro_ttl_path: str):
-    """Read GDP, growth, inflation, trade, and interest rates per country from the macroeconomic graph."""
-    if not os.path.exists(macro_ttl_path):
-        print(f"[WARNING] Macroeconomic Turtle graph not found at {macro_ttl_path}. Using zero fallbacks.")
-        return pd.DataFrame(columns=["country", "gdp_usd", "gdp_growth_pct", "inflation_pct", "trade_pct", "interest_rate_pct"])
-
-    try:
-        from rdflib import Graph as RdfGraph, Namespace
-        g = RdfGraph()
-        g.parse(macro_ttl_path, format="turtle")
-        macro_onto = Namespace("http://bda.upc.edu/macro/ontology#")
-        macro_ent = Namespace("http://bda.upc.edu/macro/resource/")
-
-        rows = []
-        for s in set(g.subjects()):
-            if not str(s).startswith(str(macro_ent)):
-                continue
-            country = str(s).replace(str(macro_ent), "").replace("_", " ")
-            gdp = g.value(s, macro_onto.gdpUSD)
-            growth = g.value(s, macro_onto.gdpGrowthPercent)
-            inflation = g.value(s, macro_onto.inflationPercent)
-            trade = g.value(s, macro_onto.tradePercentOfGDP)
-            interest = g.value(s, macro_onto.interestRatePercent)
-            if gdp is not None or growth is not None or inflation is not None or trade is not None or interest is not None:
-                rows.append({
-                    "country": country,
-                    "gdp_usd": float(gdp) if gdp is not None else None,
-                    "gdp_growth_pct": float(growth) if growth is not None else None,
-                    "inflation_pct": float(inflation) if inflation is not None else None,
-                    "trade_pct": float(trade) if trade is not None else None,
-                    "interest_rate_pct": float(interest) if interest is not None else None,
-                })
-        return pd.DataFrame(rows)
-    except Exception as e:
-        print(f"[WARNING] Failed to parse RDF Macro TTL graph: {e}. Using empty fallbacks.")
-        return pd.DataFrame(columns=["country", "gdp_usd", "gdp_growth_pct", "inflation_pct", "trade_pct", "interest_rate_pct"])
+    """Load static macro features through the shared offline provider."""
+    return load_static_macro_features(macro_ttl_path)
 
 def fetch_company_metadata():
     """Fetch static sector, industry, market cap, and country info from historical databases."""
@@ -428,6 +559,8 @@ def compute_live_features(live_df, metadata_df, macro_df):
     df = live_df.sort_values(["ticker", "Date"]).reset_index(drop=True)
     
     df = df.merge(metadata_df, on="ticker", how="left")
+    # Current macro policy is a static offline TTL snapshot shared with training
+    # and backtests; it is not a point-in-time release feed.
     df = df.merge(macro_df, on="country", how="left")
     df = df.drop(columns=["country"], errors="ignore")
     
@@ -524,6 +657,64 @@ def compute_live_features(live_df, metadata_df, macro_df):
         
     return df
 
+
+def validate_model_artifact_schema(model_data):
+    """Validate the minimal best_model.pkl contract before live inference.
+
+    Older pickles do not carry the new metadata/manifest block, so this helper
+    only requires the operational keys needed to reproduce the feature matrix.
+    It raises ValueError with explicit missing/invalid keys instead of allowing
+    downstream KeyError or silent feature misalignment.
+    """
+    if not isinstance(model_data, dict):
+        raise ValueError("Model artifact must be a dict loaded from best_model.pkl.")
+
+    required_keys = {
+        "trained_models", "mix_models", "scaler", "pca",
+        "tabular_cols", "pca_cols", "company_embeddings",
+    }
+    missing = sorted(required_keys - set(model_data.keys()))
+    if missing:
+        raise ValueError(f"Model artifact missing required keys: {missing}")
+
+    if not isinstance(model_data["trained_models"], dict) or not model_data["trained_models"]:
+        raise ValueError("Model artifact key 'trained_models' must be a non-empty dict.")
+    column_seq_types = (list, tuple, pd.Index)
+
+    if not isinstance(model_data["mix_models"], (list, tuple)) or len(model_data["mix_models"]) == 0:
+        raise ValueError("Model artifact key 'mix_models' must be a non-empty list/tuple.")
+    if not isinstance(model_data["tabular_cols"], column_seq_types) or len(model_data["tabular_cols"]) == 0:
+        raise ValueError("Model artifact key 'tabular_cols' must be a non-empty list/tuple.")
+    if not isinstance(model_data["pca_cols"], column_seq_types) or len(model_data["pca_cols"]) == 0:
+        raise ValueError("Model artifact key 'pca_cols' must be a non-empty list/tuple.")
+    if not isinstance(model_data["company_embeddings"], dict) or not model_data["company_embeddings"]:
+        raise ValueError("Model artifact key 'company_embeddings' must be a non-empty dict.")
+    if not hasattr(model_data["pca"], "transform"):
+        raise ValueError("Model artifact key 'pca' must provide a transform(...) method.")
+    if not bool(model_data.get("cs_z_standardize", False)) and not hasattr(model_data["scaler"], "transform"):
+        raise ValueError("Model artifact key 'scaler' must provide a transform(...) method.")
+
+    missing_models = sorted(set(model_data["mix_models"]) - set(model_data["trained_models"].keys()))
+    if missing_models:
+        raise ValueError(f"Model artifact mix_models not present in trained_models: {missing_models}")
+
+    feature_cols = list(model_data["tabular_cols"]) + list(model_data["pca_cols"])
+    duplicate_cols = sorted({c for c in feature_cols if feature_cols.count(c) > 1})
+    if duplicate_cols:
+        raise ValueError(f"Model artifact has duplicate feature columns: {duplicate_cols}")
+
+
+def validate_required_columns(df, required_cols, context):
+    """Fail fast when an inference DataFrame does not match the trained schema."""
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        available = sorted(map(str, df.columns))
+        raise ValueError(
+            f"{context} schema mismatch: missing required columns {missing}. "
+            f"Available columns: {available}"
+        )
+
+
 # --- Core Trading Agent Class ---
 
 class BDATradingAgent:
@@ -536,6 +727,8 @@ class BDATradingAgent:
         self.tabular_cols = []
         self.pca_cols = []
         self.company_embeddings = {}
+        self.model_metadata = {}
+        self.cs_z_standardize = False
         self.hmm_probs = np.array([0.5, 0.5])
         self.hmm_state = 0
         self.kalman_betas = {}
@@ -564,19 +757,34 @@ class BDATradingAgent:
         with open(config.MODEL_PATH, "rb") as f:
             self.model_data = pickle.load(f)
 
+        validate_model_artifact_schema(self.model_data)
         self.trained_models = self.model_data["trained_models"]
-        self.mix_models = self.model_data["mix_models"]
+        self.mix_models = list(self.model_data["mix_models"])
         self.scaler = self.model_data["scaler"]
         self.pca = self.model_data["pca"]
-        self.tabular_cols = self.model_data["tabular_cols"]
-        self.pca_cols = self.model_data["pca_cols"]
+        self.tabular_cols = list(self.model_data["tabular_cols"])
+        self.pca_cols = list(self.model_data["pca_cols"])
         self.company_embeddings = self.model_data["company_embeddings"]
+        self.model_metadata = (
+            self.model_data.get("metadata")
+            or self.model_data.get("manifest")
+            or {}
+        )
         # Part-4 P3: when CS-Z standardisation was used at training time,
         # apply the same transform at inference (per-date z-score on the
         # live cross-section). Falls back to global scaler otherwise.
         self.cs_z_standardize = bool(self.model_data.get("cs_z_standardize", False))
+        if self.model_metadata:
+            expected_cols = self.model_metadata.get("feature_columns")
+            current_cols = self.tabular_cols + self.pca_cols
+            if expected_cols is not None and list(expected_cols) != current_cols:
+                raise ValueError(
+                    "Model artifact metadata feature_columns does not match "
+                    "tabular_cols + pca_cols."
+                )
         print(f"[Agent] Model successfully loaded. Base models: {self.mix_models}  "
-              f"cs_z_standardize={self.cs_z_standardize}")
+              f"cs_z_standardize={self.cs_z_standardize}  "
+              f"schema_version={self.model_metadata.get('artifact_schema_version', 'legacy')}")
 
     def check_market_regime(self, force_regime=None):
         """
@@ -721,8 +929,14 @@ class BDATradingAgent:
 
     def run_inference(self, price_history_df):
         """Performs feature calculations, PCA embedding projections, and Soft-Voting ensemble inference."""
+        validate_required_columns(
+            price_history_df,
+            ["ticker", "Date", "company_close", "company_volume"],
+            "price_history_df",
+        )
         metadata_df = fetch_company_metadata()
-        macro_df = load_macro_features(config.MACRO_KG_PATH)
+        latest_as_of = price_history_df["Date"].max()
+        macro_df = get_macro_features_for_date(latest_as_of, config.MACRO_KG_PATH)
 
         print("[Agent] Computing technical and macroeconomic features...")
         df_features = compute_live_features(price_history_df, metadata_df, macro_df)
@@ -784,6 +998,8 @@ class BDATradingAgent:
                 latest_df[c] = latest_df[c].fillna(0.0)
 
         # Scale features using standard scaling
+        validate_required_columns(latest_df, self.tabular_cols, "live tabular feature frame")
+        validate_required_columns(latest_df, self.pca_cols, "live embedding feature frame")
         X_tab = latest_df[self.tabular_cols].fillna(0).values.astype(np.float32)
         X_emb = latest_df[self.pca_cols].fillna(0).values.astype(np.float32)
         X_full = np.concatenate([X_tab, X_emb], axis=1)
@@ -970,7 +1186,8 @@ class BDATradingAgent:
                               TOP_K_HOLDINGS names, equal-weight (or pred_rank
                               proportional if EQUAL_WEIGHT_TOP_K=False).
           - regime_filtered : long/short tilt with raw_weight = pred_rank − 0.5,
-                              shorts disabled in bull regimes via the HMM gate.
+                              shorts disabled in bull regimes via the HMM gate,
+                              then clipped/scaled to configured exposure limits.
         """
         print(f"[Agent] Computing target allocations using '{strategy}' strategy "
               f"(pred_rank threshold = {config.CONFIDENCE_THRESHOLD})")
@@ -1050,10 +1267,9 @@ class BDATradingAgent:
 
         elif strategy == "regime_filtered":
             predictions_df = predictions_df.copy()
-            # Centre at 0.5 so a uniform random ranker produces zero weights
-            predictions_df["raw_weight"] = predictions_df["pred_rank"] - 0.5
-            
-            # Scale shorts using Kalman Beta
+            predictions_df["raw_weight"] = predictions_df["pred_rank"].astype(float) - 0.5
+
+            # Scale shorts using Kalman Beta before signal gating/borrow checks.
             def scale_short(row):
                 w = row["raw_weight"]
                 if w < 0:
@@ -1065,7 +1281,7 @@ class BDATradingAgent:
             
             predictions_df["raw_weight"] = predictions_df.apply(scale_short, axis=1)
             
-            # Apply confidence threshold triggers
+            # Apply confidence threshold triggers; bull regimes carry no shorts.
             longs = predictions_df[predictions_df["raw_weight"] >= 0.02].copy()
             if is_bull:
                 shorts = pd.DataFrame() # Suppress shorts in bull market
@@ -1112,14 +1328,29 @@ class BDATradingAgent:
             if longs.empty and shorts.empty:
                 print("[Agent] No candidates qualified for exposure. Holding 100% Cash.")
                 return target_weights
-                
+
+            # Size long and short books separately, then clip/scale the final
+            # signed book so gross/net/side/per-name invariants always hold.
             selected = pd.concat([longs, shorts])
-            total_abs_weight = selected["raw_weight"].abs().sum()
-            
-            if total_abs_weight > 0:
-                selected["target_weight"] = (selected["raw_weight"] / total_abs_weight) * config.TARGET_EXPOSURE
-                for _, row in selected.iterrows():
-                    target_weights[row["ticker"]] = row["target_weight"]
+            constrained_weights, exposure = build_regime_filtered_weights(
+                selected,
+                is_bull=is_bull,
+                target_exposure=getattr(config, "TARGET_EXPOSURE", 1.0),
+                confidence_threshold=0.02,
+                max_gross=getattr(config, "MAX_GROSS_EXPOSURE", 1.0),
+                max_net=getattr(config, "MAX_NET_EXPOSURE", 1.0),
+                max_short=getattr(config, "MAX_SHORT_EXPOSURE", 0.30),
+                max_long=getattr(config, "MAX_LONG_EXPOSURE", 1.0),
+                max_position=getattr(config, "MAX_POSITION_WEIGHT", 0.25),
+                apply_kalman_short_scaling=True,
+            )
+            if not constrained_weights:
+                print("[Agent] Exposure constraints left no tradable allocation. Holding 100% Cash.")
+                return target_weights
+            target_weights.update(constrained_weights)
+            print("[Agent] regime_filtered exposure: "
+                  f"long={exposure['long']:.2f} short={exposure['short']:.2f} "
+                  f"gross={exposure['gross']:.2f} net={exposure['net']:.2f}")
         else:
             raise ValueError(f"Unknown strategy code: {strategy}")
 

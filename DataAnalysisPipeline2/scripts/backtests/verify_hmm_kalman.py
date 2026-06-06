@@ -28,7 +28,7 @@ if PIPELINE_DIR not in sys.path:
     sys.path.append(PIPELINE_DIR)
 
 from trading_agent import config
-from trading_agent.bot import GaussianHMM, KalmanBetaFilter, compute_live_features, load_macro_features, fetch_company_metadata
+from trading_agent.bot import GaussianHMM, KalmanBetaFilter, compute_live_features, load_macro_features, fetch_company_metadata, build_regime_filtered_weights
 
 def calculate_metrics(portfolio_values):
     # Weekly returns
@@ -172,7 +172,7 @@ def main():
         emb_df["ticker"] = found_tickers
         friday_obs = friday_obs.merge(emb_df, on="ticker", how="inner")
         
-        X_tab = friday_obs[tabular_cols].fillna(0).values.astype(np.float32)
+        X_tab = friday_obs.reindex(columns=tabular_cols, fill_value=0).fillna(0).values.astype(np.float32)
         X_emb = friday_obs[pca_cols].fillna(0).values.astype(np.float32)
         X_full = np.concatenate([X_tab, X_emb], axis=1)
         X_full_s = scaler.transform(X_full)
@@ -184,7 +184,11 @@ def main():
             if m in trained_models:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", category=UserWarning)
-                    y_proba = trained_models[m].predict_proba(X_full_df)[:, 1]
+                    est = trained_models[m]
+                    if hasattr(est, "predict_proba"):
+                        y_proba = est.predict_proba(X_full_df)[:, 1]
+                    else:
+                        y_proba = est.predict(X_full_df)
                 model_probas.append(y_proba)
         
         friday_obs["pred_proba"] = np.mean(model_probas, axis=0)
@@ -229,22 +233,18 @@ def main():
                     ticker_returns[t] = (p1 - p0) / p0
 
         # --- A. STRATEGY 1: SMA50 Baseline ---
-        sma_raw = friday_obs[["ticker", "pred_proba"]].copy()
-        sma_raw["raw_weight"] = sma_raw["pred_proba"] - 0.5
-        
-        sma_longs = sma_raw[sma_raw["raw_weight"] >= 0.02].copy()
-        if sma_is_bull:
-            sma_shorts = pd.DataFrame()
-        else:
-            sma_shorts = sma_raw[sma_raw["raw_weight"] <= -0.02].copy()
-            
-        sma_selected = pd.concat([sma_longs, sma_shorts])
-        sma_abs_sum = sma_selected["raw_weight"].abs().sum()
-        
-        sma_weights = {}
-        if sma_abs_sum > 0:
-            sma_selected["target_weight"] = (sma_selected["raw_weight"] / sma_abs_sum) * config.TARGET_EXPOSURE
-            sma_weights = sma_selected.set_index("ticker")["target_weight"].to_dict()
+        sma_weights, _ = build_regime_filtered_weights(
+            friday_obs[["ticker", "pred_proba"]].copy(),
+            is_bull=sma_is_bull,
+            target_exposure=config.TARGET_EXPOSURE,
+            confidence_threshold=0.02,
+            max_gross=config.MAX_GROSS_EXPOSURE,
+            max_net=config.MAX_NET_EXPOSURE,
+            max_short=config.MAX_SHORT_EXPOSURE,
+            max_long=config.MAX_LONG_EXPOSURE,
+            max_position=config.MAX_POSITION_WEIGHT,
+            apply_kalman_short_scaling=False,
+        )
 
         # Compute SMA Strategy Weekly Return
         sma_ret = 0.0
@@ -257,30 +257,18 @@ def main():
         # --- B. STRATEGY 2: HMM + Kalman Upgraded ---
         hmm_raw = friday_obs[["ticker", "pred_proba"]].copy()
         hmm_raw["kalman_beta"] = hmm_raw["ticker"].map(ticker_betas).fillna(1.0)
-        hmm_raw["raw_weight"] = hmm_raw["pred_proba"] - 0.5
-        
-        # Kalman short scaling
-        def scale_short(row):
-            w = row["raw_weight"]
-            if w < 0:
-                beta = row["kalman_beta"]
-                return w / max(abs(beta), 0.5)
-            return w
-        hmm_raw["raw_weight"] = hmm_raw.apply(scale_short, axis=1)
-        
-        hmm_longs = hmm_raw[hmm_raw["raw_weight"] >= 0.02].copy()
-        if hmm_is_bull:
-            hmm_shorts = pd.DataFrame()
-        else:
-            hmm_shorts = hmm_raw[hmm_raw["raw_weight"] <= -0.02].copy()
-            
-        hmm_selected = pd.concat([hmm_longs, hmm_shorts])
-        hmm_abs_sum = hmm_selected["raw_weight"].abs().sum()
-        
-        hmm_weights = {}
-        if hmm_abs_sum > 0:
-            hmm_selected["target_weight"] = (hmm_selected["raw_weight"] / hmm_abs_sum) * config.TARGET_EXPOSURE
-            hmm_weights = hmm_selected.set_index("ticker")["target_weight"].to_dict()
+        hmm_weights, _ = build_regime_filtered_weights(
+            hmm_raw,
+            is_bull=hmm_is_bull,
+            target_exposure=config.TARGET_EXPOSURE,
+            confidence_threshold=0.02,
+            max_gross=config.MAX_GROSS_EXPOSURE,
+            max_net=config.MAX_NET_EXPOSURE,
+            max_short=config.MAX_SHORT_EXPOSURE,
+            max_long=config.MAX_LONG_EXPOSURE,
+            max_position=config.MAX_POSITION_WEIGHT,
+            apply_kalman_short_scaling=True,
+        )
 
         # Compute HMM Strategy Weekly Return
         hmm_ret = 0.0
