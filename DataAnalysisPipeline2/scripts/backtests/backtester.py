@@ -13,7 +13,7 @@ import pandas as pd
 
 # Define paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "ExploitationZone"))
+EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "..", "ExploitationZone"))
 PRED_PATH = os.path.join(EXPLOITATION_DIR, "test_predictions.parquet")
 OUTPUT_PLOT_PATH = os.path.join(EXPLOITATION_DIR, "backtest_results.png")
 

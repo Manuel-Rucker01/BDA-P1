@@ -19,7 +19,7 @@ import yfinance as yf
 # Paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PIPELINE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
-EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "ExploitationZone"))
+EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "..", "ExploitationZone"))
 MODEL_PATH = os.path.join(EXPLOITATION_DIR, "best_model.pkl")
 MACRO_KG_PATH = os.path.join(EXPLOITATION_DIR, "macroeconomic_graph.ttl")
 
