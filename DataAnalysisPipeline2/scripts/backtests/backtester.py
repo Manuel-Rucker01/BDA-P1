@@ -23,6 +23,9 @@ class PortfolioBacktester:
     Simulates portfolio rebalancing every 5 trading days under a 0.1% (10 bps) transaction fee constraint.
     """
     def __init__(self, df_preds, transaction_fee=0.001, initial_capital=100000.0):
+        df_preds = df_preds.copy()
+        if "pred_proba" not in df_preds.columns and "pred_rank" in df_preds.columns:
+            df_preds["pred_proba"] = df_preds["pred_rank"]
         self.df = df_preds.sort_values(["Date", "ticker"]).reset_index(drop=True)
         self.transaction_fee = transaction_fee
         self.initial_capital = initial_capital
