@@ -29,8 +29,7 @@ if ROOT_DIR not in sys.path:
     sys.path.append(ROOT_DIR)
 
 from trading_agent import config
-from trading_agent.bot import GaussianHMM, KalmanBetaFilter, compute_live_features, load_macro_features, fetch_company_metadata, select_top_k_with_sector_cap
-from ExploitationZone.geopolitical_macroeconomic import get_pit_macro_indicators
+from trading_agent.bot import GaussianHMM, KalmanBetaFilter, compute_live_features, load_macro_features, fetch_company_metadata, select_top_k_with_sector_cap, build_regime_filtered_weights
 
 _CS_Z = False  # set by main() after pickle load (Part-4 P3)
 
@@ -251,11 +250,8 @@ def run_backtest_for_subset(df_all_feat, df_full, gspc_df, friday_dates, company
         friday_obs = df_all_feat[(df_all_feat["Date"] == friday) & (df_all_feat["ticker"].isin(basket))].copy()
         friday_obs = filter_active_constituents(friday_obs, friday)
         
-        # Apply Upgrade 1: Point-in-Time ALFRED macroeconomic indicators
-        pit_macro = get_pit_macro_indicators(friday, api_key=config.FRED_API_KEY)
-        for col, val in pit_macro.items():
-            if col in friday_obs.columns:
-                friday_obs[col] = val
+        # Macro features already come from the shared static TTL provider. Do
+        # not overwrite them with network-backed PIT emulation in this track.
                 
         # Apply Upgrade 4: Rolling Time-Sliced Graph Snapshots
         adjusted_embeddings = get_rolling_vintage_embeddings(company_embeddings, friday, config.DB_PATH)
@@ -388,12 +384,18 @@ def run_backtest_for_subset(df_all_feat, df_full, gspc_df, friday_dates, company
             hmm_shorts = hmm_shorts[hmm_shorts["ticker"].isin(etb_tickers)].copy()
             
         hmm_selected = pd.concat([hmm_longs, hmm_shorts])
-        hmm_abs_sum = hmm_selected["raw_weight"].abs().sum()
-        
-        hmm_weights = {}
-        if hmm_abs_sum > 0:
-            hmm_selected["target_weight"] = (hmm_selected["raw_weight"] / hmm_abs_sum) * config.TARGET_EXPOSURE
-            hmm_weights = hmm_selected.set_index("ticker")["target_weight"].to_dict()
+        hmm_weights, _ = build_regime_filtered_weights(
+            hmm_selected,
+            is_bull=hmm_is_bull,
+            target_exposure=config.TARGET_EXPOSURE,
+            confidence_threshold=0.02,
+            max_gross=config.MAX_GROSS_EXPOSURE,
+            max_net=config.MAX_NET_EXPOSURE,
+            max_short=config.MAX_SHORT_EXPOSURE,
+            max_long=config.MAX_LONG_EXPOSURE,
+            max_position=config.MAX_POSITION_WEIGHT,
+            apply_kalman_short_scaling=True,
+        )
             
         # Upgrade 3: Square-Root Market Impact cost model
         cost_hmm = calculate_slippage_cost(equity_hmm, hmm_weights, actual_weights_hmm, friday_obs)

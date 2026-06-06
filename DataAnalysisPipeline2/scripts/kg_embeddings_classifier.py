@@ -41,9 +41,13 @@ Pipeline:
 """
 
 import os
+import json
 import random
+import subprocess
+import sys
 import time
 import warnings
+from datetime import datetime, timezone
 
 import duckdb
 import numpy as np
@@ -64,11 +68,17 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PIPELINE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "ExploitationZone"))
 FIN_KG_PATH = os.path.join(EXPLOITATION_DIR, "financial_knowledge_graph.ttl")
 MACRO_KG_PATH = os.path.join(EXPLOITATION_DIR, "macroeconomic_graph.ttl")
 DB_PATH = os.path.join(EXPLOITATION_DIR, "ExploitationZone.duckdb")
 EMBED_OUT_PATH = os.path.join(EXPLOITATION_DIR, "company_embeddings.parquet")
+
+if PIPELINE_DIR not in sys.path:
+    sys.path.append(PIPELINE_DIR)
+
+from features.macro_provider import load_static_macro_features
 
 # RotatE hyperparameters — tuned for ~10k structural triples / ~3k entities.
 EMBED_DIM = 128          # Complex dim — total real params per entity = 2 × dim
@@ -93,6 +103,8 @@ SEED = 42
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
+
+ARTIFACT_SCHEMA_VERSION = 1
 
 # ── Part-4 toggles (Priorities 3, 4, 5) ──────────────────────────────────────
 # P3: cross-sectional Z standardisation within Date — neutralises level effects
@@ -487,34 +499,8 @@ def load_observation_features(db_path: str):
 
 
 def load_macro_features(macro_ttl_path: str):
-    """Read GDP, growth, inflation, and trade per country from the macroeconomic graph and
-    return a DataFrame of features. Used to attach macroeconomic context to each ticker via its HQ country."""
-    from rdflib import Graph as RdfGraph, Namespace
-    g = RdfGraph()
-    g.parse(macro_ttl_path, format="turtle")
-    macro_onto = Namespace("http://bda.upc.edu/macro/ontology#")
-    macro_ent = Namespace("http://bda.upc.edu/macro/resource/")
-
-    rows = []
-    for s in set(g.subjects()):
-        if not str(s).startswith(str(macro_ent)):
-            continue
-        country = str(s).replace(str(macro_ent), "").replace("_", " ")
-        gdp = g.value(s, macro_onto.gdpUSD)
-        growth = g.value(s, macro_onto.gdpGrowthPercent)
-        inflation = g.value(s, macro_onto.inflationPercent)
-        trade = g.value(s, macro_onto.tradePercentOfGDP)
-        interest = g.value(s, macro_onto.interestRatePercent)
-        if gdp is not None or growth is not None or inflation is not None or trade is not None or interest is not None:
-            rows.append({
-                "country": country,
-                "gdp_usd": float(gdp) if gdp is not None else None,
-                "gdp_growth_pct": float(growth) if growth is not None else None,
-                "inflation_pct": float(inflation) if inflation is not None else None,
-                "trade_pct": float(trade) if trade is not None else None,
-                "interest_rate_pct": float(interest) if interest is not None else None,
-            })
-    return pd.DataFrame(rows)
+    """Load static macro features through the shared offline provider."""
+    return load_static_macro_features(macro_ttl_path)
 
 
 def attach_macro_features(df_obs, db_path: str, macro_ttl_path: str):
@@ -529,7 +515,8 @@ def attach_macro_features(df_obs, db_path: str, macro_ttl_path: str):
 
     df = df_obs.merge(companies, on="ticker", how="left")
     df = df.merge(macro, on="country", how="left")
-    # Drop the country string — categorical, encoded indirectly via gdp
+    # Static TTL macro values are intentionally shared with live/backtests until
+    # a PIT provider is available; the country string remains a join key only.
     df = df.drop(columns=["country"])
     return df
 
@@ -874,6 +861,97 @@ def make_stacking_model(base_models):
         cv=STACK_CV,
         n_jobs=-1,
     )
+
+
+def _safe_git_commit():
+    """Return the current git commit hash when available, otherwise None."""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..")),
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=2,
+        )
+        commit = proc.stdout.strip()
+        return commit or None
+    except Exception:
+        return None
+
+
+def _model_params(model):
+    """Extract JSON-friendly estimator parameters for artifact metadata."""
+    try:
+        params = model.get_params(deep=False)
+    except Exception:
+        params = {
+            k: v for k, v in getattr(model, "__dict__", {}).items()
+            if not k.startswith("_") and isinstance(v, (str, int, float, bool, type(None)))
+        }
+    clean = {}
+    for key, value in params.items():
+        if isinstance(value, (str, int, float, bool, type(None))):
+            clean[key] = value
+        elif isinstance(value, (list, tuple)):
+            clean[key] = [
+                x if isinstance(x, (str, int, float, bool, type(None))) else repr(x)
+                for x in value
+            ]
+        else:
+            clean[key] = repr(value)
+    return clean
+
+
+def build_model_manifest(*, trained_models, mix_models, tabular_cols, pca_cols,
+                         merged_df, selected_feature_set, selected_model_recipe):
+    """Build schema/recipe metadata persisted beside the trained model artifact."""
+    dates = pd.to_datetime(merged_df["Date"], errors="coerce") if "Date" in merged_df else pd.Series(dtype="datetime64[ns]")
+    date_min = dates.min()
+    date_max = dates.max()
+    feature_columns = list(tabular_cols or []) + list(pca_cols or [])
+    return {
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+        "created_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "git_commit": _safe_git_commit(),
+        "feature_columns": feature_columns,
+        "tabular_cols": list(tabular_cols or []),
+        "pca_cols": list(pca_cols or []),
+        "model_members": list(mix_models or []),
+        "available_models": sorted(list((trained_models or {}).keys())),
+        "cs_z_standardize": bool(CS_Z_STANDARDIZE),
+        "training_date_min": date_min.date().isoformat() if pd.notna(date_min) else None,
+        "training_date_max": date_max.date().isoformat() if pd.notna(date_max) else None,
+        "selected_feature_set": selected_feature_set,
+        "selected_model_recipe": selected_model_recipe,
+        "hyperparameters": {
+            "EMBED_DIM": EMBED_DIM,
+            "ROTATE_LR": ROTATE_LR,
+            "ROTATE_EPOCHS": ROTATE_EPOCHS,
+            "ROTATE_BATCH": ROTATE_BATCH,
+            "ROTATE_NEG_PER_POS": ROTATE_NEG_PER_POS,
+            "ROTATE_GAMMA": ROTATE_GAMMA,
+            "ROTATE_ADV_TEMP": ROTATE_ADV_TEMP,
+            "ROTATE_PATIENCE": ROTATE_PATIENCE,
+            "STACK_CV": STACK_CV,
+            "PCA_DIM": PCA_DIM,
+            "SEED": SEED,
+            "N_FOLDS": N_FOLDS,
+            "EMBARGO_DAYS": EMBARGO_DAYS,
+            "ENABLE_MLP": ENABLE_MLP,
+            "MLP_EPOCHS": MLP_EPOCHS,
+            "MLP_BATCH": MLP_BATCH,
+            "MLP_LR": MLP_LR,
+            "MLP_WD": MLP_WD,
+            "MLP_DROPOUT": MLP_DROPOUT,
+            "MLP_HIDDEN": MLP_HIDDEN,
+            "MLP_PATIENCE": MLP_PATIENCE,
+            "DIVERSE_CORR_THRESHOLD": DIVERSE_CORR_THRESHOLD,
+        },
+        "model_hyperparameters": {
+            name: _model_params(model) for name, model in (trained_models or {}).items()
+        },
+    }
 
 
 def fit_with_early_stopping(model, X_train_s, y_train, model_name, train_dates=None):
@@ -1424,6 +1502,22 @@ def evaluate_all(feature_sets, y_rank, y_ret, merged_df,
                     # function exported from this module.
                     "cs_z_standardize": CS_Z_STANDARDIZE,
                 }
+                deployed_recipe = (
+                    "SoftVote_Rank"
+                    if any(str(m).endswith("_Rank") for m in deployed_mix)
+                    else "SoftVote"
+                )
+                manifest = build_model_manifest(
+                    trained_models=base_models,
+                    mix_models=deployed_mix,
+                    tabular_cols=tabular_cols,
+                    pca_cols=pca_cols,
+                    merged_df=merged_df[train_mask].copy(),
+                    selected_feature_set=feat_name,
+                    selected_model_recipe=deployed_recipe,
+                )
+                last_fold_artefacts["metadata"] = manifest
+                last_fold_artefacts["manifest"] = manifest
 
     # ── Part 4 P5: diverse-ensemble selector ────────────────────────────────
     # Greedy pick: start from the highest-IC base model and walk down the
@@ -1696,6 +1790,14 @@ def evaluate_all(feature_sets, y_rank, y_ret, merged_df,
             print(f"[EXPORT] Saved last-fold artefacts to {best_model_path}")
         except Exception as e:
             print(f"[WARN] Could not pickle artefacts: {e}")
+
+        try:
+            manifest_path = os.path.join(EXPLOITATION_DIR, "best_model_manifest.json")
+            with open(manifest_path, "w") as f:
+                json.dump(last_fold_artefacts.get("manifest", {}), f, indent=2, sort_keys=True)
+            print(f"[EXPORT] Saved model manifest to {manifest_path}")
+        except Exception as e:
+            print(f"[WARN] Could not write model manifest: {e}")
 
     return summary, fold_df
 

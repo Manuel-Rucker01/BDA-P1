@@ -44,32 +44,12 @@ def compute_macd_signal(macd_series, span_signal=9):
     return macd_series.ewm(span=span_signal, adjust=False).mean()
 
 def load_macro_features(macro_ttl_path: str):
-    from rdflib import Graph as RdfGraph, Namespace
-    g = RdfGraph()
-    g.parse(macro_ttl_path, format="turtle")
-    macro_onto = Namespace("http://bda.upc.edu/macro/ontology#")
-    macro_ent = Namespace("http://bda.upc.edu/macro/resource/")
-
-    rows = []
-    for s in set(g.subjects()):
-        if not str(s).startswith(str(macro_ent)):
-            continue
-        country = str(s).replace(str(macro_ent), "").replace("_", " ")
-        gdp = g.value(s, macro_onto.gdpUSD)
-        growth = g.value(s, macro_onto.gdpGrowthPercent)
-        inflation = g.value(s, macro_onto.inflationPercent)
-        trade = g.value(s, macro_onto.tradePercentOfGDP)
-        interest = g.value(s, macro_onto.interestRatePercent)
-        if gdp is not None or growth is not None or inflation is not None or trade is not None or interest is not None:
-            rows.append({
-                "country": country,
-                "gdp_usd": float(gdp) if gdp is not None else None,
-                "gdp_growth_pct": float(growth) if growth is not None else None,
-                "inflation_pct": float(inflation) if inflation is not None else None,
-                "trade_pct": float(trade) if trade is not None else None,
-                "interest_rate_pct": float(interest) if interest is not None else None,
-            })
-    return pd.DataFrame(rows)
+    import sys
+    pipeline_dir = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
+    if pipeline_dir not in sys.path:
+        sys.path.append(pipeline_dir)
+    from features.macro_provider import load_static_macro_features
+    return load_static_macro_features(macro_ttl_path)
 
 def fetch_company_metadata():
     db_path = os.path.join(EXPLOITATION_DIR, "ExploitationZone.duckdb")

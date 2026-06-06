@@ -1,3 +1,12 @@
+"""Legacy, non-canonical portfolio backtester.
+
+This script predates the consolidated canonical backtest helpers in
+``scripts/backtests/common.py`` and intentionally preserves its original
+behavior for historical comparison.  New or hardened backtests should use the
+shared helper path for top-k selection, inverse-volatility sizing, and
+exposure/cost metrics.
+"""
+
 import os
 import numpy as np
 import pandas as pd
