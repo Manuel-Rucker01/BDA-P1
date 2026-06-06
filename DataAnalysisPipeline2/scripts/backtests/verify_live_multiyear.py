@@ -18,12 +18,16 @@ import pandas as pd
 import duckdb
 import yfinance as yf
 
+from pickle_compat import register_pickle_compat
+
 # Paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "..", "ExploitationZone"))
 MODEL_PATH = os.path.join(EXPLOITATION_DIR, "best_model.pkl")
 MACRO_KG_PATH = os.path.join(EXPLOITATION_DIR, "macroeconomic_graph.ttl")
 OUTPUT_PLOT_PATH = os.path.join(EXPLOITATION_DIR, "multiyear_rolling_performance.png")
+
+register_pickle_compat()
 
 # --- Helper Technical Indicators (matching pipeline exactly) ---
 
