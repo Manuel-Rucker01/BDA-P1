@@ -184,7 +184,11 @@ def main():
             if m in trained_models:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", category=UserWarning)
-                    y_proba = trained_models[m].predict_proba(X_full_df)[:, 1]
+                    est = trained_models[m]
+                    if hasattr(est, "predict_proba"):
+                        y_proba = est.predict_proba(X_full_df)[:, 1]
+                    else:
+                        y_proba = est.predict(X_full_df)
                 model_probas.append(y_proba)
         
         friday_obs["pred_proba"] = np.mean(model_probas, axis=0)

@@ -274,7 +274,11 @@ def main():
         model_probas = []
         for m in mix_models:
             if m in trained_models:
-                y_proba = trained_models[m].predict_proba(X_full_s)[:, 1]
+                est = trained_models[m]
+                if hasattr(est, "predict_proba"):
+                    y_proba = est.predict_proba(X_full_s)[:, 1]
+                else:
+                    y_proba = est.predict(X_full_s)
                 model_probas.append(y_proba)
         
         friday_obs["pred_proba"] = np.mean(model_probas, axis=0)
