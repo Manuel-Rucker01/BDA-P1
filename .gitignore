@@ -8,3 +8,4 @@ __pycache__.DS_Store
 # Dashboard runtime cache
 DataAnalysisPipeline2/trading_agent/agent_logs/dashboard_pending.parquet
 DataAnalysisPipeline2/dashboard/__pycache__/
+ExploitationZone/financial_knowledge_graph_pitsafe.ttl
