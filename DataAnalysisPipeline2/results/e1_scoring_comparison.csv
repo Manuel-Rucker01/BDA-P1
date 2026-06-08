@@ -1,0 +1,129 @@
+window,cadence,transform,metric,value
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,Buy & Hold,net_cum_return_pct,27.428541321988888
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,Buy & Hold,sharpe,0.7675874677952684
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,baseline,n_rebalances,86.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,baseline,net_cum_return_pct,12.463613312056005
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,baseline,sharpe,0.42593332931551986
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,baseline,max_drawdown_pct,-17.83153231135572
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,baseline,information_ratio_vs_bh,-0.6599427121408284
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,baseline,avg_turnover,0.41279095275151384
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,sector_neutral (blend=0.0),n_rebalances,86.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,sector_neutral (blend=0.0),net_cum_return_pct,31.221798919299925
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,sector_neutral (blend=0.0),sharpe,0.9161856821986962
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,sector_neutral (blend=0.0),max_drawdown_pct,-15.262821638493337
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,sector_neutral (blend=0.0),information_ratio_vs_bh,0.12325499518714188
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,sector_neutral (blend=0.0),avg_turnover,0.45256477272928897
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,sector_neutral (blend=0.5),n_rebalances,86.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,sector_neutral (blend=0.5),net_cum_return_pct,34.75324186295713
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,sector_neutral (blend=0.5),sharpe,0.9257695289017148
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,sector_neutral (blend=0.5),max_drawdown_pct,-15.208204436342838
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,sector_neutral (blend=0.5),information_ratio_vs_bh,0.28847051242607963
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,sector_neutral (blend=0.5),avg_turnover,0.4506763982773783
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,beta_adjusted (lam=0.5),n_rebalances,86.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,beta_adjusted (lam=0.5),net_cum_return_pct,25.78170765589159
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,beta_adjusted (lam=0.5),sharpe,0.8700057524728454
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,beta_adjusted (lam=0.5),max_drawdown_pct,-18.162531257664842
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,beta_adjusted (lam=0.5),information_ratio_vs_bh,-0.1337235535558569
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,beta_adjusted (lam=0.5),avg_turnover,0.3616500408088872
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,vol_adjusted (lam=0.5),n_rebalances,86.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,vol_adjusted (lam=0.5),net_cum_return_pct,26.85474512208488
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,vol_adjusted (lam=0.5),sharpe,0.9335802818957921
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,vol_adjusted (lam=0.5),max_drawdown_pct,-15.807891584858258
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,vol_adjusted (lam=0.5),information_ratio_vs_bh,-0.10197244344581488
+Pre-Training OOS (2023-07-01 to 2025-03-01),weekly,vol_adjusted (lam=0.5),avg_turnover,0.3147702119859728
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,Buy & Hold,net_cum_return_pct,26.287452654291428
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,Buy & Hold,sharpe,0.6903541344687366
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,baseline,n_rebalances,20.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,baseline,net_cum_return_pct,34.09811842521205
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,baseline,sharpe,0.8758652000477876
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,baseline,max_drawdown_pct,-14.609467732196116
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,baseline,information_ratio_vs_bh,0.3080911363856589
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,baseline,avg_turnover,0.7797965859531103
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,sector_neutral (blend=0.0),n_rebalances,20.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,sector_neutral (blend=0.0),net_cum_return_pct,21.48876658876945
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,sector_neutral (blend=0.0),sharpe,0.6594058486516451
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,sector_neutral (blend=0.0),max_drawdown_pct,-14.939597449031245
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,sector_neutral (blend=0.0),information_ratio_vs_bh,-0.3197931905746626
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,sector_neutral (blend=0.0),avg_turnover,0.6979769446608348
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,sector_neutral (blend=0.5),n_rebalances,20.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,sector_neutral (blend=0.5),net_cum_return_pct,31.133855985239645
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,sector_neutral (blend=0.5),sharpe,0.8575868882616433
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,sector_neutral (blend=0.5),max_drawdown_pct,-14.44631905753411
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,sector_neutral (blend=0.5),information_ratio_vs_bh,0.19195675737917775
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,sector_neutral (blend=0.5),avg_turnover,0.7408334529679269
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,beta_adjusted (lam=0.5),n_rebalances,20.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,beta_adjusted (lam=0.5),net_cum_return_pct,23.95558340153388
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,beta_adjusted (lam=0.5),sharpe,0.7946285671398639
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,beta_adjusted (lam=0.5),max_drawdown_pct,-14.217813242942883
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,beta_adjusted (lam=0.5),information_ratio_vs_bh,-0.1847460874865524
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,beta_adjusted (lam=0.5),avg_turnover,0.6044557742930713
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,vol_adjusted (lam=0.5),n_rebalances,20.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,vol_adjusted (lam=0.5),net_cum_return_pct,26.08105847135472
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,vol_adjusted (lam=0.5),sharpe,0.8395148825188489
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,vol_adjusted (lam=0.5),max_drawdown_pct,-15.417343746275947
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,vol_adjusted (lam=0.5),information_ratio_vs_bh,-0.09413045746704503
+Pre-Training OOS (2023-07-01 to 2025-03-01),monthly,vol_adjusted (lam=0.5),avg_turnover,0.5644920130092692
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,Buy & Hold,net_cum_return_pct,24.183412190984946
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,Buy & Hold,sharpe,4.0493757958168235
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,baseline,n_rebalances,8.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,baseline,net_cum_return_pct,20.305622274680754
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,baseline,sharpe,3.1016765102408286
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,baseline,max_drawdown_pct,-3.6835917891216012
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,baseline,information_ratio_vs_bh,-1.5653110514762392
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,baseline,avg_turnover,0.4616055002021344
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,sector_neutral (blend=0.0),n_rebalances,8.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,sector_neutral (blend=0.0),net_cum_return_pct,17.023204018095367
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,sector_neutral (blend=0.0),sharpe,3.4440261569084
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,sector_neutral (blend=0.0),max_drawdown_pct,-2.1617155242928234
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,sector_neutral (blend=0.0),information_ratio_vs_bh,-3.79013452146028
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,sector_neutral (blend=0.0),avg_turnover,0.49897429455957043
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,sector_neutral (blend=0.5),n_rebalances,8.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,sector_neutral (blend=0.5),net_cum_return_pct,16.53857472506681
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,sector_neutral (blend=0.5),sharpe,3.2012440520080996
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,sector_neutral (blend=0.5),max_drawdown_pct,-2.564698000579083
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,sector_neutral (blend=0.5),information_ratio_vs_bh,-4.698046003334747
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,sector_neutral (blend=0.5),avg_turnover,0.5071938518954712
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,beta_adjusted (lam=0.5),n_rebalances,8.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,beta_adjusted (lam=0.5),net_cum_return_pct,12.086423586343917
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,beta_adjusted (lam=0.5),sharpe,3.4241430330252594
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,beta_adjusted (lam=0.5),max_drawdown_pct,-1.8901788634198224
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,beta_adjusted (lam=0.5),information_ratio_vs_bh,-4.681266107727565
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,beta_adjusted (lam=0.5),avg_turnover,0.3718432787675672
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,vol_adjusted (lam=0.5),n_rebalances,8.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,vol_adjusted (lam=0.5),net_cum_return_pct,11.69405582799036
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,vol_adjusted (lam=0.5),sharpe,2.961043018513793
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,vol_adjusted (lam=0.5),max_drawdown_pct,-2.1166249580581455
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,vol_adjusted (lam=0.5),information_ratio_vs_bh,-5.431114686246337
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),weekly,vol_adjusted (lam=0.5),avg_turnover,0.4435799091346602
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,Buy & Hold,net_cum_return_pct,24.94899312404048
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,Buy & Hold,sharpe,2.7792427328846934
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,baseline,n_rebalances,3.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,baseline,net_cum_return_pct,22.81690579799568
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,baseline,sharpe,3.5610367776311547
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,baseline,max_drawdown_pct,-0.02432035100755622
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,baseline,information_ratio_vs_bh,-0.6493735340007419
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,baseline,avg_turnover,0.6312203424852537
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,sector_neutral (blend=0.0),n_rebalances,3.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,sector_neutral (blend=0.0),net_cum_return_pct,19.326902117948666
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,sector_neutral (blend=0.0),sharpe,2.8845955127734735
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,sector_neutral (blend=0.0),max_drawdown_pct,-0.011527024948869499
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,sector_neutral (blend=0.0),information_ratio_vs_bh,-2.439152668995484
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,sector_neutral (blend=0.0),avg_turnover,0.5841090276725321
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,sector_neutral (blend=0.5),n_rebalances,3.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,sector_neutral (blend=0.5),net_cum_return_pct,19.080119844945983
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,sector_neutral (blend=0.5),sharpe,3.3053085841599135
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,sector_neutral (blend=0.5),max_drawdown_pct,-0.014503832367745726
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,sector_neutral (blend=0.5),information_ratio_vs_bh,-1.6606107075429484
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,sector_neutral (blend=0.5),avg_turnover,0.6997544381985993
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,beta_adjusted (lam=0.5),n_rebalances,3.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,beta_adjusted (lam=0.5),net_cum_return_pct,11.128153998075195
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,beta_adjusted (lam=0.5),sharpe,2.8561073169538207
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,beta_adjusted (lam=0.5),max_drawdown_pct,-0.021291202453560077
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,beta_adjusted (lam=0.5),information_ratio_vs_bh,-2.716101984443809
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,beta_adjusted (lam=0.5),avg_turnover,0.6807299119507828
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,vol_adjusted (lam=0.5),n_rebalances,3.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,vol_adjusted (lam=0.5),net_cum_return_pct,12.974218005975292
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,vol_adjusted (lam=0.5),sharpe,3.040351417362574
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,vol_adjusted (lam=0.5),max_drawdown_pct,-0.019947968795679262
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,vol_adjusted (lam=0.5),information_ratio_vs_bh,-2.5132625061385636
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),monthly,vol_adjusted (lam=0.5),avg_turnover,0.6589206486455979
