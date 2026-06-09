@@ -63,6 +63,7 @@ let POLL_TIMER = null;
 $("#btn-run").addEventListener("click", async () => {
   $("#btn-run").disabled = true;
   $("#proposal-card").classList.add("hidden");
+  $("#tradingview-card").classList.add("hidden");
   $("#execute-result").innerHTML = "";
   $("#run-progress").classList.remove("hidden");
   $("#run-stage").textContent = "Starting…";
@@ -158,6 +159,47 @@ $("#btn-execute").addEventListener("click", async () => {
     toast(r.error || "Execution failed.", "err");
   }
 });
+
+// ─────────────────────────── TradingView export ───────────────────────────
+$("#btn-tv-export").addEventListener("click", async () => {
+  if (!CURRENT_JOB) {
+    toast("Run the pipeline first.", "err");
+    return;
+  }
+  $("#btn-tv-export").disabled = true;
+  try {
+    const pkg = await api(`/api/tradingview/package/${CURRENT_JOB}`);
+    if (!pkg.ok) {
+      toast(pkg.error || "Could not build TradingView package.", "err");
+      return;
+    }
+    renderTradingViewPackage(pkg);
+    toast("TradingView export package ready.", "ok");
+  } finally {
+    $("#btn-tv-export").disabled = false;
+  }
+});
+
+function renderTradingViewPackage(pkg) {
+  const m = pkg.metadata || {};
+  $("#tradingview-meta").innerHTML = `
+    <span class="meta-chip">Holdings <b>${m.n_holdings || 0}</b></span>
+    <span class="meta-chip">Strategy <b>${m.strategy || "—"}</b></span>
+    <span class="meta-chip">Exchange prefix <b>${m.exchange_prefix || "NASDAQ"}</b></span>`;
+
+  const artifacts = pkg.artifacts || {};
+  $("#tv-watchlist").value = artifacts.watchlist || "";
+  $("#tv-orders").value = artifacts.orders_csv || "";
+  $("#tv-webhooks").value = artifacts.webhook_json || "";
+  $("#tv-pine").value = artifacts.pine_script || "";
+
+  const base = `/api/tradingview/download/${CURRENT_JOB}`;
+  $("#dl-watchlist").href = `${base}/watchlist`;
+  $("#dl-orders").href = `${base}/orders_csv`;
+  $("#dl-webhooks").href = `${base}/webhook_json`;
+  $("#dl-pine").href = `${base}/pine_script`;
+  $("#tradingview-card").classList.remove("hidden");
+}
 
 // ─────────────────────────── portfolio ───────────────────────────
 $("#btn-refresh-portfolio").addEventListener("click", loadPortfolio);
