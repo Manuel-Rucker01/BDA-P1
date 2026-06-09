@@ -70,7 +70,12 @@ warnings.filterwarnings("ignore", category=UserWarning)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PIPELINE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "ExploitationZone"))
-FIN_KG_PATH = os.path.join(EXPLOITATION_DIR, "financial_knowledge_graph.ttl")
+# FIN_KG_PATH is env-overridable so a candidate run can train embeddings from a
+# PIT-safe graph (e.g. financial_knowledge_graph_pitsafe.ttl) without touching
+# the production graph. Default = production graph (unchanged behavior).
+FIN_KG_PATH = os.environ.get(
+    "FIN_KG_PATH", os.path.join(EXPLOITATION_DIR, "financial_knowledge_graph.ttl")
+)
 MACRO_KG_PATH = os.path.join(EXPLOITATION_DIR, "macroeconomic_graph.ttl")
 DB_PATH = os.path.join(EXPLOITATION_DIR, "ExploitationZone.duckdb")
 EMBED_OUT_PATH = os.path.join(EXPLOITATION_DIR, "company_embeddings.parquet")
