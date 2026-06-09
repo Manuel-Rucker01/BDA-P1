@@ -280,9 +280,13 @@ def main():
     # News augmentation per model's needs (union of all Fridays in windows).
     all_fridays = sorted({d for (s, e) in windows.values()
                           for d in friday_dates if s <= d <= e})
+    # FULLUNIV_NO_NEWS=1 skips the (very slow on ~1900 names) as-of news build;
+    # missing news_* cols are then zero-filled by the downstream reindex. This is
+    # a fast confirmatory full-universe read (news coverage is sparse anyway).
+    _no_news = os.environ.get("FULLUNIV_NO_NEWS", "0") == "1"
     feat_by_model = {}
     for mname, M in models.items():
-        if any(c.startswith("news_") for c in M["tabular_cols"]):
+        if (not _no_news) and any(c.startswith("news_") for c in M["tabular_cols"]):
             print(f"[News] building as-of news features for {mname} "
                   f"({len(all_fridays)} Fridays)... (full universe, may be slow)")
             feat_by_model[mname] = augment_with_news(df_all_feat, all_fridays, M["tabular_cols"])
