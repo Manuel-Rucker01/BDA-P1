@@ -82,7 +82,42 @@
           <button id="btn-execute" class="btn btn-danger">⚡ Send Orders to Alpaca</button>
           <span class="hint">Submits this exact book to your Alpaca account.</span>
         </div>
+        <div class="execute-row">
+          <button id="btn-tv-export" class="btn btn-primary">📈 Export for TradingView</button>
+          <span class="hint">Creates watchlist, order CSV, webhook JSON, and Pine helper artifacts for review/manual execution.</span>
+        </div>
         <div id="execute-result"></div>
+      </div>
+
+      <div id="tradingview-card" class="card hidden">
+        <div class="proposal-head">
+          <h2>TradingView Export Package</h2>
+          <div id="tradingview-meta" class="meta-row"></div>
+        </div>
+        <p class="hint">
+          TradingView retail accounts do not provide a direct order-placement API to this dashboard.
+          Use these artifacts to import symbols, review target weights, configure alert webhooks, or place trades manually in a connected broker.
+        </p>
+        <div class="artifact-actions">
+          <a id="dl-watchlist" class="btn" href="#" download>Download Watchlist</a>
+          <a id="dl-orders" class="btn" href="#" download>Download Order CSV</a>
+          <a id="dl-webhooks" class="btn" href="#" download>Download Webhook JSON</a>
+          <a id="dl-pine" class="btn" href="#" download>Download Pine Helper</a>
+        </div>
+        <div class="artifact-grid">
+          <label>Watchlist symbols
+            <textarea id="tv-watchlist" readonly></textarea>
+          </label>
+          <label>Order-ticket CSV
+            <textarea id="tv-orders" readonly></textarea>
+          </label>
+          <label>Webhook alert JSON
+            <textarea id="tv-webhooks" readonly></textarea>
+          </label>
+          <label>Pine Script helper
+            <textarea id="tv-pine" readonly></textarea>
+          </label>
+        </div>
       </div>
     </section>
 
@@ -145,6 +180,7 @@
             <li><b>Regime-filtered L/S</b>: adjusts long/short exposure depending on detected market regime (bull/bear).</li>
           </ul>
         </p>
+        <p><b>TradingView mode</b>: TradingView accounts can import watchlists and use alerts/webhooks, but they do not expose a direct retail order API to this dashboard. The TradingView export package is designed for review, manual execution, or your own webhook automation endpoint.</p>
         <p><b>Important:</b> This is a tool for research and paper trading. It is <i>not</i> investment advice. Models can be wrong; backtests may not represent live results. Use small sizes and paper accounts first.</p>
       </div>
 

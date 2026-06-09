@@ -26,7 +26,7 @@ from __future__ import annotations
 import os
 import json
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 
 try:
     from . import pipeline_service as svc
@@ -100,6 +100,27 @@ def api_execute():
     if not job_id:
         return jsonify({"ok": False, "error": "Missing job_id."}), 400
     return jsonify(svc.execute(job_id))
+
+
+@app.route("/api/tradingview/package/<job_id>")
+def api_tradingview_package(job_id):
+    exchange = request.args.get("exchange", "NASDAQ")
+    return jsonify(svc.get_tradingview_package(job_id, exchange_prefix=exchange))
+
+
+@app.route("/api/tradingview/download/<job_id>/<artifact>")
+def api_tradingview_download(job_id, artifact):
+    exchange = request.args.get("exchange", "NASDAQ")
+    try:
+        content, mime, filename = svc.get_tradingview_artifact(
+            job_id, artifact, exchange_prefix=exchange)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    return Response(
+        content,
+        mimetype=mime,
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @app.route("/api/portfolio")

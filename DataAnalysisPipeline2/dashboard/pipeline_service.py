@@ -36,6 +36,7 @@ import pandas as pd
 try:  # package style: python -m DataAnalysisPipeline2.dashboard.app
     from ..trading_agent.bot import BDATradingAgent
     from ..trading_agent import config
+    from .tradingview_service import artifact_payload, build_tradingview_package
 except ImportError:  # script style: python app.py from the dashboard dir
     import sys
     _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -46,6 +47,10 @@ except ImportError:  # script style: python app.py from the dashboard dir
             sys.path.insert(0, p)
     from DataAnalysisPipeline2.trading_agent.bot import BDATradingAgent
     from DataAnalysisPipeline2.trading_agent import config
+    from DataAnalysisPipeline2.dashboard.tradingview_service import (
+        artifact_payload,
+        build_tradingview_package,
+    )
 
 
 _AGENT_LOCK = threading.Lock()
@@ -292,6 +297,27 @@ def execute(job_id: str) -> dict:
         return {"ok": False, "error": f"{e}", "traceback": traceback.format_exc()}
 
 
+def get_tradingview_package(job_id: str, exchange_prefix: str = "NASDAQ") -> dict:
+    """Return TradingView-compatible artifacts for a completed proposal."""
+    with _JOBS_LOCK:
+        job = _JOBS.get(job_id)
+        if job is None:
+            return {"ok": False, "error": "Unknown job id."}
+        if job.get("status") != "done":
+            return {"ok": False, "error": f"Job not ready (status={job.get('status')})."}
+        result = job.get("result") or {}
+    return build_tradingview_package(job_id, result, exchange_prefix=exchange_prefix)
+
+
+def get_tradingview_artifact(job_id: str, artifact: str,
+                             exchange_prefix: str = "NASDAQ") -> tuple[str, str, str]:
+    """Return a downloadable TradingView artifact for a completed proposal."""
+    package = get_tradingview_package(job_id, exchange_prefix=exchange_prefix)
+    if not package.get("ok"):
+        raise ValueError(package.get("error", "Could not build TradingView package."))
+    return artifact_payload(package, artifact)
+
+
 def _persist_attribution_state(agent, prices_df, weights):
     """Mirror run.py's post-rebalance attribution + last_weights.json write."""
     try:
@@ -471,6 +497,7 @@ def server_status() -> dict:
         "ok": True,
         "model_loaded": _AGENT is not None,
         "alpaca_configured": bool(config.ALPACA_API_KEY and config.ALPACA_SECRET_KEY),
+        "tradingview_export_available": True,
         "paper_trading": config.ALPACA_PAPER_TRADING,
         "alpaca_endpoint": config.ALPACA_URL,
         "defaults": {
