@@ -1,0 +1,4 @@
+# Dashboard-only extras. The dashboard reuses the trading agent, so you also
+# need the agent's own deps (../trading_agent/requirements.txt) and the model
+# stack (torch, scikit-learn, catboost, lightgbm, duckdb, yfinance, alpaca-py).
+flask>=3.0

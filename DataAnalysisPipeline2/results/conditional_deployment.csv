@@ -1,0 +1,49 @@
+window,universe,variant,metric,value
+Post-Training OOS (clean),high_alpha20,candidate/UNCONDITIONAL top-K,net_cum,22.508093977403444
+Post-Training OOS (clean),high_alpha20,candidate/UNCONDITIONAL top-K,net_sharpe,5.280492556047229
+Post-Training OOS (clean),high_alpha20,candidate/UNCONDITIONAL top-K,max_dd,-0.798774593237779
+Post-Training OOS (clean),high_alpha20,candidate/UNCONDITIONAL top-K,ir_bh,-0.7499042451092454
+Post-Training OOS (clean),high_alpha20,candidate/UNCONDITIONAL top-K,avg_turnover,0.5823982162951566
+Post-Training OOS (clean),high_alpha20,candidate/UNCONDITIONAL top-K,hit_rate,0.75
+Post-Training OOS (clean),high_alpha20,candidate/UNCONDITIONAL top-K,n_rebalances,8.0
+Post-Training OOS (clean),high_alpha20,candidate/UNCONDITIONAL top-K,empty_dates,0.0
+Post-Training OOS (clean),high_alpha20,candidate/CONDITIONAL top-K,net_cum,16.40115982538864
+Post-Training OOS (clean),high_alpha20,candidate/CONDITIONAL top-K,net_sharpe,4.183182713683492
+Post-Training OOS (clean),high_alpha20,candidate/CONDITIONAL top-K,max_dd,-1.4997982096029168
+Post-Training OOS (clean),high_alpha20,candidate/CONDITIONAL top-K,ir_bh,-3.1840544258434016
+Post-Training OOS (clean),high_alpha20,candidate/CONDITIONAL top-K,avg_turnover,0.6172673613611739
+Post-Training OOS (clean),high_alpha20,candidate/CONDITIONAL top-K,hit_rate,0.625
+Post-Training OOS (clean),high_alpha20,candidate/CONDITIONAL top-K,n_rebalances,8.0
+Post-Training OOS (clean),high_alpha20,candidate/CONDITIONAL top-K,empty_dates,0.0
+Post-Training OOS (clean),high_alpha20,reference/EW-B&H,net_cum,24.183412190984946
+Post-Training OOS (clean),high_alpha20,reference/EW-B&H,net_sharpe,4.0493757958168235
+Post-Training OOS (clean),high_alpha20,reference/EW-B&H,max_dd,-1.6519872437639023
+Post-Training OOS (clean),high_alpha20,reference/EW-B&H,ir_bh,
+Post-Training OOS (clean),high_alpha20,reference/EW-B&H,avg_turnover,0.0
+Post-Training OOS (clean),high_alpha20,reference/EW-B&H,hit_rate,0.5
+Post-Training OOS (clean),high_alpha20,reference/EW-B&H,n_rebalances,
+Post-Training OOS (clean),high_alpha20,reference/EW-B&H,empty_dates,
+Pre-Training OOS,high_alpha20,candidate/UNCONDITIONAL top-K,net_cum,17.96372865700654
+Pre-Training OOS,high_alpha20,candidate/UNCONDITIONAL top-K,net_sharpe,0.840202063949735
+Pre-Training OOS,high_alpha20,candidate/UNCONDITIONAL top-K,max_dd,-12.979504541705221
+Pre-Training OOS,high_alpha20,candidate/UNCONDITIONAL top-K,ir_bh,0.7971023125501813
+Pre-Training OOS,high_alpha20,candidate/UNCONDITIONAL top-K,avg_turnover,0.579720112259352
+Pre-Training OOS,high_alpha20,candidate/UNCONDITIONAL top-K,hit_rate,0.5333333333333333
+Pre-Training OOS,high_alpha20,candidate/UNCONDITIONAL top-K,n_rebalances,60.0
+Pre-Training OOS,high_alpha20,candidate/UNCONDITIONAL top-K,empty_dates,0.0
+Pre-Training OOS,high_alpha20,candidate/CONDITIONAL top-K,net_cum,-0.10654832685087967
+Pre-Training OOS,high_alpha20,candidate/CONDITIONAL top-K,net_sharpe,0.08696520460882018
+Pre-Training OOS,high_alpha20,candidate/CONDITIONAL top-K,max_dd,-16.118282845940158
+Pre-Training OOS,high_alpha20,candidate/CONDITIONAL top-K,ir_bh,-0.4069671693440657
+Pre-Training OOS,high_alpha20,candidate/CONDITIONAL top-K,avg_turnover,0.35302455001762645
+Pre-Training OOS,high_alpha20,candidate/CONDITIONAL top-K,hit_rate,0.48333333333333334
+Pre-Training OOS,high_alpha20,candidate/CONDITIONAL top-K,n_rebalances,60.0
+Pre-Training OOS,high_alpha20,candidate/CONDITIONAL top-K,empty_dates,0.0
+Pre-Training OOS,high_alpha20,reference/EW-B&H,net_cum,4.98301512603699
+Pre-Training OOS,high_alpha20,reference/EW-B&H,net_sharpe,0.306460400726041
+Pre-Training OOS,high_alpha20,reference/EW-B&H,max_dd,-12.58189766575882
+Pre-Training OOS,high_alpha20,reference/EW-B&H,ir_bh,
+Pre-Training OOS,high_alpha20,reference/EW-B&H,avg_turnover,0.0
+Pre-Training OOS,high_alpha20,reference/EW-B&H,hit_rate,0.5166666666666667
+Pre-Training OOS,high_alpha20,reference/EW-B&H,n_rebalances,
+Pre-Training OOS,high_alpha20,reference/EW-B&H,empty_dates,

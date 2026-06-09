@@ -41,9 +41,13 @@ Pipeline:
 """
 
 import os
+import json
 import random
+import subprocess
+import sys
 import time
 import warnings
+from datetime import datetime, timezone
 
 import duckdb
 import numpy as np
@@ -64,11 +68,50 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PIPELINE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "ExploitationZone"))
-FIN_KG_PATH = os.path.join(EXPLOITATION_DIR, "financial_knowledge_graph.ttl")
+# FIN_KG_PATH is env-overridable so a candidate run can train embeddings from a
+# PIT-safe graph (e.g. financial_knowledge_graph_pitsafe.ttl) without touching
+# the production graph. Default = production graph (unchanged behavior).
+FIN_KG_PATH = os.environ.get(
+    "FIN_KG_PATH", os.path.join(EXPLOITATION_DIR, "financial_knowledge_graph.ttl")
+)
 MACRO_KG_PATH = os.path.join(EXPLOITATION_DIR, "macroeconomic_graph.ttl")
 DB_PATH = os.path.join(EXPLOITATION_DIR, "ExploitationZone.duckdb")
 EMBED_OUT_PATH = os.path.join(EXPLOITATION_DIR, "company_embeddings.parquet")
+
+# ── Candidate-isolated output paths (reversible safety net) ───────────────────
+# When CANDIDATE_TAG is non-empty, EVERY artifact this script writes into
+# EXPLOITATION_DIR gets the tag inserted before its extension
+# (e.g. best_model.pkl -> best_model_<tag>.pkl). This guarantees a candidate
+# retrain NEVER overwrites the production artifacts. When empty (the default),
+# behavior is byte-for-byte unchanged. The tagged embeddings file is used for
+# BOTH the read-if-exists cache and the write, so a candidate run trains fresh
+# candidate embeddings without touching production company_embeddings.parquet.
+CANDIDATE_TAG = os.environ.get("CANDIDATE_TAG", "")
+
+
+def _out(path):
+    """Route an output path through the CANDIDATE_TAG isolation.
+
+    If CANDIDATE_TAG is empty, returns `path` unchanged (byte-for-byte default
+    behavior). Otherwise inserts `_<tag>` before the file extension, so
+    `.../best_model.pkl` becomes `.../best_model_<tag>.pkl`.
+    """
+    if not CANDIDATE_TAG:
+        return path
+    root, ext = os.path.splitext(path)
+    return f"{root}_{CANDIDATE_TAG}{ext}"
+
+
+# Tagged read/write path for the company embeddings. Production
+# company_embeddings.parquet is never touched when CANDIDATE_TAG is set.
+EMBED_PATH = _out(EMBED_OUT_PATH)
+
+if PIPELINE_DIR not in sys.path:
+    sys.path.append(PIPELINE_DIR)
+
+from features.macro_provider import load_static_macro_features
 
 # RotatE hyperparameters — tuned for ~10k structural triples / ~3k entities.
 EMBED_DIM = 128          # Complex dim — total real params per entity = 2 × dim
@@ -94,6 +137,8 @@ random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
+ARTIFACT_SCHEMA_VERSION = 1
+
 # ── Part-4 toggles (Priorities 3, 4, 5) ──────────────────────────────────────
 # P3: cross-sectional Z standardisation within Date — neutralises level effects
 #     across the cross-section so the model has to learn relative ranking
@@ -112,6 +157,24 @@ MLP_PATIENCE = 8
 # P5: diverse-ensemble selection threshold on OOF Pearson correlation.
 #     Pairs above this threshold are considered redundant.
 DIVERSE_CORR_THRESHOLD = float(os.environ.get("DIVERSE_CORR_THRESHOLD", "0.85"))
+
+# ── Candidate-retrain experiment flags (reversible; default = unchanged) ──────
+# TARGET_MODE selects what cross-sectional rank the model regresses:
+#   "raw"          -> target_30d_rank exactly as today (DEFAULT).
+#   "market_resid" -> residual = target_30d_return - cross-sectional MEAN
+#                     target_30d_return over all names on that Date, then a
+#                     fresh PERCENT_RANK of the residual within each Date.
+#   "sector_resid" -> residual = target_30d_return - mean within (Date, Sector),
+#                     then PERCENT_RANK within Date. Tiny sectors fall back to
+#                     the market residual.
+TARGET_MODE = os.environ.get("TARGET_MODE", "raw")
+# EXTRA_FACTORS (=="1") appends a handful of price-based cross-sectional factor
+# features. Only price-based factors are computed — value/quality factors are
+# intentionally omitted because master_dataset carries NO fundamentals.
+EXTRA_FACTORS = os.environ.get("EXTRA_FACTORS", "0") == "1"
+# Minimum names in a (Date, Sector) bucket before we trust its sector-residual;
+# smaller buckets fall back to the market residual for that row.
+_MIN_SECTOR_NAMES = 3
 
 # MPS sometimes underperforms CPU on small KGE models due to per-op kernel
 # launch overhead — let users opt in via env var if they want to try it.
@@ -320,8 +383,8 @@ def extract_company_embeddings(model, ent2id):
         columns=[f"emb_{i}" for i in range(embed_dim_real)]
     ).reset_index().rename(columns={"index": "ticker"})
     try:
-        emb_df.to_parquet(EMBED_OUT_PATH, index=False)
-        print(f"  -> Embeddings saved to {EMBED_OUT_PATH}")
+        emb_df.to_parquet(EMBED_PATH, index=False)
+        print(f"  -> Embeddings saved to {EMBED_PATH}")
     except Exception as e:
         print(f"  -> [WARN] Could not save parquet ({e})")
     return results, embed_dim_real
@@ -345,6 +408,126 @@ def compute_macd(series, span_fast=12, span_slow=26):
 
 def compute_macd_signal(macd_series, span_signal=9):
     return macd_series.ewm(span=span_signal, adjust=False).mean()
+
+def apply_target_mode(df):
+    """Override `target_30d_rank` with a residual-return cross-sectional rank
+    when TARGET_MODE != "raw". No-op (and byte-for-byte unchanged) for "raw".
+
+    market_resid: residual = target_30d_return − cross-sectional MEAN return on
+                  that Date; rank = PERCENT_RANK of the residual within Date.
+    sector_resid: residual = target_30d_return − mean within (Date, Sector);
+                  buckets with < _MIN_SECTOR_NAMES names fall back to the market
+                  residual for those rows. Then PERCENT_RANK within Date.
+
+    The result stays in [0, 1] just like the original PERCENT_RANK target.
+    """
+    if TARGET_MODE == "raw":
+        return df
+    if TARGET_MODE not in ("market_resid", "sector_resid"):
+        print(f"  -> [target] unknown TARGET_MODE={TARGET_MODE!r}; falling back to raw.")
+        return df
+
+    raw_rank = df["target_30d_rank"].astype(float)
+    ret = df["target_30d_return"].astype(float)
+
+    # Market mean per Date (used directly for market_resid and as the fallback
+    # for tiny sectors under sector_resid).
+    market_mean = df.groupby("Date")["target_30d_return"].transform("mean")
+    resid = ret - market_mean
+
+    if TARGET_MODE == "sector_resid":
+        grp = df.groupby(["Date", "Sector"])["target_30d_return"]
+        sector_mean = grp.transform("mean")
+        sector_n = grp.transform("size")
+        # Use the sector residual where the bucket is large enough and the mean
+        # is well-defined; otherwise fall back to the market residual.
+        use_sector = (sector_n >= _MIN_SECTOR_NAMES) & sector_mean.notna()
+        sector_resid = ret - sector_mean
+        resid = sector_resid.where(use_sector, resid)
+
+    # Cross-sectional PERCENT_RANK of the residual within each Date, matching
+    # DuckDB's PERCENT_RANK semantics (lowest -> 0). NaN residuals (e.g. NaN
+    # return) fall back to the neutral 0.5.
+    new_rank = _per_date_rank(resid, df["Date"]).fillna(0.5)
+
+    corr = new_rank.corr(raw_rank)
+    df = df.copy()
+    df["target_30d_rank"] = new_rank.astype(float).values
+    print(f"  -> [target] TARGET_MODE={TARGET_MODE} active; "
+          f"new rank range=[{df['target_30d_rank'].min():.3f}, "
+          f"{df['target_30d_rank'].max():.3f}], "
+          f"corr(new_rank, raw_rank)={corr:+.4f}")
+    return df
+
+
+def _per_date_rank(series, dates):
+    """PERCENT_RANK (DuckDB semantics, min -> 0) of `series` within each Date."""
+    def _pr(s):
+        n = s.notna().sum()
+        if n <= 1:
+            return s * 0.0
+        r = s.rank(method="min") - 1.0
+        return r / (n - 1.0)
+    return series.groupby(dates, group_keys=False).apply(_pr)
+
+
+def add_extra_factors(df):
+    """Append price-based cross-sectional factor features (EXTRA_FACTORS=1).
+
+    NOTE: Only PRICE-based factors are added. Value and quality factors are
+    intentionally omitted because master_dataset carries no fundamentals.
+
+    Added columns:
+      return_60d, return_120d            longer-horizon momentum (NaN early in
+                                         the ~221-date sample; filled with 0)
+      rank_return_60d, rank_return_120d  per-Date PERCENT_RANK of the above
+      reversal_5d                        = -return_5d (short-term reversal)
+      rank_reversal_5d                   per-Date PERCENT_RANK
+      mom_vol_adj                        return_20d / (rolling_volatility_20d+eps)
+      rank_mom_vol_adj                   per-Date PERCENT_RANK
+
+    Returns (df, new_cols). When EXTRA_FACTORS is off, returns (df, []) so the
+    default tabular schema is unchanged.
+    """
+    if not EXTRA_FACTORS:
+        return df, []
+
+    eps = 1e-9
+    df = df.copy()
+    dates = df["Date"]
+
+    # Longer-horizon momentum from past closes (strictly past-and-present).
+    for w in (60, 120):
+        prev = df.groupby("ticker")["company_close"].shift(w)
+        df[f"return_{w}d"] = (df["company_close"] - prev) / prev.replace(0, np.nan)
+
+    # Short-term reversal factor.
+    df["reversal_5d"] = -df["return_5d"]
+
+    # Volatility-adjusted momentum.
+    df["mom_vol_adj"] = df["return_20d"] / (df["rolling_volatility_20d"].abs() + eps)
+
+    # Cross-sectional PERCENT_RANK within each Date for each raw factor.
+    rank_src = {
+        "rank_return_60d":  "return_60d",
+        "rank_return_120d": "return_120d",
+        "rank_reversal_5d": "reversal_5d",
+        "rank_mom_vol_adj": "mom_vol_adj",
+    }
+    for rank_col, src in rank_src.items():
+        df[rank_col] = _per_date_rank(df[src], dates).astype(float)
+
+    new_cols = ["return_60d", "return_120d", "rank_return_60d", "rank_return_120d",
+                "reversal_5d", "rank_reversal_5d", "mom_vol_adj", "rank_mom_vol_adj"]
+    # 120d (and partly 60d) are NaN early in the short sample — fill gracefully
+    # so the float32 feature matrix has no NaNs.
+    for c in new_cols:
+        df[c] = df[c].fillna(0.0)
+
+    print(f"  -> [factors] EXTRA_FACTORS=1; appended {len(new_cols)} "
+          f"price-based factor columns: {new_cols}")
+    return df, new_cols
+
 
 def load_observation_features(db_path: str):
     """Per-observation feature builder.
@@ -482,39 +665,19 @@ def load_observation_features(db_path: str):
         df[f'daily_return_lag_{lag}'] = df.groupby('ticker')['daily_return'].shift(lag).fillna(0)
         df[f'volume_ratio_lag_{lag}'] = df.groupby('ticker')['volume_ratio'].shift(lag).fillna(1.0)
 
+    # ── Candidate-retrain hooks (default = no-op) ────────────────────────────
+    # Residual-return target override (TARGET_MODE) and price-based factor
+    # features (EXTRA_FACTORS). Both are byte-for-byte unchanged by default.
+    df = apply_target_mode(df)
+    df, _extra_factor_cols = add_extra_factors(df)
+
     print(f"  -> Loaded {len(df)} observations for {df['ticker'].nunique()} tickers")
     return df
 
 
 def load_macro_features(macro_ttl_path: str):
-    """Read GDP, growth, inflation, and trade per country from the macroeconomic graph and
-    return a DataFrame of features. Used to attach macroeconomic context to each ticker via its HQ country."""
-    from rdflib import Graph as RdfGraph, Namespace
-    g = RdfGraph()
-    g.parse(macro_ttl_path, format="turtle")
-    macro_onto = Namespace("http://bda.upc.edu/macro/ontology#")
-    macro_ent = Namespace("http://bda.upc.edu/macro/resource/")
-
-    rows = []
-    for s in set(g.subjects()):
-        if not str(s).startswith(str(macro_ent)):
-            continue
-        country = str(s).replace(str(macro_ent), "").replace("_", " ")
-        gdp = g.value(s, macro_onto.gdpUSD)
-        growth = g.value(s, macro_onto.gdpGrowthPercent)
-        inflation = g.value(s, macro_onto.inflationPercent)
-        trade = g.value(s, macro_onto.tradePercentOfGDP)
-        interest = g.value(s, macro_onto.interestRatePercent)
-        if gdp is not None or growth is not None or inflation is not None or trade is not None or interest is not None:
-            rows.append({
-                "country": country,
-                "gdp_usd": float(gdp) if gdp is not None else None,
-                "gdp_growth_pct": float(growth) if growth is not None else None,
-                "inflation_pct": float(inflation) if inflation is not None else None,
-                "trade_pct": float(trade) if trade is not None else None,
-                "interest_rate_pct": float(interest) if interest is not None else None,
-            })
-    return pd.DataFrame(rows)
+    """Load static macro features through the shared offline provider."""
+    return load_static_macro_features(macro_ttl_path)
 
 
 def attach_macro_features(df_obs, db_path: str, macro_ttl_path: str):
@@ -529,7 +692,8 @@ def attach_macro_features(df_obs, db_path: str, macro_ttl_path: str):
 
     df = df_obs.merge(companies, on="ticker", how="left")
     df = df.merge(macro, on="country", how="left")
-    # Drop the country string — categorical, encoded indirectly via gdp
+    # Static TTL macro values are intentionally shared with live/backtests until
+    # a PIT provider is available; the country string remains a join key only.
     df = df.drop(columns=["country"])
     return df
 
@@ -874,6 +1038,97 @@ def make_stacking_model(base_models):
         cv=STACK_CV,
         n_jobs=-1,
     )
+
+
+def _safe_git_commit():
+    """Return the current git commit hash when available, otherwise None."""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..")),
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=2,
+        )
+        commit = proc.stdout.strip()
+        return commit or None
+    except Exception:
+        return None
+
+
+def _model_params(model):
+    """Extract JSON-friendly estimator parameters for artifact metadata."""
+    try:
+        params = model.get_params(deep=False)
+    except Exception:
+        params = {
+            k: v for k, v in getattr(model, "__dict__", {}).items()
+            if not k.startswith("_") and isinstance(v, (str, int, float, bool, type(None)))
+        }
+    clean = {}
+    for key, value in params.items():
+        if isinstance(value, (str, int, float, bool, type(None))):
+            clean[key] = value
+        elif isinstance(value, (list, tuple)):
+            clean[key] = [
+                x if isinstance(x, (str, int, float, bool, type(None))) else repr(x)
+                for x in value
+            ]
+        else:
+            clean[key] = repr(value)
+    return clean
+
+
+def build_model_manifest(*, trained_models, mix_models, tabular_cols, pca_cols,
+                         merged_df, selected_feature_set, selected_model_recipe):
+    """Build schema/recipe metadata persisted beside the trained model artifact."""
+    dates = pd.to_datetime(merged_df["Date"], errors="coerce") if "Date" in merged_df else pd.Series(dtype="datetime64[ns]")
+    date_min = dates.min()
+    date_max = dates.max()
+    feature_columns = list(tabular_cols or []) + list(pca_cols or [])
+    return {
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+        "created_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "git_commit": _safe_git_commit(),
+        "feature_columns": feature_columns,
+        "tabular_cols": list(tabular_cols or []),
+        "pca_cols": list(pca_cols or []),
+        "model_members": list(mix_models or []),
+        "available_models": sorted(list((trained_models or {}).keys())),
+        "cs_z_standardize": bool(CS_Z_STANDARDIZE),
+        "training_date_min": date_min.date().isoformat() if pd.notna(date_min) else None,
+        "training_date_max": date_max.date().isoformat() if pd.notna(date_max) else None,
+        "selected_feature_set": selected_feature_set,
+        "selected_model_recipe": selected_model_recipe,
+        "hyperparameters": {
+            "EMBED_DIM": EMBED_DIM,
+            "ROTATE_LR": ROTATE_LR,
+            "ROTATE_EPOCHS": ROTATE_EPOCHS,
+            "ROTATE_BATCH": ROTATE_BATCH,
+            "ROTATE_NEG_PER_POS": ROTATE_NEG_PER_POS,
+            "ROTATE_GAMMA": ROTATE_GAMMA,
+            "ROTATE_ADV_TEMP": ROTATE_ADV_TEMP,
+            "ROTATE_PATIENCE": ROTATE_PATIENCE,
+            "STACK_CV": STACK_CV,
+            "PCA_DIM": PCA_DIM,
+            "SEED": SEED,
+            "N_FOLDS": N_FOLDS,
+            "EMBARGO_DAYS": EMBARGO_DAYS,
+            "ENABLE_MLP": ENABLE_MLP,
+            "MLP_EPOCHS": MLP_EPOCHS,
+            "MLP_BATCH": MLP_BATCH,
+            "MLP_LR": MLP_LR,
+            "MLP_WD": MLP_WD,
+            "MLP_DROPOUT": MLP_DROPOUT,
+            "MLP_HIDDEN": MLP_HIDDEN,
+            "MLP_PATIENCE": MLP_PATIENCE,
+            "DIVERSE_CORR_THRESHOLD": DIVERSE_CORR_THRESHOLD,
+        },
+        "model_hyperparameters": {
+            name: _model_params(model) for name, model in (trained_models or {}).items()
+        },
+    }
 
 
 def fit_with_early_stopping(model, X_train_s, y_train, model_name, train_dates=None):
@@ -1424,6 +1679,22 @@ def evaluate_all(feature_sets, y_rank, y_ret, merged_df,
                     # function exported from this module.
                     "cs_z_standardize": CS_Z_STANDARDIZE,
                 }
+                deployed_recipe = (
+                    "SoftVote_Rank"
+                    if any(str(m).endswith("_Rank") for m in deployed_mix)
+                    else "SoftVote"
+                )
+                manifest = build_model_manifest(
+                    trained_models=base_models,
+                    mix_models=deployed_mix,
+                    tabular_cols=tabular_cols,
+                    pca_cols=pca_cols,
+                    merged_df=merged_df[train_mask].copy(),
+                    selected_feature_set=feat_name,
+                    selected_model_recipe=deployed_recipe,
+                )
+                last_fold_artefacts["metadata"] = manifest
+                last_fold_artefacts["manifest"] = manifest
 
     # ── Part 4 P5: diverse-ensemble selector ────────────────────────────────
     # Greedy pick: start from the highest-IC base model and walk down the
@@ -1539,7 +1810,7 @@ def evaluate_all(feature_sets, y_rank, y_ret, merged_df,
 
     # ── Persist raw per-fold metrics + OOF predictions ──────────────────────
     fold_df = pd.DataFrame(fold_records)
-    per_fold_path = os.path.join(EXPLOITATION_DIR, "per_fold_results.csv")
+    per_fold_path = _out(os.path.join(EXPLOITATION_DIR, "per_fold_results.csv"))
     try:
         fold_df.to_csv(per_fold_path, index=False)
         print(f"\n[EXPORT] per-fold metrics → {per_fold_path} ({len(fold_df)} rows)")
@@ -1549,7 +1820,7 @@ def evaluate_all(feature_sets, y_rank, y_ret, merged_df,
     if oof_rows:
         try:
             oof_df = pd.concat(oof_rows, ignore_index=True)
-            oof_path = os.path.join(EXPLOITATION_DIR, "oof_predictions.parquet")
+            oof_path = _out(os.path.join(EXPLOITATION_DIR, "oof_predictions.parquet"))
             oof_df.to_parquet(oof_path, index=False)
             print(f"[EXPORT] OOF predictions → {oof_path} "
                   f"({len(oof_df):,} rows across {oof_df['model'].nunique()} models)")
@@ -1600,7 +1871,7 @@ def evaluate_all(feature_sets, y_rank, y_ret, merged_df,
               f"{r['n_pos_decile_spread']}/{r['K']}        "
               f"{r['sign_p_decile_spread']:.3f}")
     try:
-        sign_path = os.path.join(EXPLOITATION_DIR, "sign_tests.csv")
+        sign_path = _out(os.path.join(EXPLOITATION_DIR, "sign_tests.csv"))
         sign_df.to_csv(sign_path, index=False)
         print(f"\n[EXPORT] sign tests → {sign_path}")
     except Exception as e:
@@ -1631,7 +1902,7 @@ def evaluate_all(feature_sets, y_rank, y_ret, merged_df,
               f"{r['mean_diff']:+8.4f}  [{r['ci_lo']:+7.4f}, {r['ci_hi']:+7.4f}]   "
               f"{r['sign_p']:.3f}   {ci_inc_zero}")
     try:
-        pw_path = os.path.join(EXPLOITATION_DIR, "pairwise_comparisons.csv")
+        pw_path = _out(os.path.join(EXPLOITATION_DIR, "pairwise_comparisons.csv"))
         pairwise_df.to_csv(pw_path, index=False)
         print(f"\n[EXPORT] pairwise comparisons → {pw_path}")
     except Exception as e:
@@ -1651,7 +1922,7 @@ def evaluate_all(feature_sets, y_rank, y_ret, merged_df,
             corr = pivot.corr(method="pearson").round(4)
             print("\nOOF pairwise Pearson correlation  (combined feature set):")
             print(corr.to_string(float_format="{:.3f}".format))
-            corr_path = os.path.join(EXPLOITATION_DIR, "oof_correlation_matrix.csv")
+            corr_path = _out(os.path.join(EXPLOITATION_DIR, "oof_correlation_matrix.csv"))
             corr.to_csv(corr_path)
             print(f"[EXPORT] OOF correlation matrix → {corr_path}")
         except Exception as e:
@@ -1682,7 +1953,7 @@ def evaluate_all(feature_sets, y_rank, y_ret, merged_df,
                     "target_30d_rank", "target_30d_return", "target_7d_up",
                     "pred_rank"] + [f"pred_rank_{m}" for m in preds.keys()]
             keep = [c for c in keep if c in export_df.columns]
-            export_path = os.path.join(EXPLOITATION_DIR, "test_predictions.parquet")
+            export_path = _out(os.path.join(EXPLOITATION_DIR, "test_predictions.parquet"))
             export_df[keep].to_parquet(export_path, index=False)
             print(f"\n[EXPORT] Saved last-fold predictions to {export_path}")
         except Exception as e:
@@ -1690,12 +1961,20 @@ def evaluate_all(feature_sets, y_rank, y_ret, merged_df,
 
         try:
             import pickle
-            best_model_path = os.path.join(EXPLOITATION_DIR, "best_model.pkl")
+            best_model_path = _out(os.path.join(EXPLOITATION_DIR, "best_model.pkl"))
             with open(best_model_path, "wb") as f:
                 pickle.dump(last_fold_artefacts, f)
             print(f"[EXPORT] Saved last-fold artefacts to {best_model_path}")
         except Exception as e:
             print(f"[WARN] Could not pickle artefacts: {e}")
+
+        try:
+            manifest_path = _out(os.path.join(EXPLOITATION_DIR, "best_model_manifest.json"))
+            with open(manifest_path, "w") as f:
+                json.dump(last_fold_artefacts.get("manifest", {}), f, indent=2, sort_keys=True)
+            print(f"[EXPORT] Saved model manifest to {manifest_path}")
+        except Exception as e:
+            print(f"[WARN] Could not write model manifest: {e}")
 
     return summary, fold_df
 
@@ -1703,9 +1982,19 @@ def evaluate_all(feature_sets, y_rank, y_ret, merged_df,
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    if os.path.exists(EMBED_OUT_PATH):
-        print(f"\n[CACHE] Loading pre-trained company embeddings from {EMBED_OUT_PATH}...")
-        df_emb = pd.read_parquet(EMBED_OUT_PATH)
+    if CANDIDATE_TAG:
+        print("=" * 72)
+        print(f"[CANDIDATE] CANDIDATE_TAG={CANDIDATE_TAG!r} — production artifacts are PROTECTED.")
+        print(f"[CANDIDATE]   embeddings   -> {EMBED_PATH}")
+        print(f"[CANDIDATE]   best_model   -> {_out(os.path.join(EXPLOITATION_DIR, 'best_model.pkl'))}")
+        print(f"[CANDIDATE]   manifest     -> {_out(os.path.join(EXPLOITATION_DIR, 'best_model_manifest.json'))}")
+        print(f"[CANDIDATE]   per-fold/oof/sign/pairwise/corr/test_predictions all tagged '_{CANDIDATE_TAG}'.")
+        print(f"[CANDIDATE]   TARGET_MODE={TARGET_MODE}  EXTRA_FACTORS={int(EXTRA_FACTORS)}")
+        print("=" * 72)
+
+    if os.path.exists(EMBED_PATH):
+        print(f"\n[CACHE] Loading pre-trained company embeddings from {EMBED_PATH}...")
+        df_emb = pd.read_parquet(EMBED_PATH)
         embed_cols = [c for c in df_emb.columns if c.startswith("emb_")]
         embed_dim_real = len(embed_cols)
         company_embeddings = {

@@ -1,0 +1,161 @@
+window,strategy,metric,value
+Pre-Training OOS (2023-07-01 to 2025-03-01),Buy & Hold (equal-weight),Cum Return NET (%),27.3670334690492
+Pre-Training OOS (2023-07-01 to 2025-03-01),Buy & Hold (equal-weight),Cum Return GROSS (%),27.428537963962608
+Pre-Training OOS (2023-07-01 to 2025-03-01),Buy & Hold (equal-weight),Cost Drag (%),0.06150449491340737
+Pre-Training OOS (2023-07-01 to 2025-03-01),Buy & Hold (equal-weight),Annualized Sharpe,0.766382103535887
+Pre-Training OOS (2023-07-01 to 2025-03-01),Buy & Hold (equal-weight),Max Drawdown (%),-17.032430758733767
+Pre-Training OOS (2023-07-01 to 2025-03-01),Buy & Hold (equal-weight),IR vs B&H,
+Pre-Training OOS (2023-07-01 to 2025-03-01),Buy & Hold (equal-weight),Avg Turnover,0.011627906976744186
+Pre-Training OOS (2023-07-01 to 2025-03-01),Buy & Hold (equal-weight),Avg Cost (frac),5.8139534883720935e-06
+Pre-Training OOS (2023-07-01 to 2025-03-01),Buy & Hold (equal-weight),Avg Gross Exposure,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Buy & Hold (equal-weight),Avg Net Exposure,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Buy & Hold (equal-weight),Avg Long Exposure,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Buy & Hold (equal-weight),Avg Short Exposure,0.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Buy & Hold (equal-weight),Avg Active Share,0.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Buy & Hold (equal-weight),Avg Hit Rate,0.4796511627906976
+Pre-Training OOS (2023-07-01 to 2025-03-01),Buy & Hold (equal-weight),Ending Value NET ($),12736.70334690492
+Pre-Training OOS (2023-07-01 to 2025-03-01),Buy & Hold (equal-weight),Rebalances,86.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),"Pure top-K (k=10, inv-vol)",Cum Return NET (%),19.605600391057052
+Pre-Training OOS (2023-07-01 to 2025-03-01),"Pure top-K (k=10, inv-vol)",Cum Return GROSS (%),22.002753241664742
+Pre-Training OOS (2023-07-01 to 2025-03-01),"Pure top-K (k=10, inv-vol)",Cost Drag (%),2.3971528506076893
+Pre-Training OOS (2023-07-01 to 2025-03-01),"Pure top-K (k=10, inv-vol)",Annualized Sharpe,0.5915764646403957
+Pre-Training OOS (2023-07-01 to 2025-03-01),"Pure top-K (k=10, inv-vol)",Max Drawdown (%),-17.580214230364334
+Pre-Training OOS (2023-07-01 to 2025-03-01),"Pure top-K (k=10, inv-vol)",IR vs B&H,-0.30275811266291713
+Pre-Training OOS (2023-07-01 to 2025-03-01),"Pure top-K (k=10, inv-vol)",Avg Turnover,0.46166543048087255
+Pre-Training OOS (2023-07-01 to 2025-03-01),"Pure top-K (k=10, inv-vol)",Avg Cost (frac),0.00023083271524043626
+Pre-Training OOS (2023-07-01 to 2025-03-01),"Pure top-K (k=10, inv-vol)",Avg Gross Exposure,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),"Pure top-K (k=10, inv-vol)",Avg Net Exposure,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),"Pure top-K (k=10, inv-vol)",Avg Long Exposure,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),"Pure top-K (k=10, inv-vol)",Avg Short Exposure,0.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),"Pure top-K (k=10, inv-vol)",Avg Active Share,0.5118599889860466
+Pre-Training OOS (2023-07-01 to 2025-03-01),"Pure top-K (k=10, inv-vol)",Avg Hit Rate,0.46162790697674416
+Pre-Training OOS (2023-07-01 to 2025-03-01),"Pure top-K (k=10, inv-vol)",Ending Value NET ($),11960.560039105705
+Pre-Training OOS (2023-07-01 to 2025-03-01),"Pure top-K (k=10, inv-vol)",Rebalances,86.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 90/10,Cum Return NET (%),26.709874867389356
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 90/10,Cum Return GROSS (%),27.016247678367527
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 90/10,Cost Drag (%),0.3063728109781714
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 90/10,Annualized Sharpe,0.7595464899451814
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 90/10,Max Drawdown (%),-16.886087971569
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 90/10,IR vs B&H,-0.3027581126629125
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 90/10,Avg Turnover,0.056631659327157045
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 90/10,Avg Cost (frac),2.8315829663578523e-05
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 90/10,Avg Gross Exposure,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 90/10,Avg Net Exposure,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 90/10,Avg Long Exposure,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 90/10,Avg Short Exposure,0.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 90/10,Avg Active Share,0.051185998898604666
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 90/10,Avg Hit Rate,0.4796511627906976
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 90/10,Ending Value NET ($),12670.987486738935
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 90/10,Rebalances,86.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 80/20,Cum Return NET (%),26.025115635013734
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 80/20,Cum Return GROSS (%),26.574263829760547
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 80/20,Cost Drag (%),0.5491481947468131
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 80/20,Annualized Sharpe,0.7501826953627226
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 80/20,Max Drawdown (%),-16.740597688983065
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 80/20,IR vs B&H,-0.30275811266292485
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 80/20,Avg Turnover,0.10163541167756988
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 80/20,Avg Cost (frac),5.0817705838784933e-05
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 80/20,Avg Gross Exposure,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 80/20,Avg Net Exposure,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 80/20,Avg Long Exposure,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 80/20,Avg Short Exposure,0.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 80/20,Avg Active Share,0.10237199779720933
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 80/20,Avg Hit Rate,0.4796511627906976
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 80/20,Ending Value NET ($),12602.511563501374
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 80/20,Rebalances,86.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 70/30,Cum Return NET (%),25.31316149207762
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 70/30,Cum Return GROSS (%),26.102830329128285
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 70/30,Cost Drag (%),0.7896688370506659
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 70/30,Annualized Sharpe,0.7382244687324085
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 70/30,Max Drawdown (%),-16.59596520993924
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 70/30,IR vs B&H,-0.3027581126629176
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 70/30,Avg Turnover,0.14663916402798272
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 70/30,Avg Cost (frac),7.331958201399134e-05
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 70/30,Avg Gross Exposure,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 70/30,Avg Net Exposure,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 70/30,Avg Long Exposure,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 70/30,Avg Short Exposure,0.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 70/30,Avg Active Share,0.153557996695814
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 70/30,Avg Hit Rate,0.4796511627906976
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 70/30,Ending Value NET ($),12531.316149207762
+Pre-Training OOS (2023-07-01 to 2025-03-01),Overlay 70/30,Rebalances,86.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Buy & Hold (equal-weight),Cum Return NET (%),25.676689081032144
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Buy & Hold (equal-weight),Cum Return GROSS (%),25.74045094590545
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Buy & Hold (equal-weight),Cost Drag (%),0.0637618648733067
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Buy & Hold (equal-weight),Annualized Sharpe,4.327459596991968
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Buy & Hold (equal-weight),Max Drawdown (%),-1.6519872437639118
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Buy & Hold (equal-weight),IR vs B&H,
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Buy & Hold (equal-weight),Avg Turnover,0.125
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Buy & Hold (equal-weight),Avg Cost (frac),6.25e-05
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Buy & Hold (equal-weight),Avg Gross Exposure,1.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Buy & Hold (equal-weight),Avg Net Exposure,1.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Buy & Hold (equal-weight),Avg Long Exposure,1.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Buy & Hold (equal-weight),Avg Short Exposure,0.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Buy & Hold (equal-weight),Avg Active Share,0.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Buy & Hold (equal-weight),Avg Hit Rate,0.63125
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Buy & Hold (equal-weight),Ending Value NET ($),12567.668908103215
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Buy & Hold (equal-weight),Rebalances,8.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),"Pure top-K (k=10, inv-vol)",Cum Return NET (%),21.511742574472827
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),"Pure top-K (k=10, inv-vol)",Cum Return GROSS (%),21.793646353049027
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),"Pure top-K (k=10, inv-vol)",Cost Drag (%),0.28190377857620064
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),"Pure top-K (k=10, inv-vol)",Annualized Sharpe,3.7552370159428063
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),"Pure top-K (k=10, inv-vol)",Max Drawdown (%),-2.738448033912937
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),"Pure top-K (k=10, inv-vol)",IR vs B&H,-1.951145493865708
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),"Pure top-K (k=10, inv-vol)",Avg Turnover,0.5883894485133792
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),"Pure top-K (k=10, inv-vol)",Avg Cost (frac),0.0002941947242566897
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),"Pure top-K (k=10, inv-vol)",Avg Gross Exposure,1.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),"Pure top-K (k=10, inv-vol)",Avg Net Exposure,1.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),"Pure top-K (k=10, inv-vol)",Avg Long Exposure,1.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),"Pure top-K (k=10, inv-vol)",Avg Short Exposure,0.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),"Pure top-K (k=10, inv-vol)",Avg Active Share,0.5109831446929461
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),"Pure top-K (k=10, inv-vol)",Avg Hit Rate,0.625
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),"Pure top-K (k=10, inv-vol)",Ending Value NET ($),12151.174257447283
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),"Pure top-K (k=10, inv-vol)",Rebalances,8.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 90/10,Cum Return NET (%),25.263731157690838
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 90/10,Cum Return GROSS (%),25.349973203415576
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 90/10,Cost Drag (%),0.08624204572473815
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 90/10,Annualized Sharpe,4.290842794419548
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 90/10,Max Drawdown (%),-1.7362214022436935
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 90/10,IR vs B&H,-1.9511454938657309
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 90/10,Avg Turnover,0.17133894485133794
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 90/10,Avg Cost (frac),8.566947242566896e-05
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 90/10,Avg Gross Exposure,1.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 90/10,Avg Net Exposure,1.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 90/10,Avg Long Exposure,1.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 90/10,Avg Short Exposure,0.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 90/10,Avg Active Share,0.05109831446929462
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 90/10,Avg Hit Rate,0.63125
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 90/10,Ending Value NET ($),12526.373115769084
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 90/10,Rebalances,8.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 80/20,Cum Return NET (%),24.849945161132563
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 80/20,Cum Return GROSS (%),24.95851976610953
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 80/20,Cost Drag (%),0.10857460497696536
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 80/20,Annualized Sharpe,4.2494710855180475
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 80/20,Max Drawdown (%),-1.820455560723484
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 80/20,IR vs B&H,-1.9511454938656254
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 80/20,Avg Turnover,0.21767788970267585
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 80/20,Avg Cost (frac),0.00010883894485133793
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 80/20,Avg Gross Exposure,0.9999999999999998
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 80/20,Avg Net Exposure,0.9999999999999998
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 80/20,Avg Long Exposure,0.9999999999999998
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 80/20,Avg Short Exposure,0.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 80/20,Avg Active Share,0.10219662893858923
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 80/20,Avg Hit Rate,0.63125
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 80/20,Ending Value NET ($),12484.994516113256
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 80/20,Rebalances,8.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 70/30,Cum Return NET (%),24.435346960430397
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 70/30,Cum Return GROSS (%),24.56610634978244
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 70/30,Cost Drag (%),0.13075938935204334
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 70/30,Annualized Sharpe,4.203332278490428
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 70/30,Max Drawdown (%),-1.9046897192032755
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 70/30,IR vs B&H,-1.951145493865726
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 70/30,Avg Turnover,0.2640168345540138
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 70/30,Avg Cost (frac),0.0001320084172770069
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 70/30,Avg Gross Exposure,1.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 70/30,Avg Net Exposure,1.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 70/30,Avg Long Exposure,1.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 70/30,Avg Short Exposure,0.0
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 70/30,Avg Active Share,0.15329494340788385
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 70/30,Avg Hit Rate,0.63125
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 70/30,Ending Value NET ($),12443.53469604304
+Post-Training OOS CLEAN (2026-03-20 to 2026-05-15),Overlay 70/30,Rebalances,8.0

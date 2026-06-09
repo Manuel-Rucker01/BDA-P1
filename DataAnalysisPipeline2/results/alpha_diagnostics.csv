@@ -1,0 +1,272 @@
+window,slice_type,slice_value,metric,value
+Pre-Training OOS (2023-07-01 to 2025-03-01),overall,"21d (≈30cal, model target)",mean_ic,-0.039864
+Pre-Training OOS (2023-07-01 to 2025-03-01),overall,"21d (≈30cal, model target)",pooled_ic,-0.032736
+Pre-Training OOS (2023-07-01 to 2025-03-01),overall,"21d (≈30cal, model target)",ic_ir_tstat,-1.561652
+Pre-Training OOS (2023-07-01 to 2025-03-01),overall,5d (contrast),mean_ic,-0.026774
+Pre-Training OOS (2023-07-01 to 2025-03-01),overall,5d (contrast),pooled_ic,-0.026648
+Pre-Training OOS (2023-07-01 to 2025-03-01),overall,5d (contrast),ic_ir_tstat,-1.067531
+Pre-Training OOS (2023-07-01 to 2025-03-01),sector,Capital Goods,pooled_ic,0.091547
+Pre-Training OOS (2023-07-01 to 2025-03-01),sector,Capital Goods,mean_ic,
+Pre-Training OOS (2023-07-01 to 2025-03-01),sector,Capital Goods,n_obs,86.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),sector,Finance,pooled_ic,-0.074839
+Pre-Training OOS (2023-07-01 to 2025-03-01),sector,Finance,mean_ic,-0.048747
+Pre-Training OOS (2023-07-01 to 2025-03-01),sector,Finance,n_obs,430.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),sector,Health Care,pooled_ic,0.112537
+Pre-Training OOS (2023-07-01 to 2025-03-01),sector,Health Care,mean_ic,0.112374
+Pre-Training OOS (2023-07-01 to 2025-03-01),sector,Health Care,n_obs,602.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),sector,Technology,pooled_ic,-0.131583
+Pre-Training OOS (2023-07-01 to 2025-03-01),sector,Technology,mean_ic,-0.162766
+Pre-Training OOS (2023-07-01 to 2025-03-01),sector,Technology,n_obs,516.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),sector,Transportation,pooled_ic,0.025014
+Pre-Training OOS (2023-07-01 to 2025-03-01),sector,Transportation,mean_ic,
+Pre-Training OOS (2023-07-01 to 2025-03-01),sector,Transportation,n_obs,86.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),beta_bucket,low_beta,pooled_ic,-0.010527
+Pre-Training OOS (2023-07-01 to 2025-03-01),beta_bucket,low_beta,mean_ic,-0.037695
+Pre-Training OOS (2023-07-01 to 2025-03-01),beta_bucket,low_beta,n_obs,574.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),beta_bucket,mid_beta,pooled_ic,-0.09062
+Pre-Training OOS (2023-07-01 to 2025-03-01),beta_bucket,mid_beta,mean_ic,-0.06418
+Pre-Training OOS (2023-07-01 to 2025-03-01),beta_bucket,mid_beta,n_obs,573.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),beta_bucket,high_beta,pooled_ic,-0.017923
+Pre-Training OOS (2023-07-01 to 2025-03-01),beta_bucket,high_beta,mean_ic,-0.071667
+Pre-Training OOS (2023-07-01 to 2025-03-01),beta_bucket,high_beta,n_obs,573.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),vol_bucket,low_vol,pooled_ic,-0.073463
+Pre-Training OOS (2023-07-01 to 2025-03-01),vol_bucket,low_vol,mean_ic,-0.055752
+Pre-Training OOS (2023-07-01 to 2025-03-01),vol_bucket,low_vol,n_obs,574.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),vol_bucket,mid_vol,pooled_ic,-0.002968
+Pre-Training OOS (2023-07-01 to 2025-03-01),vol_bucket,mid_vol,mean_ic,-0.005681
+Pre-Training OOS (2023-07-01 to 2025-03-01),vol_bucket,mid_vol,n_obs,573.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),vol_bucket,high_vol,pooled_ic,0.024436
+Pre-Training OOS (2023-07-01 to 2025-03-01),vol_bucket,high_vol,mean_ic,0.009543
+Pre-Training OOS (2023-07-01 to 2025-03-01),vol_bucket,high_vol,n_obs,573.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),mcap_bucket,small_cap,pooled_ic,0.038472
+Pre-Training OOS (2023-07-01 to 2025-03-01),mcap_bucket,small_cap,mean_ic,-0.033194
+Pre-Training OOS (2023-07-01 to 2025-03-01),mcap_bucket,small_cap,n_obs,574.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),mcap_bucket,mid_cap,pooled_ic,-0.043475
+Pre-Training OOS (2023-07-01 to 2025-03-01),mcap_bucket,mid_cap,mean_ic,-0.058698
+Pre-Training OOS (2023-07-01 to 2025-03-01),mcap_bucket,mid_cap,n_obs,573.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),mcap_bucket,large_cap,pooled_ic,-0.072958
+Pre-Training OOS (2023-07-01 to 2025-03-01),mcap_bucket,large_cap,mean_ic,-0.101155
+Pre-Training OOS (2023-07-01 to 2025-03-01),mcap_bucket,large_cap,n_obs,573.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),adv_bucket,low_adv,pooled_ic,-0.030334
+Pre-Training OOS (2023-07-01 to 2025-03-01),adv_bucket,low_adv,mean_ic,-0.064726
+Pre-Training OOS (2023-07-01 to 2025-03-01),adv_bucket,low_adv,n_obs,574.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),adv_bucket,mid_adv,pooled_ic,-0.045074
+Pre-Training OOS (2023-07-01 to 2025-03-01),adv_bucket,mid_adv,mean_ic,0.003427
+Pre-Training OOS (2023-07-01 to 2025-03-01),adv_bucket,mid_adv,n_obs,573.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),adv_bucket,high_adv,pooled_ic,-0.004468
+Pre-Training OOS (2023-07-01 to 2025-03-01),adv_bucket,high_adv,mean_ic,0.013185
+Pre-Training OOS (2023-07-01 to 2025-03-01),adv_bucket,high_adv,n_obs,573.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2023-07,pooled_ic,-0.188282
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2023-07,mean_ic,-0.21461
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2023-07,n_obs,80.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2023-08,pooled_ic,0.114399
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2023-08,mean_ic,0.117328
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2023-08,n_obs,80.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2023-09,pooled_ic,-0.138295
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2023-09,mean_ic,-0.155197
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2023-09,n_obs,100.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2023-10,pooled_ic,0.138878
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2023-10,mean_ic,0.135359
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2023-10,n_obs,80.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2023-11,pooled_ic,0.194272
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2023-11,mean_ic,0.172583
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2023-11,n_obs,80.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2023-12,pooled_ic,-0.05095
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2023-12,mean_ic,-0.02148
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2023-12,n_obs,100.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-01,pooled_ic,0.149603
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-01,mean_ic,0.146553
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-01,n_obs,80.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-02,pooled_ic,0.022276
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-02,mean_ic,0.012654
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-02,n_obs,80.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-03,pooled_ic,-0.141322
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-03,mean_ic,-0.156596
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-03,n_obs,80.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-04,pooled_ic,-0.106687
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-04,mean_ic,-0.10223
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-04,n_obs,80.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-05,pooled_ic,-0.015456
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-05,mean_ic,-0.017445
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-05,n_obs,100.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-06,pooled_ic,0.161349
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-06,mean_ic,0.165055
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-06,n_obs,80.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-07,pooled_ic,-0.285676
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-07,mean_ic,-0.288055
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-07,n_obs,80.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-08,pooled_ic,0.13185
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-08,mean_ic,0.14385
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-08,n_obs,100.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-09,pooled_ic,0.133991
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-09,mean_ic,0.12435
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-09,n_obs,80.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-10,pooled_ic,0.020142
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-10,mean_ic,0.030252
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-10,n_obs,80.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-11,pooled_ic,-0.094803
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-11,mean_ic,-0.132529
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-11,n_obs,100.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-12,pooled_ic,-0.131613
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-12,mean_ic,-0.133868
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2024-12,n_obs,80.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2025-01,pooled_ic,-0.088154
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2025-01,mean_ic,-0.119273
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2025-01,n_obs,100.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2025-02,pooled_ic,-0.493064
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2025-02,mean_ic,-0.488251
+Pre-Training OOS (2023-07-01 to 2025-03-01),month,2025-02,n_obs,80.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),selected_book,all,avg_book_beta,1.006275
+Pre-Training OOS (2023-07-01 to 2025-03-01),selected_book,all,avg_universe_beta,1.006174
+Pre-Training OOS (2023-07-01 to 2025-03-01),selected_book,all,mean_selected_fwd21,0.01585
+Pre-Training OOS (2023-07-01 to 2025-03-01),selected_book,all,mean_universe_fwd21,0.009579
+Pre-Training OOS (2023-07-01 to 2025-03-01),selected_book,all,edge_vs_universe,0.006271
+Pre-Training OOS (2023-07-01 to 2025-03-01),selected_book,all,book_hhi,0.633721
+Pre-Training OOS (2023-07-01 to 2025-03-01),selected_book,all,top_sector_share,0.633721
+Pre-Training OOS (2023-07-01 to 2025-03-01),selected_book,all,avg_turnover,0.388235
+Pre-Training OOS (2023-07-01 to 2025-03-01),selected_book,all,cost_drag_per_rebal,0.000388
+Pre-Training OOS (2023-07-01 to 2025-03-01),contribution_sector,Capital Goods,cum_contribution,0.277637
+Pre-Training OOS (2023-07-01 to 2025-03-01),contribution_sector,Health Care,cum_contribution,0.257262
+Pre-Training OOS (2023-07-01 to 2025-03-01),contribution_sector,Transportation,cum_contribution,0.161455
+Pre-Training OOS (2023-07-01 to 2025-03-01),contribution_sector,Finance,cum_contribution,-0.002621
+Pre-Training OOS (2023-07-01 to 2025-03-01),contribution_sector,Technology,cum_contribution,-0.036362
+Pre-Training OOS (2023-07-01 to 2025-03-01),contribution_ticker,ACIU,cum_contribution,0.374358
+Pre-Training OOS (2023-07-01 to 2025-03-01),contribution_ticker,AAON,cum_contribution,0.277637
+Pre-Training OOS (2023-07-01 to 2025-03-01),contribution_ticker,AAL,cum_contribution,0.161455
+Pre-Training OOS (2023-07-01 to 2025-03-01),contribution_ticker,ABEO,cum_contribution,0.098125
+Pre-Training OOS (2023-07-01 to 2025-03-01),contribution_ticker,ABUS,cum_contribution,0.057266
+Pre-Training OOS (2023-07-01 to 2025-03-01),contribution_ticker,ACNB,cum_contribution,-0.002621
+Pre-Training OOS (2023-07-01 to 2025-03-01),contribution_ticker,AAOI,cum_contribution,-0.036362
+Pre-Training OOS (2023-07-01 to 2025-03-01),contribution_ticker,ACAD,cum_contribution,-0.047176
+Pre-Training OOS (2023-07-01 to 2025-03-01),contribution_ticker,ACHV,cum_contribution,-0.225312
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,1,mean_fwd21,0.046645
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,1,n,172.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,2,mean_fwd21,-0.001895
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,2,n,172.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,3,mean_fwd21,-0.003211
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,3,n,172.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,4,mean_fwd21,0.020356
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,4,n,172.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,5,mean_fwd21,0.001457
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,5,n,172.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,6,mean_fwd21,0.00421
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,6,n,172.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,7,mean_fwd21,0.019551
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,7,n,172.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,8,mean_fwd21,-0.020804
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,8,n,172.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,9,mean_fwd21,0.014991
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,9,n,172.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,10,mean_fwd21,0.014491
+Pre-Training OOS (2023-07-01 to 2025-03-01),decile,10,n,172.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),calibration,all,top_minus_bottom_spread,-0.032154
+Pre-Training OOS (2023-07-01 to 2025-03-01),calibration,all,monotonicity_score,-0.090909
+Pre-Training OOS (2023-07-01 to 2025-03-01),calibration,all,bottom_decile_mean,0.046645
+Pre-Training OOS (2023-07-01 to 2025-03-01),calibration,all,top_decile_mean,0.014491
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),overall,"21d (≈30cal, model target)",mean_ic,0.036895
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),overall,"21d (≈30cal, model target)",pooled_ic,0.040278
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),overall,"21d (≈30cal, model target)",ic_ir_tstat,0.539733
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),overall,5d (contrast),mean_ic,-0.012652
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),overall,5d (contrast),pooled_ic,-0.048459
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),overall,5d (contrast),ic_ir_tstat,-0.159147
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),sector,Capital Goods,pooled_ic,0.763763
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),sector,Capital Goods,mean_ic,
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),sector,Capital Goods,n_obs,8.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),sector,Finance,pooled_ic,-0.028447
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),sector,Finance,mean_ic,-0.152598
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),sector,Finance,n_obs,40.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),sector,Health Care,pooled_ic,0.169246
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),sector,Health Care,mean_ic,0.168158
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),sector,Health Care,n_obs,56.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),sector,Technology,pooled_ic,0.144092
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),sector,Technology,mean_ic,0.219025
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),sector,Technology,n_obs,48.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),sector,Transportation,pooled_ic,-0.370337
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),sector,Transportation,mean_ic,
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),sector,Transportation,n_obs,8.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),beta_bucket,low_beta,pooled_ic,0.068898
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),beta_bucket,low_beta,mean_ic,0.026428
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),beta_bucket,low_beta,n_obs,54.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),beta_bucket,mid_beta,pooled_ic,0.024277
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),beta_bucket,mid_beta,mean_ic,0.251621
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),beta_bucket,mid_beta,n_obs,53.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),beta_bucket,high_beta,pooled_ic,-0.158498
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),beta_bucket,high_beta,mean_ic,-0.175134
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),beta_bucket,high_beta,n_obs,53.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),vol_bucket,low_vol,pooled_ic,0.238469
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),vol_bucket,low_vol,mean_ic,0.2625
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),vol_bucket,low_vol,n_obs,54.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),vol_bucket,mid_vol,pooled_ic,0.387837
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),vol_bucket,mid_vol,mean_ic,0.481548
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),vol_bucket,mid_vol,n_obs,53.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),vol_bucket,high_vol,pooled_ic,-0.241132
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),vol_bucket,high_vol,mean_ic,-0.360864
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),vol_bucket,high_vol,n_obs,53.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),mcap_bucket,small_cap,pooled_ic,-0.197097
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),mcap_bucket,small_cap,mean_ic,-0.141942
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),mcap_bucket,small_cap,n_obs,54.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),mcap_bucket,mid_cap,pooled_ic,0.084093
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),mcap_bucket,mid_cap,mean_ic,0.041964
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),mcap_bucket,mid_cap,n_obs,53.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),mcap_bucket,large_cap,pooled_ic,0.372585
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),mcap_bucket,large_cap,mean_ic,0.364116
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),mcap_bucket,large_cap,n_obs,53.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),adv_bucket,low_adv,pooled_ic,0.1533
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),adv_bucket,low_adv,mean_ic,0.216288
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),adv_bucket,low_adv,n_obs,54.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),adv_bucket,mid_adv,pooled_ic,0.079234
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),adv_bucket,mid_adv,mean_ic,0.043945
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),adv_bucket,mid_adv,n_obs,53.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),adv_bucket,high_adv,pooled_ic,0.111239
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),adv_bucket,high_adv,mean_ic,0.050636
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),adv_bucket,high_adv,n_obs,53.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),month,2026-03,pooled_ic,-0.142146
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),month,2026-03,mean_ic,-0.140241
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),month,2026-03,n_obs,40.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),month,2026-04,pooled_ic,0.076251
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),month,2026-04,mean_ic,0.063725
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),month,2026-04,n_obs,60.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),month,2026-05,pooled_ic,0.097526
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),month,2026-05,mean_ic,0.128155
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),month,2026-05,n_obs,60.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),selected_book,all,avg_book_beta,1.032146
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),selected_book,all,avg_universe_beta,1.021781
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),selected_book,all,mean_selected_fwd21,0.149452
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),selected_book,all,mean_universe_fwd21,0.07605
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),selected_book,all,edge_vs_universe,0.073402
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),selected_book,all,book_hhi,0.5625
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),selected_book,all,top_sector_share,0.5625
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),selected_book,all,avg_turnover,0.357143
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),selected_book,all,cost_drag_per_rebal,0.000357
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),contribution_sector,Capital Goods,cum_contribution,0.503351
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),contribution_sector,Health Care,cum_contribution,0.052976
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),contribution_sector,Transportation,cum_contribution,0.041482
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),contribution_ticker,AAON,cum_contribution,0.503351
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),contribution_ticker,ABEO,cum_contribution,0.048371
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),contribution_ticker,AAL,cum_contribution,0.041482
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),contribution_ticker,ABUS,cum_contribution,0.006486
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),contribution_ticker,ACIU,cum_contribution,-0.00188
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,1,mean_fwd21,0.086076
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,1,n,16.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,2,mean_fwd21,0.06013
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,2,n,16.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,3,mean_fwd21,0.168222
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,3,n,16.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,4,mean_fwd21,0.074413
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,4,n,16.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,5,mean_fwd21,-0.019403
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,5,n,16.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,6,mean_fwd21,0.041809
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,6,n,16.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,7,mean_fwd21,0.11615
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,7,n,16.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,8,mean_fwd21,0.031007
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,8,n,16.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,9,mean_fwd21,0.052647
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,9,n,16.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,10,mean_fwd21,0.149452
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),decile,10,n,16.0
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),calibration,all,top_minus_bottom_spread,0.063376
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),calibration,all,monotonicity_score,-0.127273
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),calibration,all,bottom_decile_mean,0.086076
+Post-Training OOS [CLEAN] (2026-03-20 to 2026-05-15),calibration,all,top_decile_mean,0.149452

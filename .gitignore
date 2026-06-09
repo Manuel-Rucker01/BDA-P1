@@ -8,3 +8,9 @@ __pycache__.DS_Store
 # Generated backtest artifact
 DataAnalysisPipeline2/scripts/backtests/unseen_oos_comparison.md
 DataAnalysisPipeline2/scripts/backtests/rebal_compare_full.md
+# Dashboard runtime cache
+DataAnalysisPipeline2/trading_agent/agent_logs/dashboard_pending.parquet
+DataAnalysisPipeline2/dashboard/__pycache__/
+# Large regenerable candidate artifacts (PIT-safe KG + full-universe price cache)
+ExploitationZone/financial_knowledge_graph_pitsafe.ttl
+DataAnalysisPipeline2/results/_fulluniv_price_cache.parquet

@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BDA Quant Dashboard</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">◧</span>
+      <div>
+        <h1>BDA Quant Dashboard</h1>
+        <div class="subtitle">KG-embedding ensemble · regime-gated · inverse-vol top-K</div>
+      </div>
+    </div>
+    <div id="server-pill" class="pill pill-muted">connecting…</div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="run">① Run &amp; Propose</button>
+    <button class="tab" data-tab="portfolio">② Portfolio</button>
+    <button class="tab" data-tab="history">③ History</button>
+    <button class="tab" data-tab="about">④ About &amp; Login</button>
+  </nav>
+
+  <main>
+    <!-- ────────────── TAB 1: RUN & PROPOSE ────────────── -->
+    <section id="tab-run" class="tab-panel active">
+      <div class="card config-card">
+        <h2>Configuration</h2>
+        <div class="config-grid">
+          <label>Universe
+            <select id="cfg-universe">
+              <option value="full">Full modelled universe (~1,890)</option>
+              <option value="high_alpha">High-Alpha basket (20, fast)</option>
+              <option value="safe">Safe diversified basket (20)</option>
+              <option value="top_mcap">Top market-cap (50)</option>
+            </select>
+          </label>
+          <label>Strategy
+            <select id="cfg-strategy">
+              <option value="top_k">Concentrated top-K</option>
+              <option value="high_confidence">High-confidence long</option>
+              <option value="regime_filtered">Regime-filtered L/S</option>
+            </select>
+          </label>
+          <label>Top-K holdings
+            <input id="cfg-topk" type="number" min="1" max="50" value="10" />
+          </label>
+          <label>Force regime
+            <select id="cfg-regime">
+              <option value="">Auto (detect)</option>
+              <option value="bull">Bull</option>
+              <option value="bear">Bear</option>
+            </select>
+          </label>
+        </div>
+        <button id="btn-run" class="btn btn-primary">▶ Run Pipeline</button>
+        <div id="run-progress" class="progress hidden">
+          <div class="spinner"></div>
+          <span id="run-stage">Starting…</span>
+        </div>
+      </div>
+
+      <div id="proposal-card" class="card hidden">
+        <div class="proposal-head">
+          <h2>Proposed Portfolio</h2>
+          <div id="proposal-meta" class="meta-row"></div>
+        </div>
+        <table class="data-table">
+          <thead>
+            <tr><th>#</th><th>Ticker</th><th>Sector</th><th class="num">Weight</th>
+                <th class="num">Pred Rank</th><th class="num">Price</th>
+                <th class="num">Kalman β</th><th>Side</th></tr>
+          </thead>
+          <tbody id="proposal-body"></tbody>
+        </table>
+        <div class="execute-row">
+          <button id="btn-execute" class="btn btn-danger">⚡ Send Orders to Alpaca</button>
+          <span class="hint">Submits this exact book to your Alpaca account.</span>
+        </div>
+        <div id="execute-result"></div>
+      </div>
+    </section>
+
+    <!-- ────────────── TAB 2: PORTFOLIO ────────────── -->
+    <section id="tab-portfolio" class="tab-panel">
+      <div class="toolbar">
+        <button id="btn-refresh-portfolio" class="btn">↻ Refresh</button>
+        <span id="portfolio-asof" class="hint"></span>
+      </div>
+      <div id="account-cards" class="cards-row"></div>
+      <div class="card">
+        <h2>Holdings</h2>
+        <table class="data-table">
+          <thead>
+            <tr><th>Ticker</th><th class="num">Qty</th><th class="num">Avg Cost</th>
+                <th class="num">Current</th><th class="num">Cost Basis</th>
+                <th class="num">Mkt Value</th><th class="num">Unrealized P/L</th>
+                <th class="num">P/L %</th></tr>
+          </thead>
+          <tbody id="holdings-body"></tbody>
+        </table>
+        <div id="holdings-empty" class="empty hidden">No open positions.</div>
+      </div>
+    </section>
+
+    <!-- ────────────── TAB 3: HISTORY ────────────── -->
+    <section id="tab-history" class="tab-panel">
+      <div class="toolbar">
+        <button id="btn-refresh-history" class="btn">↻ Refresh</button>
+      </div>
+      <div class="chart-grid">
+        <div class="card"><h2>Equity Curve</h2><canvas id="chart-equity"></canvas></div>
+        <div class="card"><h2>Drawdown (%)</h2><canvas id="chart-drawdown"></canvas></div>
+        <div class="card chart-wide"><h2>Realized vs Benchmark (per rebalance)</h2>
+          <canvas id="chart-attribution"></canvas></div>
+      </div>
+      <div class="card">
+        <h2>Recent Trades</h2>
+        <table class="data-table">
+          <thead>
+            <tr><th>Date</th><th>Ticker</th><th>Action</th><th class="num">Target W</th>
+                <th class="num">Notional</th><th class="num">Ref Price</th>
+                <th>Side</th><th>Mode</th></tr>
+          </thead>
+          <tbody id="trades-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ────────────── TAB 4: ABOUT & LOGIN ────────────── -->
+    <section id="tab-about" class="tab-panel">
+      <div class="card">
+        <h2>About this dashboard</h2>
+        <p>This dashboard proposes a portfolio using ML models under the hood. It is designed to help non-technical users understand and run the same pipeline an analyst would.</p>
+        <p><b>What the model does</b>: It analyses many signals (price history, fundamental/alternative features, knowledge-graph embeddings) and ranks stocks by expected alpha. The top-K strategy concentrates on the highest ranked names; other strategies trade more conservatively.</p>
+        <p><b>Strategies</b>:
+          <ul>
+            <li><b>Concentrated top-K</b>: picks the top N ranked names and allocates by inverse volatility.</li>
+            <li><b>High-confidence long</b>: only long positions with high model confidence.</li>
+            <li><b>Regime-filtered L/S</b>: adjusts long/short exposure depending on detected market regime (bull/bear).</li>
+          </ul>
+        </p>
+        <p><b>Important:</b> This is a tool for research and paper trading. It is <i>not</i> investment advice. Models can be wrong; backtests may not represent live results. Use small sizes and paper accounts first.</p>
+      </div>
+
+      <div class="card">
+        <h2>Profile & Alpaca configuration</h2>
+        <p id="profile-status" class="hint">Loading…</p>
+        <form id="profile-form" onsubmit="return false;">
+          <label>Your name<br><input id="profile-name" type="text" /></label>
+          <label><input id="profile-use-env" type="checkbox" /> Use Alpaca API key from environment variables (ALPACA_API_KEY / ALPACA_API_SECRET)</label>
+          <div id="env-info" class="hint"></div>
+          <label>Alpaca API Key<br><input id="profile-alpaca-key" type="text" /></label>
+          <label>Alpaca API Secret<br><input id="profile-alpaca-secret" type="password" /></label>
+          <label><input id="profile-paper-trading" type="checkbox" /> Use paper trading (recommended)</label>
+          <div class="form-row">
+            <button id="btn-save-profile" class="btn btn-primary">Save profile</button>
+            <span class="hint">If you choose environment, your stored keys will be ignored.</span>
+          </div>
+        </form>
+      </div>
+    </section>
+
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

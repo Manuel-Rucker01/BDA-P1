@@ -22,14 +22,20 @@ ROOT_DIR = os.path.abspath(os.path.join(PIPELINE_DIR, ".."))
 EXPLOITATION_DIR = os.path.join(ROOT_DIR, "ExploitationZone")
 MODEL_PATH = os.path.join(EXPLOITATION_DIR, "best_model.pkl")
 MACRO_KG_PATH = os.path.join(EXPLOITATION_DIR, "macroeconomic_graph.ttl")
+RESULTS_DIR = os.path.join(PIPELINE_DIR, "results")
 
 # Ensure trading_agent can be imported
 if PIPELINE_DIR not in sys.path:
     sys.path.append(PIPELINE_DIR)
 
 from trading_agent import config
-from trading_agent.bot import GaussianHMM, KalmanBetaFilter, compute_live_features, load_macro_features, fetch_company_metadata, select_top_k_with_sector_cap
+from trading_agent.bot import GaussianHMM, KalmanBetaFilter, compute_live_features, load_macro_features, fetch_company_metadata, build_regime_filtered_weights
 from trading_agent.news_sentiment import compute_asof_news_features
+from common import (
+    inverse_volatility_weights_from_frame as _inverse_vol_weights,
+    select_top_k as _select_top_k,
+    weighted_return,
+)
 
 
 def augment_with_news(df_all_feat, friday_dates, start_date, end_date, tabular_cols):
@@ -85,72 +91,12 @@ try:
 except Exception as _e:
     print(f'[shim] could not pre-register TorchMLPRegressor: {_e}')
 # ──────────────────────────────────────────────────────────────────────────
-
-
-
-# ── Top-K selection helper (Part 5) ──────────────────────────────────────────
-def _inverse_vol_weights(sel_df, target_exposure=1.0):
-    """Risk-parity-lite intra-basket sizing controlled by config.WEIGHTING_SCHEME.
-    w_i proportional to 1/realized_vol_i with a per-name cap, so high-volatility
-    names take less capital and don't dominate the concentrated book's drawdown.
-    Falls back to equal weight when scheme != 'inverse_vol' or vol col missing."""
-    import numpy as _np
-    if sel_df is None or len(sel_df) == 0:
-        return {}
-    tickers = sel_df["ticker"].tolist()
-    scheme = getattr(config, "WEIGHTING_SCHEME", "inverse_vol")
-    if scheme != "inverse_vol" or "return_volatility_20d" not in sel_df.columns:
-        w = _np.ones(len(tickers)) / len(tickers)
-    else:
-        v = _np.maximum(sel_df["return_volatility_20d"].to_numpy(dtype=float),
-                        getattr(config, "VOL_FLOOR", 1e-3))
-        w = 1.0 / v
-        w = w / w.sum()
-        cap = getattr(config, "MAX_POSITION_WEIGHT", 0.25)
-        capped = _np.zeros(len(w), dtype=bool)
-        for _ in range(6):
-            over = (w > cap + 1e-12) & ~capped
-            if not over.any():
-                break
-            w[over] = cap
-            capped |= over
-            free = ~capped
-            remaining = 1.0 - float(w[capped].sum())
-            if not free.any() or remaining <= 0:
-                w[free] = 0.0
-                break
-            w[free] = w[free] / w[free].sum() * remaining
-    w = w * target_exposure
-    return {t: float(wi) for t, wi in zip(tickers, w)}
-
-
-def _select_top_k(friday_obs, pct_threshold=None, top_k=None):
-    '''top-pct% gate -> sector-capped top-K. Mirrors live
-    bot.calculate_target_weights so the backtest reflects the deployed selector.
-    Defaults come from config (TOP_PCT_THRESHOLD / TOP_K_HOLDINGS /
-    MAX_SECTOR_WEIGHT) and can be overridden via env for A/B runs.'''
-    if pct_threshold is None:
-        pct_threshold = float(os.environ.get(
-            "BACKTEST_TOP_PCT", str(getattr(config, "TOP_PCT_THRESHOLD", 5.0))))
-    if top_k is None:
-        top_k = int(os.environ.get(
-            "BACKTEST_TOP_K", str(getattr(config, "TOP_K_HOLDINGS", 20))))
-    max_sec = float(os.environ.get(
-        "BACKTEST_MAX_SECTOR", str(getattr(config, "MAX_SECTOR_WEIGHT", 1.0))))
-    cutoff = 1.0 - (pct_threshold / 100.0)
-    gated = friday_obs[friday_obs["pred_proba"] >= cutoff].copy()
-    gated = gated.sort_values("pred_proba", ascending=False)
-    if gated.empty:
-        gated = friday_obs.sort_values("pred_proba", ascending=False).copy()
-    return select_top_k_with_sector_cap(gated, top_k, max_sec).copy()
-# ────────────────────────────────────────────────────────────────────────────
-
-def calculate_metrics(portfolio_values, periods_per_year=52):
+def calculate_metrics(portfolio_values):
     returns = pd.Series(portfolio_values).pct_change().dropna()
     if returns.empty or returns.std() == 0:
         return 0.0, 0.0, 0.0
     cum_return = (portfolio_values[-1] - portfolio_values[0]) / portfolio_values[0] * 100
-    sharpe = np.sqrt(periods_per_year) * returns.mean() / returns.std()
+    sharpe = np.sqrt(52) * returns.mean() / returns.std()
     running_max = pd.Series(portfolio_values).cummax()
     drawdowns = (portfolio_values - running_max) / running_max * 100
     max_dd = drawdowns.min()
@@ -178,34 +124,8 @@ def information_ratio(strategy_values, benchmark_values, periods_per_year=52):
         return float("nan")
     return float(np.sqrt(periods_per_year) * active.mean() / sd)
 
-def build_rebalance_schedule(friday_dates, start_date, end_date, freq="weekly"):
-    """Rebalance dates within [start, end] for the requested cadence.
-
-      * weekly  -> every Friday (matches the model's native trading grid).
-      * monthly -> the FIRST Friday of each calendar month. The book picked on
-                   that Friday is then held until the next month's first Friday,
-                   so the holding period matches the model's 30-day target
-                   horizon (which is *why* monthly is the natural cadence).
-
-    Both schedules are strict subsets of the same Friday grid, so the as-of
-    news features and price lookups built for the weekly grid already cover the
-    monthly dates -- no recomputation needed.
-    """
-    win = [d for d in friday_dates if start_date <= d <= end_date]
-    if freq == "weekly":
-        return win
-    seen, monthly = set(), []
-    for d in win:
-        ym = d[:7]  # 'YYYY-MM'
-        if ym not in seen:
-            seen.add(ym)
-            monthly.append(d)
-    return monthly
-
-
-def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_embeddings, scaler, pca, trained_models, mix_models, tabular_cols, pca_cols, start_date, end_date, initial_equity=10000.0, rebalance_dates=None, periods_per_year=52, cost_bps=0.0):
-    horizon_fridays = (list(rebalance_dates) if rebalance_dates is not None
-                       else [d for d in friday_dates if d >= start_date and d <= end_date])
+def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_embeddings, scaler, pca, trained_models, mix_models, tabular_cols, pca_cols, start_date, end_date, initial_equity=10000.0):
+    horizon_fridays = [d for d in friday_dates if d >= start_date and d <= end_date]
     if not horizon_fridays:
         return None
     
@@ -218,19 +138,12 @@ def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_emb
     equity_sma = initial_equity
     equity_hmm = initial_equity
     equity_high_long = initial_equity
-    equity_high_long_net = initial_equity   # top-K book net of turnover cost
-
+    
     bh_values = [initial_equity]
     sma_values = [initial_equity]
     hmm_values = [initial_equity]
     hl_values = [initial_equity]
-    hl_net_values = [initial_equity]
-
-    # Net-of-cost bookkeeping for the deployed top-K strategy.
-    prev_hl_w = {}
-    total_turnover = 0.0
-    n_rebalances = 0
-
+    
     bull_weeks = 0
     bear_weeks = 0
     
@@ -266,7 +179,6 @@ def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_emb
             sma_values.append(equity_sma)
             hmm_values.append(equity_hmm)
             hl_values.append(equity_high_long)
-            hl_net_values.append(equity_high_long_net)
             continue
             
         # KG projection
@@ -277,7 +189,7 @@ def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_emb
         emb_df["ticker"] = found_tickers
         friday_obs = friday_obs.merge(emb_df, on="ticker", how="inner")
         
-        X_tab = friday_obs[tabular_cols].fillna(0).values.astype(np.float32)
+        X_tab = friday_obs.reindex(columns=tabular_cols, fill_value=0).fillna(0).values.astype(np.float32)
         X_emb = friday_obs[pca_cols].fillna(0).values.astype(np.float32)
         X_full = np.concatenate([X_tab, X_emb], axis=1)
         if _CS_Z:
@@ -350,22 +262,18 @@ def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_emb
         bh_values.append(equity_bh)
         
         # --- B. SMA50 Baseline ---
-        sma_raw = friday_obs[["ticker", "pred_proba"]].copy()
-        sma_raw["raw_weight"] = sma_raw["pred_proba"] - 0.5
-        
-        sma_longs = sma_raw[sma_raw["raw_weight"] >= 0.02].copy()
-        if sma_is_bull:
-            sma_shorts = pd.DataFrame()
-        else:
-            sma_shorts = sma_raw[sma_raw["raw_weight"] <= -0.02].copy()
-            
-        sma_selected = pd.concat([sma_longs, sma_shorts])
-        sma_abs_sum = sma_selected["raw_weight"].abs().sum()
-        
-        sma_weights = {}
-        if sma_abs_sum > 0:
-            sma_selected["target_weight"] = (sma_selected["raw_weight"] / sma_abs_sum) * config.TARGET_EXPOSURE
-            sma_weights = sma_selected.set_index("ticker")["target_weight"].to_dict()
+        sma_weights, _ = build_regime_filtered_weights(
+            friday_obs[["ticker", "pred_proba"]].copy(),
+            is_bull=sma_is_bull,
+            target_exposure=config.TARGET_EXPOSURE,
+            confidence_threshold=0.02,
+            max_gross=config.MAX_GROSS_EXPOSURE,
+            max_net=config.MAX_NET_EXPOSURE,
+            max_short=config.MAX_SHORT_EXPOSURE,
+            max_long=config.MAX_LONG_EXPOSURE,
+            max_position=config.MAX_POSITION_WEIGHT,
+            apply_kalman_short_scaling=False,
+        )
             
         sma_ret = sum(w * ticker_returns.get(t, 0.0) for t, w in sma_weights.items())
         equity_sma *= (1.0 + sma_ret)
@@ -374,29 +282,18 @@ def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_emb
         # --- C. HMM + Kalman Upgraded ---
         hmm_raw = friday_obs[["ticker", "pred_proba"]].copy()
         hmm_raw["kalman_beta"] = hmm_raw["ticker"].map(ticker_betas).fillna(1.0)
-        hmm_raw["raw_weight"] = hmm_raw["pred_proba"] - 0.5
-        
-        def scale_short(row):
-            w = row["raw_weight"]
-            if w < 0:
-                beta = row["kalman_beta"]
-                return w / max(abs(beta), 0.5)
-            return w
-        hmm_raw["raw_weight"] = hmm_raw.apply(scale_short, axis=1)
-        
-        hmm_longs = hmm_raw[hmm_raw["raw_weight"] >= 0.02].copy()
-        if hmm_is_bull:
-            hmm_shorts = pd.DataFrame()
-        else:
-            hmm_shorts = hmm_raw[hmm_raw["raw_weight"] <= -0.02].copy()
-            
-        hmm_selected = pd.concat([hmm_longs, hmm_shorts])
-        hmm_abs_sum = hmm_selected["raw_weight"].abs().sum()
-        
-        hmm_weights = {}
-        if hmm_abs_sum > 0:
-            hmm_selected["target_weight"] = (hmm_selected["raw_weight"] / hmm_abs_sum) * config.TARGET_EXPOSURE
-            hmm_weights = hmm_selected.set_index("ticker")["target_weight"].to_dict()
+        hmm_weights, _ = build_regime_filtered_weights(
+            hmm_raw,
+            is_bull=hmm_is_bull,
+            target_exposure=config.TARGET_EXPOSURE,
+            confidence_threshold=0.02,
+            max_gross=config.MAX_GROSS_EXPOSURE,
+            max_net=config.MAX_NET_EXPOSURE,
+            max_short=config.MAX_SHORT_EXPOSURE,
+            max_long=config.MAX_LONG_EXPOSURE,
+            max_position=config.MAX_POSITION_WEIGHT,
+            apply_kalman_short_scaling=True,
+        )
             
         hmm_ret = sum(w * ticker_returns.get(t, 0.0) for t, w in hmm_weights.items())
         equity_hmm *= (1.0 + hmm_ret)
@@ -405,30 +302,16 @@ def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_emb
         # --- D. High-Confidence Longs (P >= 0.53) ---
         high_long_df = _select_top_k(friday_obs)
         _hl_w = _inverse_vol_weights(high_long_df, target_exposure=1.0)
-        ret_high_long = sum(wt * ticker_returns.get(t, 0.0) for t, wt in _hl_w.items())
-
+        ret_high_long = weighted_return(_hl_w, ticker_returns)
+        
         equity_high_long *= (1.0 + ret_high_long)
         hl_values.append(equity_high_long)
-
-        # Net-of-cost: turnover = sum |w_new - w_old| over the union of names;
-        # one-way friction is cost_bps. Weekly rebalancing turns the book over
-        # ~4x as often as monthly, so this is where a higher cadence is paid for.
-        names = set(_hl_w) | set(prev_hl_w)
-        turnover = sum(abs(_hl_w.get(t, 0.0) - prev_hl_w.get(t, 0.0)) for t in names)
-        cost = turnover * (cost_bps / 10000.0)
-        equity_high_long_net *= (1.0 + ret_high_long - cost)
-        hl_net_values.append(equity_high_long_net)
-        prev_hl_w = _hl_w
-        total_turnover += turnover
-        n_rebalances += 1
         
-    bh_cum, bh_sharpe, bh_dd = calculate_metrics(bh_values, periods_per_year)
-    sma_cum, sma_sharpe, sma_dd = calculate_metrics(sma_values, periods_per_year)
-    hmm_cum, hmm_sharpe, hmm_dd = calculate_metrics(hmm_values, periods_per_year)
-    hl_cum, hl_sharpe, hl_dd = calculate_metrics(hl_values, periods_per_year)
-    hl_ir = information_ratio(hl_values, bh_values, periods_per_year)  # vs Buy & Hold benchmark
-    hl_net_cum, hl_net_sharpe, hl_net_dd = calculate_metrics(hl_net_values, periods_per_year)
-    hl_net_ir = information_ratio(hl_net_values, bh_values, periods_per_year)
+    bh_cum, bh_sharpe, bh_dd = calculate_metrics(bh_values)
+    sma_cum, sma_sharpe, sma_dd = calculate_metrics(sma_values)
+    hmm_cum, hmm_sharpe, hmm_dd = calculate_metrics(hmm_values)
+    hl_cum, hl_sharpe, hl_dd = calculate_metrics(hl_values)
+    hl_ir = information_ratio(hl_values, bh_values)  # vs Buy & Hold benchmark
 
     return {
         "bh_cum": bh_cum, "bh_val": equity_bh, "bh_sharpe": bh_sharpe, "bh_dd": bh_dd,
@@ -436,11 +319,6 @@ def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_emb
         "hmm_cum": hmm_cum, "hmm_val": equity_hmm, "hmm_sharpe": hmm_sharpe, "hmm_dd": hmm_dd,
         "hl_cum": hl_cum, "hl_val": equity_high_long, "hl_sharpe": hl_sharpe, "hl_dd": hl_dd,
         "hl_ir": hl_ir,
-        "hl_net_cum": hl_net_cum, "hl_net_val": equity_high_long_net,
-        "hl_net_sharpe": hl_net_sharpe, "hl_net_dd": hl_net_dd, "hl_net_ir": hl_net_ir,
-        "n_rebalances": n_rebalances, "total_turnover": total_turnover,
-        "avg_turnover": (total_turnover / n_rebalances) if n_rebalances else 0.0,
-        "cost_bps": cost_bps, "periods_per_year": periods_per_year,
         "bulls": bull_weeks, "bears": bear_weeks
     }
 
@@ -556,15 +434,7 @@ def main():
     if os.environ.get("BACKTEST_POST_ONLY", "0") == "1":
         oos_horizons = {k: v for k, v in oos_horizons.items() if k.startswith("Post-Training")}
     
-    # Weekly-vs-monthly rebalance comparison (opt-in so the default run and the
-    # report's headline numbers stay reproducible). When BACKTEST_COMPARE_REBAL=1
-    # each window is also run under a weekly and a monthly schedule, net of a
-    # per-rebalance turnover cost (BACKTEST_COST_BPS, default 10bps one-way).
-    COMPARE_REBAL = os.environ.get("BACKTEST_COMPARE_REBAL", "0") == "1"
-    COST_BPS = float(os.environ.get("BACKTEST_COST_BPS", "10"))
-
     results = {}
-    compare_results = {}
     for label, dates in oos_horizons.items():
         start_date, end_date = dates
         print(f"\nRunning backtest for {label}...")
@@ -576,19 +446,6 @@ def main():
         )
         if res:
             results[label] = res
-
-        if COMPARE_REBAL:
-            cmp = {}
-            for freq, ppy in (("weekly", 52), ("monthly", 12)):
-                sched = build_rebalance_schedule(friday_dates, start_date, end_date, freq)
-                print(f"   [rebal-compare] {freq:<7}: {len(sched)} rebalances "
-                      f"| cost={COST_BPS:.0f}bps | annualise={ppy}/yr")
-                cmp[freq] = run_backtest_unseen(
-                    df_win, df_full, gspc_df, friday_dates, company_embeddings,
-                    scaler, pca, trained_models, mix_models, tabular_cols, pca_cols,
-                    start_date, end_date, initial_equity=10000.0,
-                    rebalance_dates=sched, periods_per_year=ppy, cost_bps=COST_BPS)
-            compare_results[label] = cmp
             
     # 7. Print Master Results Table
     print("\n" + "=" * 125)
@@ -609,67 +466,12 @@ def main():
         print("-" * 135)
 
     print("=" * 135)
-
-    # ── Weekly-vs-Monthly rebalance comparison (deployed top-K book) ──────────
-    rebal_md = None
-    if COMPARE_REBAL and compare_results:
-        print("\n" + "=" * 135)
-        print(f"WEEKLY vs MONTHLY REBALANCE — deployed top-K book, net of {COST_BPS:.0f}bps one-way turnover cost")
-        print("=" * 135)
-        print(f"{'Horizon (Unseen Window)':<52} | {'Cadence':<8} | {'#Rebal':>6} | "
-              f"{'AvgTurn':>7} | {'Gross':>9} | {'Net':>9} | {'Sharpe':>7} | {'MaxDD':>7} | {'IR vs B&H':>9}")
-        print("-" * 135)
-        rebal_lines = []
-        for label, cmp in compare_results.items():
-            for i, freq in enumerate(("weekly", "monthly")):
-                r = cmp.get(freq)
-                if not r:
-                    continue
-                wlabel = label if i == 0 else ""
-                print(f"{wlabel:<52} | {freq:<8} | {r['n_rebalances']:>6d} | "
-                      f"{r['avg_turnover']:>7.3f} | {r['hl_cum']:>8.2f}% | {r['hl_net_cum']:>8.2f}% | "
-                      f"{r['hl_net_sharpe']:>7.3f} | {r['hl_net_dd']:>6.2f}% | {r['hl_net_ir']:>9.3f}")
-                rebal_lines.append((label, freq, r))
-            # quick verdict per window
-            w, m = cmp.get("weekly"), cmp.get("monthly")
-            if w and m:
-                winner = "MONTHLY" if m["hl_net_cum"] >= w["hl_net_cum"] else "WEEKLY"
-                gap = m["hl_net_cum"] - w["hl_net_cum"]
-                print(f"{'':<52} | -> net winner: {winner} (monthly - weekly = {gap:+.2f} pts net return)")
-            print("-" * 135)
-        print("=" * 135)
-
-        # Build a markdown block to append to the artifact.
-        rebal_md = ["\n## Weekly vs Monthly Rebalance (deployed top-K book)\n",
-                    f"\nNet of **{COST_BPS:.0f} bps** one-way turnover cost. Monthly = first Friday of each "
-                    "month, held to the next (matches the model's 30-day target horizon). "
-                    "Sharpe/IR annualised at 52/yr (weekly) and 12/yr (monthly).\n\n",
-                    "| Unseen Horizon | Cadence | # Rebalances | Avg Turnover | Gross Return | "
-                    "Net Return | Net Sharpe | Net Max DD | Net IR vs B&H |\n",
-                    "| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |\n"]
-        for label, cmp in compare_results.items():
-            for freq in ("weekly", "monthly"):
-                r = cmp.get(freq)
-                if not r:
-                    continue
-                rebal_md.append(
-                    f"| {label} | {freq} | {r['n_rebalances']} | {r['avg_turnover']:.3f} | "
-                    f"{r['hl_cum']:+.2f}% | {r['hl_net_cum']:+.2f}% | {r['hl_net_sharpe']:.3f} | "
-                    f"{r['hl_net_dd']:.2f}% | {r['hl_net_ir']:.3f} |\n")
-        rebal_md = "".join(rebal_md)
-
-    # Save a detailed comparison results file. Defaults to a repo-local path so
-    # the run never crashes on a missing external directory; override with
-    # BACKTEST_ARTIFACT to point elsewhere.
-    artifact_path = os.environ.get(
-        "BACKTEST_ARTIFACT",
-        os.path.join(SCRIPT_DIR, "unseen_oos_comparison.md"))
-    try:
-        os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
-    except Exception:
-        pass
+    
+    # Save a detailed comparison results file in brain/artifact directory
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    artifact_path = os.path.join(RESULTS_DIR, "unseen_oos_comparison.md")
     print(f"[Exporting] Writing detailed comparisons to {artifact_path}...")
-
+    
     with open(artifact_path, "w") as f:
         f.write("# Pure Out-of-Sample (OOS) Backtest on Unseen Market Windows\n\n")
         f.write("> [!IMPORTANT]\n")
@@ -695,10 +497,7 @@ def main():
         f.write("1. **Outperformance in Unseen Past**: During the 18 months of past unseen market data (before the model's training range), the **HMM + Kalman Upgraded** strategy yielded **+72.15%** outperforming SMA50 baseline (+66.45%) and drastically compressed maximum drawdowns. Meanwhile, **High-Confidence Longs** compounded to **+175.26%**, beating Buy & Hold (+66.52%) by a massive margin.\n")
         f.write("2. **Robustness in Unseen Future**: In the recent 2 months of unseen future data (following the training range), the **High-Confidence Longs** strategy gained **+6.20%** outperforming broad benchmarks.\n")
         f.write("3. **Scientific Proof of Predictive Power**: This rigorous separation mathematically validates that the Soft-Voting Ensemble + GCN Relational KGE architecture does *not* rely on in-sample leakage, proving real quantitative efficacy.\n")
-
-        if rebal_md:
-            f.write(rebal_md)
-
+        
     print("[Success] master unseen OOS comparisons compiled cleanly.")
 
 if __name__ == "__main__":
