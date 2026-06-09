@@ -1,0 +1,57 @@
+window,universe,strategy,metric,value
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K (un-targeted),net_cum,22.54656770708681
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K (un-targeted),sharpe,5.864606117916197
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K (un-targeted),max_dd,-0.7676203975708438
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K (un-targeted),real_vol,0.2662876273547292
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K (un-targeted),avg_lev,1.0
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K (un-targeted),max_lev,1.0
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K (un-targeted),avg_turnover,0.5758974141623953
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K vol-targeted @10%,net_cum,18.354777649394173
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K vol-targeted @10%,sharpe,5.465978411592508
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K vol-targeted @10%,max_dd,-0.2954670082309922
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K vol-targeted @10%,real_vol,0.23596390281514196
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K vol-targeted @10%,avg_lev,0.8227768294839152
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K vol-targeted @10%,max_lev,1.0
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K vol-targeted @10%,avg_turnover,0.5874357112064327
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K vol-targeted @15%,net_cum,19.608899197255436
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K vol-targeted @15%,sharpe,5.717823895573624
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K vol-targeted @15%,max_dd,-0.44320051234649166
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K vol-targeted @15%,real_vol,0.23974788352280244
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K vol-targeted @15%,avg_lev,0.8770223870830157
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K vol-targeted @15%,max_lev,1.0
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,candv1 top-K vol-targeted @15%,avg_turnover,0.5845694523449326
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,EW Buy&Hold,net_cum,24.183412190984967
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,EW Buy&Hold,sharpe,4.399305822910878
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,EW Buy&Hold,max_dd,-1.6519872437639103
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,EW Buy&Hold,real_vol,0.3852074120532716
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,EW Buy&Hold,avg_lev,1.0
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,EW Buy&Hold,max_lev,1.0
+Post-Training OOS (2026-03-20 to 2026-05-15),high_alpha20,EW Buy&Hold,avg_turnover,0.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K (un-targeted),net_cum,39.341979327364825
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K (un-targeted),sharpe,1.0304541887195418
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K (un-targeted),max_dd,-15.321671384084755
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K (un-targeted),real_vol,0.2201046603656308
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K (un-targeted),avg_lev,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K (un-targeted),max_lev,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K (un-targeted),avg_turnover,0.5231159969761665
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K vol-targeted @10%,net_cum,18.54223959288559
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K vol-targeted @10%,sharpe,0.9245101553951939
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K vol-targeted @10%,max_dd,-9.597786120997448
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K vol-targeted @10%,real_vol,0.1203163953621258
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K vol-targeted @10%,avg_lev,0.5200857296039249
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K vol-targeted @10%,max_lev,1.0158192096935978
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K vol-targeted @10%,avg_turnover,0.2950617537648263
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K vol-targeted @15%,net_cum,25.853989966266067
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K vol-targeted @15%,sharpe,0.8998266170715439
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K vol-targeted @15%,max_dd,-12.477912570807744
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K vol-targeted @15%,real_vol,0.17266501080438768
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K vol-targeted @15%,avg_lev,0.7504376671760005
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K vol-targeted @15%,max_lev,1.5
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,candv1 top-K vol-targeted @15%,avg_turnover,0.42315720570852533
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,EW Buy&Hold,net_cum,27.428539740458223
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,EW Buy&Hold,sharpe,0.7720880427585615
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,EW Buy&Hold,max_dd,-17.03243019980296
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,EW Buy&Hold,real_vol,0.2238348126352065
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,EW Buy&Hold,avg_lev,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,EW Buy&Hold,max_lev,1.0
+Pre-Training OOS (2023-07-01 to 2025-03-01),high_alpha20,EW Buy&Hold,avg_turnover,0.0
