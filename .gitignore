@@ -14,3 +14,4 @@ DataAnalysisPipeline2/dashboard/__pycache__/
 # Large regenerable candidate artifacts (PIT-safe KG + full-universe price cache)
 ExploitationZone/financial_knowledge_graph_pitsafe.ttl
 DataAnalysisPipeline2/results/_fulluniv_price_cache.parquet
+DataAnalysisPipeline2/results/_livecf_price_cache.parquet
