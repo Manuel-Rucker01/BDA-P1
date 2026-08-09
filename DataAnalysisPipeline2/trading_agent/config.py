@@ -64,6 +64,13 @@ CONFIDENCE_THRESHOLD = 0.53      # Probability threshold for High-Confidence Lon
 TARGET_EXPOSURE = 1.0           # Target total portfolio exposure
 MIN_ORDER_VALUE = 5.0           # Minimum USD order limit to avoid tiny fraction order rejections
 
+# --- Drawdown circuit breaker ---
+# Peak-to-trough drawdown (%) at which the bot halts and refuses to trade until
+# an operator manually clears the halt file. Set to 15% (was an implicit 5%
+# default): this concentrated book routinely swings ~10%, so a 5% stop re-trips
+# on every run. Raise/lower to match your real risk tolerance.
+DRAWDOWN_LIMIT_PCT = 15.0
+
 # --- Portfolio exposure guardrails (used by regime_filtered long/short mode) ---
 # Gross exposure is sum(abs(weights)); net exposure is abs(sum(weights)).
 # Side caps are applied before gross/net scaling so short exposure cannot grow
