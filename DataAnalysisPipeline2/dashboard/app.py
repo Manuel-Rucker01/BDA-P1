@@ -63,8 +63,17 @@ def api_status():
     except Exception:
         profile = {}
     env_key = os.getenv("ALPACA_API_KEY") or os.getenv("APCA_API_KEY")
-    env_secret = os.getenv("ALPACA_API_SECRET") or os.getenv("APCA_API_SECRET")
-    configured = bool((profile.get("use_env") and env_key and env_secret) or (profile.get("alpaca_key") and profile.get("alpaca_secret")) or (env_key and env_secret))
+    # config.py loads trading_agent/.env, where the secret is ALPACA_SECRET_KEY;
+    # accept that name too (the trading code uses it) plus the legacy variants.
+    env_secret = (os.getenv("ALPACA_SECRET_KEY") or os.getenv("ALPACA_API_SECRET")
+                  or os.getenv("APCA_API_SECRET"))
+    configured = bool(
+        # svc.server_status() already checks config.ALPACA_* which loads the .env,
+        # so trust it first instead of only the raw process environment.
+        status.get("alpaca_configured")
+        or (profile.get("use_env") and env_key and env_secret)
+        or (profile.get("alpaca_key") and profile.get("alpaca_secret"))
+        or (env_key and env_secret))
     status["alpaca_configured"] = configured
     if "paper_trading" in profile:
         status["paper_trading"] = profile.get("paper_trading")
