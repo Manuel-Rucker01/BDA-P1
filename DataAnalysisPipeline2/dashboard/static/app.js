@@ -39,20 +39,55 @@ let SERVER = {};
 async function loadStatus() {
   try {
     SERVER = await api("/api/status");
+    renderAccounts(SERVER);
+    const active = (SERVER.accounts || []).find(a => a.active);
+    const label = active ? active.label : "Account";
     const pill = $("#server-pill");
     if (!SERVER.alpaca_configured) {
-      pill.textContent = "Alpaca not configured";
+      pill.textContent = `${label}: no keys`;
       pill.className = "pill pill-warn";
     } else if (SERVER.paper_trading) {
-      pill.textContent = "PAPER trading";
+      pill.textContent = `PAPER · ${label}`;
       pill.className = "pill pill-ok";
     } else {
-      pill.textContent = "● LIVE trading";
+      pill.textContent = `● LIVE · ${label}`;
       pill.className = "pill pill-live";
     }
     if (SERVER.defaults) $("#cfg-topk").value = SERVER.defaults.top_k;
   } catch {
     $("#server-pill").textContent = "server offline";
+  }
+}
+
+// Populate the header account switcher and wire the change handler once.
+function renderAccounts(server) {
+  const sel = $("#account-switcher");
+  if (!sel || !server.accounts) return;
+  const cur = sel.value;
+  sel.innerHTML = "";
+  for (const a of server.accounts) {
+    const opt = document.createElement("option");
+    opt.value = a.name;
+    opt.textContent = `${a.label}${a.configured ? "" : " (no keys)"}`;
+    if (a.active) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  if (!sel._wired) {
+    sel._wired = true;
+    sel.addEventListener("change", async () => {
+      try {
+        await api("/api/accounts/active", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ account: sel.value }),
+        });
+        toast(`Switched to ${sel.options[sel.selectedIndex].textContent}`, "ok");
+        await loadStatus();
+        if (typeof loadPortfolio === "function") loadPortfolio();
+      } catch (e) {
+        toast("Could not switch account", "err");
+      }
+    });
   }
 }
 

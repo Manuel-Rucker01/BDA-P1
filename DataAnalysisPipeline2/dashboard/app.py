@@ -75,10 +75,26 @@ def api_status():
         or (profile.get("alpaca_key") and profile.get("alpaca_secret"))
         or (env_key and env_secret))
     status["alpaca_configured"] = configured
-    if "paper_trading" in profile:
-        status["paper_trading"] = profile.get("paper_trading")
+    # NOTE: paper_trading comes from server_status() (config.ALPACA_PAPER_TRADING,
+    # i.e. the real endpoint). Do NOT override it with the saved profile flag —
+    # a stale profile value made the header show "LIVE" while actually on paper.
     status["profile"] = {"name": profile.get("name"), "use_env": profile.get("use_env", False)}
     return jsonify(status)
+
+
+@app.route("/api/accounts", methods=["GET"])
+def api_accounts():
+    """List the switchable paper accounts (weekly / monthly) + which is active."""
+    return jsonify({"ok": True, "active": svc.get_active_account(), "accounts": svc.list_accounts()})
+
+
+@app.route("/api/accounts/active", methods=["POST"])
+def api_set_account():
+    """Switch the active account the dashboard queries/trades against."""
+    body = request.get_json(silent=True) or {}
+    name = body.get("account") or body.get("name") or ""
+    active = svc.set_active_account(name)
+    return jsonify({"ok": True, "active": active, "accounts": svc.list_accounts()})
 
 
 @app.route("/api/run", methods=["POST"])

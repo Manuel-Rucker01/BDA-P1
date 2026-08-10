@@ -61,6 +61,70 @@ AGENT_LOGS_DIR = os.path.join(config.AGENT_DIR, "agent_logs")
 
 
 # --------------------------------------------------------------------------- #
+# Multi-account switching (weekly / monthly paper accounts)
+# --------------------------------------------------------------------------- #
+# The active account's credentials are applied onto the shared `config` module,
+# so the agent + all downstream reads (bot.py reads config.ALPACA_* at call time)
+# use the selected account. The choice is persisted so it survives restarts.
+_ACTIVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "active_account.json")
+
+
+def _apply_account(name: str) -> dict:
+    """Point the shared config at the given account's credentials."""
+    acct = config.resolve_account(name)
+    config.ALPACA_API_KEY = acct["api_key"]
+    config.ALPACA_SECRET_KEY = acct["secret_key"]
+    config.ALPACA_URL = acct["url"]
+    config.ALPACA_PAPER_TRADING = acct["paper"]
+    return acct
+
+
+def get_active_account() -> str:
+    try:
+        if os.path.exists(_ACTIVE_FILE):
+            with open(_ACTIVE_FILE) as f:
+                name = (json.load(f) or {}).get("active", "weekly")
+                if name in config.ACCOUNTS:
+                    return name
+    except Exception:
+        pass
+    return (os.getenv("ACTIVE_ACCOUNT", "weekly") or "weekly").lower()
+
+
+def set_active_account(name: str) -> str:
+    name = (name or "weekly").lower()
+    if name not in config.ACCOUNTS:
+        name = "weekly"
+    try:
+        with open(_ACTIVE_FILE, "w") as f:
+            json.dump({"active": name}, f)
+    except Exception:
+        pass
+    _apply_account(name)
+    return name
+
+
+def list_accounts() -> list[dict]:
+    """List switchable accounts with their configured/active status."""
+    active = get_active_account()
+    out = []
+    for key in config.ACCOUNTS:
+        a = config.resolve_account(key)
+        out.append({
+            "name": key,
+            "label": a["label"],
+            "cadence": a["cadence"],
+            "configured": a["configured"],
+            "active": key == active,
+        })
+    return out
+
+
+# Apply the persisted active account at import so the server starts pointed at it.
+_apply_account(get_active_account())
+
+
+# --------------------------------------------------------------------------- #
 # Agent lifecycle
 # --------------------------------------------------------------------------- #
 def _get_agent() -> BDATradingAgent:
@@ -257,6 +321,7 @@ def get_job(job_id: str) -> dict | None:
 
 def execute(job_id: str) -> dict:
     """Submit the cached proposal of `job_id` to Alpaca for real."""
+    _apply_account(get_active_account())  # trade the active account
     with _JOBS_LOCK:
         job = _JOBS.get(job_id)
         if job is None:
@@ -355,8 +420,10 @@ def _persist_attribution_state(agent, prices_df, weights):
 # --------------------------------------------------------------------------- #
 def get_portfolio() -> dict:
     """Live Alpaca account snapshot + per-position P&L."""
+    _apply_account(get_active_account())  # query the active account
     if not (config.ALPACA_API_KEY and config.ALPACA_SECRET_KEY):
-        return {"ok": False, "error": "Alpaca credentials not configured on the server."}
+        acct = config.resolve_account(get_active_account())
+        return {"ok": False, "error": f"'{acct['label']}' account not configured — paste its keys in trading_agent/.env."}
     try:
         from alpaca.trading.client import TradingClient
         client = TradingClient(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY,
@@ -467,12 +534,15 @@ def _safe(v, mul=1.0):
 
 
 def server_status() -> dict:
+    _apply_account(get_active_account())  # keep config pointed at the active account
     return {
         "ok": True,
         "model_loaded": _AGENT is not None,
         "alpaca_configured": bool(config.ALPACA_API_KEY and config.ALPACA_SECRET_KEY),
         "paper_trading": config.ALPACA_PAPER_TRADING,
         "alpaca_endpoint": config.ALPACA_URL,
+        "active_account": get_active_account(),
+        "accounts": list_accounts(),
         "defaults": {
             "top_k": config.TOP_K_HOLDINGS,
             "top_pct": config.TOP_PCT_THRESHOLD,

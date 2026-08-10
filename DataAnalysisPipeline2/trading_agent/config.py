@@ -29,16 +29,65 @@ MODEL_PATH = os.path.join(EXPLOITATION_DIR, "best_model.pkl")
 MACRO_KG_PATH = os.path.join(EXPLOITATION_DIR, "macroeconomic_graph.ttl")
 DB_PATH = os.path.join(EXPLOITATION_DIR, "ExploitationZone.duckdb")
 
-# --- Alpaca API Credentials ---
-ALPACA_API_KEY = os.getenv("ALPACA_API_KEY", "")
-ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY", "")
+# --- Alpaca API Credentials (multi-account) ---
+# Two paper accounts you can switch between in the dashboard: one rebalanced
+# weekly, one monthly. Paste each account's keys into trading_agent/.env. The
+# ACTIVE account is chosen at runtime via env ACTIVE_ACCOUNT or the dashboard.
+ACCOUNTS = {
+    "weekly": {
+        "label": "Weekly Rebalance",
+        "cadence": "weekly",
+        "api_key": os.getenv("ALPACA_API_KEY_WEEKLY", ""),
+        "secret_key": os.getenv("ALPACA_SECRET_KEY_WEEKLY", ""),
+    },
+    "monthly": {
+        "label": "Monthly Rebalance",
+        "cadence": "monthly",
+        "api_key": os.getenv("ALPACA_API_KEY_MONTHLY", ""),
+        "secret_key": os.getenv("ALPACA_SECRET_KEY_MONTHLY", ""),
+    },
+}
+
+# Legacy single-account keys (the original account) — used as a fallback so
+# nothing breaks while the per-account keys are still blank.
+_LEGACY_KEY = os.getenv("ALPACA_API_KEY", "")
+_LEGACY_SECRET = os.getenv("ALPACA_SECRET_KEY", "")
+
 # Default to paper trading for safety
 ALPACA_PAPER_TRADING = os.getenv("ALPACA_PAPER_TRADING", "True").lower() in ("true", "1", "yes")
+ALPACA_URL = ("https://paper-api.alpaca.markets" if ALPACA_PAPER_TRADING
+              else "https://api.alpaca.markets")
 
-if ALPACA_PAPER_TRADING:
-    ALPACA_URL = "https://paper-api.alpaca.markets"
-else:
-    ALPACA_URL = "https://api.alpaca.markets"
+
+def resolve_account(name=None):
+    """Resolve an account's Alpaca credentials + metadata.
+
+    Falls back to the legacy single-account keys when the named account's keys
+    are blank or the name is unknown. ``name=None`` uses the ACTIVE_ACCOUNT env
+    (default 'weekly'). Returns a dict the dashboard and agent can consume.
+    """
+    name = (name or os.getenv("ACTIVE_ACCOUNT", "weekly") or "weekly").lower()
+    acct = ACCOUNTS.get(name, {})
+    key = acct.get("api_key") or _LEGACY_KEY
+    secret = acct.get("secret_key") or _LEGACY_SECRET
+    return {
+        "name": name,
+        "label": acct.get("label", name.title()),
+        "cadence": acct.get("cadence", name),
+        "api_key": key,
+        "secret_key": secret,
+        "paper": ALPACA_PAPER_TRADING,
+        "url": ALPACA_URL,
+        "configured": bool(key and secret),
+    }
+
+
+# Module-level ALPACA_API_KEY / ALPACA_SECRET_KEY resolve to the ACTIVE account
+# so existing code (bot.py, backtests, the CLI runner) keeps working unchanged.
+# The dashboard can re-point these at runtime via pipeline_service.set_active_account().
+_active = resolve_account()
+ALPACA_API_KEY = _active["api_key"]
+ALPACA_SECRET_KEY = _active["secret_key"]
 
 # --- High-Alpha Tickers Basket (Alphabetical Small-Caps: +304% Alpha Goldmine) ---
 HIGH_ALPHA_TICKERS = [

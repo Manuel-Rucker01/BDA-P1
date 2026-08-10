@@ -141,3 +141,17 @@ canvas { max-height: 280px; }
   .chart-grid { grid-template-columns: 1fr; }
   .chart-wide { grid-column: auto; }
 }
+
+/* Header account switcher (weekly / monthly paper accounts) */
+.topbar-right { display: flex; align-items: center; gap: 12px; }
+.acct-switch { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.acct-switch-label { opacity: 0.7; }
+#account-switcher {
+  background: rgba(255,255,255,0.06);
+  color: inherit;
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 13px;
+  cursor: pointer;
+}

@@ -15,3 +15,5 @@ DataAnalysisPipeline2/dashboard/__pycache__/
 ExploitationZone/financial_knowledge_graph_pitsafe.ttl
 DataAnalysisPipeline2/results/_fulluniv_price_cache.parquet
 DataAnalysisPipeline2/results/_livecf_price_cache.parquet
+DataAnalysisPipeline2/trading_agent/.env
+DataAnalysisPipeline2/dashboard/active_account.json
