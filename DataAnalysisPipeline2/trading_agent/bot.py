@@ -1545,9 +1545,15 @@ class BDATradingAgent:
             for symbol, val in current_holdings.items():
                 print(f"  -> Active: {symbol:<5} | Market Value: ${val:>8,.2f} ({val/equity*100:.2f}%)")
 
-            # Differential trades list
+            # Differential trades list.
+            # Reconcile against the UNION of the target universe AND everything
+            # currently held at the broker. Iterating only config.TICKERS misses
+            # any held position whose ticker is no longer in the modelled universe
+            # — e.g. a renamed/merged ticker such as SATS -> ECHO — leaving it
+            # stranded off-book instead of being liquidated. Anything held but not
+            # in target_weights resolves to target_w = 0.0 below (full liquidation).
             trades_to_execute = []
-            for ticker in config.TICKERS:
+            for ticker in sorted(set(config.TICKERS) | set(current_holdings.keys())):
                 curr_val = current_holdings.get(ticker, 0.0)
                 target_w = target_weights.get(ticker, 0.0)
                 target_val = target_w * equity
