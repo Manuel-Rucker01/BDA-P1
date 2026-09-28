@@ -63,7 +63,7 @@ def api_status():
     except Exception:
         profile = {}
     env_key = os.getenv("ALPACA_API_KEY") or os.getenv("APCA_API_KEY")
-    env_secret = os.getenv("ALPACA_API_SECRET") or os.getenv("APCA_API_SECRET")
+    env_secret = os.getenv("ALPACA_SECRET_KEY") or os.getenv("APCA_API_SECRET")
     configured = bool((profile.get("use_env") and env_key and env_secret) or (profile.get("alpaca_key") and profile.get("alpaca_secret")) or (env_key and env_secret))
     status["alpaca_configured"] = configured
     if "paper_trading" in profile:
@@ -139,7 +139,7 @@ def api_profile():
     if request.method == "GET":
         profile = load_profile()
         env_key = os.getenv("ALPACA_API_KEY") or os.getenv("APCA_API_KEY")
-        env_secret = os.getenv("ALPACA_API_SECRET") or os.getenv("APCA_API_SECRET")
+        env_secret = os.getenv("ALPACA_SECRET_KEY") or os.getenv("APCA_API_SECRET")
         profile["env_available"] = bool(env_key and env_secret)
         # Mask stored secrets for safety
         if not profile.get("use_env", False):
