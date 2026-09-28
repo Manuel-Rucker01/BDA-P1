@@ -208,6 +208,14 @@ The empirical out-of-sample backtests evaluate capital performance under a stric
 
 > ⚠️ **What counts as out-of-sample.** The deployed model was fit on feature-dates `2025-03-31 → 2026-01-14` (data ends `2026-02-13`; last 30 days trimmed for the 30-day forward target). Only windows *outside* that interval are genuinely OOS. Earlier drafts headlined 6/12/24-month horizons whose windows **overlap training** (the model scoring data it learned from); those have been **removed**. We report the two genuinely-OOS windows below. The **pre-training** window additionally carries current-membership survivorship bias + mild static-embedding look-ahead, so it is indicative, not deployable.
 
+> **Model/backtest hardening notes.**
+> - **No multi-horizon adoption:** the shipped model remains the canonical 30-day-forward ranker; multi-horizon experiments are diagnostics only until retrained, versioned, and validated without train-window overlap.
+> - **Acquisition-edge leak caveat:** rolling-vintage acquisition adjustments reduce future structural leakage, but any "acquisition edge" measurement remains approximate while some corporate KG/static embedding inputs are not fully point-in-time.
+> - **Macro/static KG caveats:** macro features use vintage-aware/emulated lags where possible, while generated macro and corporate KG snapshots still contain static membership/taxonomy assumptions; pre-training results should therefore be read as indicative, not deployable evidence.
+> - **No `regime_filtered` deployment yet:** the long/short regime strategy stays disabled for production promotion until short exposure caps, borrow constraints, and gross/net exposure limits are explicitly enforced and tested.
+> - **Canonical OOS guidance:** use the full-universe, post-training Top-K=10 inverse-vol backtest below as the cleanest deployment proxy; do not headline overlapping 6/12/24-month horizon runs as OOS.
+> - **Manifest/schema validation:** retraining should export both `ExploitationZone/best_model.pkl` and `ExploitationZone/best_model_manifest.json`; consumers should verify the manifest's artifact schema version, feature column order, training date bounds, and selected recipe before treating a model as deployable.
+
 ### Genuinely out-of-sample full-universe top-K=10 backtests (production deployment mode)
 
 | OOS Window | Strategy | Return | Sharpe | Max DD | IR vs B&H |

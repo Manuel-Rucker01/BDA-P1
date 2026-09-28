@@ -1,10 +1,19 @@
+"""Legacy, non-canonical portfolio backtester.
+
+This script predates the consolidated canonical backtest helpers in
+``scripts/backtests/common.py`` and intentionally preserves its original
+behavior for historical comparison.  New or hardened backtests should use the
+shared helper path for top-k selection, inverse-volatility sizing, and
+exposure/cost metrics.
+"""
+
 import os
 import numpy as np
 import pandas as pd
 
 # Define paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "ExploitationZone"))
+EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "..", "ExploitationZone"))
 PRED_PATH = os.path.join(EXPLOITATION_DIR, "test_predictions.parquet")
 OUTPUT_PLOT_PATH = os.path.join(EXPLOITATION_DIR, "backtest_results.png")
 
@@ -14,6 +23,9 @@ class PortfolioBacktester:
     Simulates portfolio rebalancing every 5 trading days under a 0.1% (10 bps) transaction fee constraint.
     """
     def __init__(self, df_preds, transaction_fee=0.001, initial_capital=100000.0):
+        df_preds = df_preds.copy()
+        if "pred_proba" not in df_preds.columns and "pred_rank" in df_preds.columns:
+            df_preds["pred_proba"] = df_preds["pred_rank"]
         self.df = df_preds.sort_values(["Date", "ticker"]).reset_index(drop=True)
         self.transaction_fee = transaction_fee
         self.initial_capital = initial_capital

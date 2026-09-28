@@ -64,6 +64,15 @@ CONFIDENCE_THRESHOLD = 0.53      # Probability threshold for High-Confidence Lon
 TARGET_EXPOSURE = 1.0           # Target total portfolio exposure
 MIN_ORDER_VALUE = 5.0           # Minimum USD order limit to avoid tiny fraction order rejections
 
+# --- Portfolio exposure guardrails (used by regime_filtered long/short mode) ---
+# Gross exposure is sum(abs(weights)); net exposure is abs(sum(weights)).
+# Side caps are applied before gross/net scaling so short exposure cannot grow
+# implicitly when long signals are scarce.
+MAX_GROSS_EXPOSURE = 1.0
+MAX_NET_EXPOSURE = 1.0
+MAX_SHORT_EXPOSURE = 0.30
+MAX_LONG_EXPOSURE = 1.0
+
 # --- Top-K Concentrated Portfolio Mode ---
 # When `--universe full` is active, the bot scores every modelled ticker
 # (~1,890 names), keeps the top TOP_PCT_THRESHOLD percent of the cross-
@@ -101,7 +110,8 @@ MAX_SECTOR_WEIGHT = 1.0
 #   "pred_rank"   : weight proportional to predicted rank.
 WEIGHTING_SCHEME = "inverse_vol"
 # Cap on any single position so one ultra-low-volatility name cannot dominate
-# the inverse-vol book. With K=10 the equal-weight baseline is 0.10; 0.25 lets
+# the inverse-vol book, and so regime_filtered cannot concentrate gross
+# exposure in one name. With K=10 the equal-weight baseline is 0.10; 0.25 lets
 # the risk tilt act without letting a single name become the whole portfolio.
 MAX_POSITION_WEIGHT = 0.25
 # Floor on realized volatility used in the 1/vol calculation (guards against

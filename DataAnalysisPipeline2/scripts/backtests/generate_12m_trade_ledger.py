@@ -21,7 +21,7 @@ ROOT_DIR = os.path.abspath(os.path.join(PIPELINE_DIR, ".."))
 EXPLOITATION_DIR = os.path.join(ROOT_DIR, "ExploitationZone")
 MODEL_PATH = os.path.join(EXPLOITATION_DIR, "best_model.pkl")
 MACRO_KG_PATH = os.path.join(EXPLOITATION_DIR, "macroeconomic_graph.ttl")
-ARTIFACTS_DIR = "/Users/manuelruckerabella/.gemini/antigravity/brain/5ff25afd-4ae7-4146-9d7d-4675e86fc3e6"
+ARTIFACTS_DIR = os.path.join(PIPELINE_DIR, "results")
 DECISIONS_LOG_PATH = os.path.join(ARTIFACTS_DIR, "decisions_log.md")
 
 # Ensure trading_agent can be imported
@@ -29,6 +29,11 @@ if PIPELINE_DIR not in sys.path:
     sys.path.append(PIPELINE_DIR)
 
 from trading_agent import config
+from common import (
+    inverse_volatility_weights_from_frame as _inverse_vol_weights,
+    select_top_k as _select_top_k,
+    weighted_return,
+)
 
 # --- Technical Indicator Helpers ---
 
@@ -54,59 +59,6 @@ try:
 except Exception as _e:
     print(f'[shim] could not pre-register TorchMLPRegressor: {_e}')
 # ──────────────────────────────────────────────────────────────────────────
-
-
-
-# ── Top-K selection helper (Part 5) ──────────────────────────────────────────
-def _inverse_vol_weights(sel_df, target_exposure=1.0):
-    """Risk-parity-lite intra-basket sizing controlled by config.WEIGHTING_SCHEME.
-    w_i proportional to 1/realized_vol_i with a per-name cap, so high-volatility
-    names take less capital and don't dominate the concentrated book's drawdown.
-    Falls back to equal weight when scheme != 'inverse_vol' or vol col missing."""
-    import numpy as _np
-    if sel_df is None or len(sel_df) == 0:
-        return {}
-    tickers = sel_df["ticker"].tolist()
-    scheme = getattr(config, "WEIGHTING_SCHEME", "inverse_vol")
-    if scheme != "inverse_vol" or "return_volatility_20d" not in sel_df.columns:
-        w = _np.ones(len(tickers)) / len(tickers)
-    else:
-        v = _np.maximum(sel_df["return_volatility_20d"].to_numpy(dtype=float),
-                        getattr(config, "VOL_FLOOR", 1e-3))
-        w = 1.0 / v
-        w = w / w.sum()
-        cap = getattr(config, "MAX_POSITION_WEIGHT", 0.25)
-        capped = _np.zeros(len(w), dtype=bool)
-        for _ in range(6):
-            over = (w > cap + 1e-12) & ~capped
-            if not over.any():
-                break
-            w[over] = cap
-            capped |= over
-            free = ~capped
-            remaining = 1.0 - float(w[capped].sum())
-            if not free.any() or remaining <= 0:
-                w[free] = 0.0
-                break
-            w[free] = w[free] / w[free].sum() * remaining
-    w = w * target_exposure
-    return {t: float(wi) for t, wi in zip(tickers, w)}
-
-
-def _select_top_k(friday_obs, pct_threshold=None, top_k=None):
-    '''Replace fixed 0.53 gate with: top-pct% gate -> cap at K, sorted desc.'''
-    if pct_threshold is None:
-        pct_threshold = float(os.environ.get("BACKTEST_TOP_PCT", "5.0"))
-    if top_k is None:
-        top_k = int(os.environ.get("BACKTEST_TOP_K", "10"))
-    cutoff = 1.0 - (pct_threshold / 100.0)
-    gated = friday_obs[friday_obs["pred_proba"] >= cutoff].copy()
-    gated = gated.sort_values("pred_proba", ascending=False).head(top_k)
-    if gated.empty:
-        gated = friday_obs.sort_values("pred_proba", ascending=False).head(top_k).copy()
-    return gated
-# ────────────────────────────────────────────────────────────────────────────
-
 def compute_rsi(series, period=14):
     delta = series.diff()
     gain = delta.clip(lower=0)
@@ -125,32 +77,8 @@ def compute_macd_signal(macd_series, span_signal=9):
     return macd_series.ewm(span=span_signal, adjust=False).mean()
 
 def load_macro_features(macro_ttl_path: str):
-    from rdflib import Graph as RdfGraph, Namespace
-    g = RdfGraph()
-    g.parse(macro_ttl_path, format="turtle")
-    macro_onto = Namespace("http://bda.upc.edu/macro/ontology#")
-    macro_ent = Namespace("http://bda.upc.edu/macro/resource/")
-
-    rows = []
-    for s in set(g.subjects()):
-        if not str(s).startswith(str(macro_ent)):
-            continue
-        country = str(s).replace(str(macro_ent), "").replace("_", " ")
-        gdp = g.value(s, macro_onto.gdpUSD)
-        growth = g.value(s, macro_onto.gdpGrowthPercent)
-        inflation = g.value(s, macro_onto.inflationPercent)
-        trade = g.value(s, macro_onto.tradePercentOfGDP)
-        interest = g.value(s, macro_onto.interestRatePercent)
-        if gdp is not None or growth is not None or inflation is not None or trade is not None or interest is not None:
-            rows.append({
-                "country": country,
-                "gdp_usd": float(gdp) if gdp is not None else None,
-                "gdp_growth_pct": float(growth) if growth is not None else None,
-                "inflation_pct": float(inflation) if inflation is not None else None,
-                "trade_pct": float(trade) if trade is not None else None,
-                "interest_rate_pct": float(interest) if interest is not None else None,
-            })
-    return pd.DataFrame(rows)
+    from features.macro_provider import load_static_macro_features
+    return load_static_macro_features(macro_ttl_path)
 
 def fetch_company_metadata():
     db_path = os.path.join(EXPLOITATION_DIR, "ExploitationZone.duckdb")
@@ -178,6 +106,7 @@ def compute_live_features(live_df, metadata_df, macro_df):
     df = live_df.sort_values(["ticker", "Date"]).reset_index(drop=True)
     
     df = df.merge(metadata_df, on="ticker", how="left")
+    # Uses the shared static TTL macro policy; not a point-in-time release feed.
     df = df.merge(macro_df, on="country", how="left")
     df = df.drop(columns=["country"], errors="ignore")
     
@@ -410,7 +339,7 @@ def main():
         
         friday_obs = friday_obs.merge(emb_df, on="ticker", how="inner")
         
-        X_tab = friday_obs[tabular_cols].fillna(0).values.astype(np.float32)
+        X_tab = friday_obs.reindex(columns=tabular_cols, fill_value=0).fillna(0).values.astype(np.float32)
         X_emb = friday_obs[pca_cols].fillna(0).values.astype(np.float32)
         X_full = np.concatenate([X_tab, X_emb], axis=1)
         if _CS_Z:
@@ -472,9 +401,7 @@ def main():
         bot_allocated_cap = {t: equity_bot * _hl_w.get(t, 0.0) for t in selected_tickers}
 
         # Bot portfolio weekly return (inverse-volatility weighted)
-        weekly_bot_ret = 0.0
-        for t in selected_tickers:
-            weekly_bot_ret += _hl_w.get(t, 0.0) * ticker_returns.get(t, 0.0)
+        weekly_bot_ret = weighted_return(_hl_w, ticker_returns)
 
         prev_equity_bot = equity_bot
         equity_bot = prev_equity_bot * (1.0 + weekly_bot_ret)
@@ -578,6 +505,7 @@ Below is the chronological weekly ledger of all model decisions, ticker allocati
 *Report generated automatically on {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')} (Current Local Time).*
 """
 
+    os.makedirs(ARTIFACTS_DIR, exist_ok=True)
     with open(DECISIONS_LOG_PATH, "w") as f:
         f.write(md_content)
 

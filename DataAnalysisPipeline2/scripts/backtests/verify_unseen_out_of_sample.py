@@ -22,14 +22,20 @@ ROOT_DIR = os.path.abspath(os.path.join(PIPELINE_DIR, ".."))
 EXPLOITATION_DIR = os.path.join(ROOT_DIR, "ExploitationZone")
 MODEL_PATH = os.path.join(EXPLOITATION_DIR, "best_model.pkl")
 MACRO_KG_PATH = os.path.join(EXPLOITATION_DIR, "macroeconomic_graph.ttl")
+RESULTS_DIR = os.path.join(PIPELINE_DIR, "results")
 
 # Ensure trading_agent can be imported
 if PIPELINE_DIR not in sys.path:
     sys.path.append(PIPELINE_DIR)
 
 from trading_agent import config
-from trading_agent.bot import GaussianHMM, KalmanBetaFilter, compute_live_features, load_macro_features, fetch_company_metadata, select_top_k_with_sector_cap
+from trading_agent.bot import GaussianHMM, KalmanBetaFilter, compute_live_features, load_macro_features, fetch_company_metadata, build_regime_filtered_weights
 from trading_agent.news_sentiment import compute_asof_news_features
+from common import (
+    inverse_volatility_weights_from_frame as _inverse_vol_weights,
+    select_top_k as _select_top_k,
+    weighted_return,
+)
 
 
 def augment_with_news(df_all_feat, friday_dates, start_date, end_date, tabular_cols):
@@ -85,66 +91,6 @@ try:
 except Exception as _e:
     print(f'[shim] could not pre-register TorchMLPRegressor: {_e}')
 # ──────────────────────────────────────────────────────────────────────────
-
-
-
-# ── Top-K selection helper (Part 5) ──────────────────────────────────────────
-def _inverse_vol_weights(sel_df, target_exposure=1.0):
-    """Risk-parity-lite intra-basket sizing controlled by config.WEIGHTING_SCHEME.
-    w_i proportional to 1/realized_vol_i with a per-name cap, so high-volatility
-    names take less capital and don't dominate the concentrated book's drawdown.
-    Falls back to equal weight when scheme != 'inverse_vol' or vol col missing."""
-    import numpy as _np
-    if sel_df is None or len(sel_df) == 0:
-        return {}
-    tickers = sel_df["ticker"].tolist()
-    scheme = getattr(config, "WEIGHTING_SCHEME", "inverse_vol")
-    if scheme != "inverse_vol" or "return_volatility_20d" not in sel_df.columns:
-        w = _np.ones(len(tickers)) / len(tickers)
-    else:
-        v = _np.maximum(sel_df["return_volatility_20d"].to_numpy(dtype=float),
-                        getattr(config, "VOL_FLOOR", 1e-3))
-        w = 1.0 / v
-        w = w / w.sum()
-        cap = getattr(config, "MAX_POSITION_WEIGHT", 0.25)
-        capped = _np.zeros(len(w), dtype=bool)
-        for _ in range(6):
-            over = (w > cap + 1e-12) & ~capped
-            if not over.any():
-                break
-            w[over] = cap
-            capped |= over
-            free = ~capped
-            remaining = 1.0 - float(w[capped].sum())
-            if not free.any() or remaining <= 0:
-                w[free] = 0.0
-                break
-            w[free] = w[free] / w[free].sum() * remaining
-    w = w * target_exposure
-    return {t: float(wi) for t, wi in zip(tickers, w)}
-
-
-def _select_top_k(friday_obs, pct_threshold=None, top_k=None):
-    '''top-pct% gate -> sector-capped top-K. Mirrors live
-    bot.calculate_target_weights so the backtest reflects the deployed selector.
-    Defaults come from config (TOP_PCT_THRESHOLD / TOP_K_HOLDINGS /
-    MAX_SECTOR_WEIGHT) and can be overridden via env for A/B runs.'''
-    if pct_threshold is None:
-        pct_threshold = float(os.environ.get(
-            "BACKTEST_TOP_PCT", str(getattr(config, "TOP_PCT_THRESHOLD", 5.0))))
-    if top_k is None:
-        top_k = int(os.environ.get(
-            "BACKTEST_TOP_K", str(getattr(config, "TOP_K_HOLDINGS", 20))))
-    max_sec = float(os.environ.get(
-        "BACKTEST_MAX_SECTOR", str(getattr(config, "MAX_SECTOR_WEIGHT", 1.0))))
-    cutoff = 1.0 - (pct_threshold / 100.0)
-    gated = friday_obs[friday_obs["pred_proba"] >= cutoff].copy()
-    gated = gated.sort_values("pred_proba", ascending=False)
-    if gated.empty:
-        gated = friday_obs.sort_values("pred_proba", ascending=False).copy()
-    return select_top_k_with_sector_cap(gated, top_k, max_sec).copy()
-# ────────────────────────────────────────────────────────────────────────────
-
 def calculate_metrics(portfolio_values):
     returns = pd.Series(portfolio_values).pct_change().dropna()
     if returns.empty or returns.std() == 0:
@@ -243,7 +189,7 @@ def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_emb
         emb_df["ticker"] = found_tickers
         friday_obs = friday_obs.merge(emb_df, on="ticker", how="inner")
         
-        X_tab = friday_obs[tabular_cols].fillna(0).values.astype(np.float32)
+        X_tab = friday_obs.reindex(columns=tabular_cols, fill_value=0).fillna(0).values.astype(np.float32)
         X_emb = friday_obs[pca_cols].fillna(0).values.astype(np.float32)
         X_full = np.concatenate([X_tab, X_emb], axis=1)
         if _CS_Z:
@@ -316,22 +262,18 @@ def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_emb
         bh_values.append(equity_bh)
         
         # --- B. SMA50 Baseline ---
-        sma_raw = friday_obs[["ticker", "pred_proba"]].copy()
-        sma_raw["raw_weight"] = sma_raw["pred_proba"] - 0.5
-        
-        sma_longs = sma_raw[sma_raw["raw_weight"] >= 0.02].copy()
-        if sma_is_bull:
-            sma_shorts = pd.DataFrame()
-        else:
-            sma_shorts = sma_raw[sma_raw["raw_weight"] <= -0.02].copy()
-            
-        sma_selected = pd.concat([sma_longs, sma_shorts])
-        sma_abs_sum = sma_selected["raw_weight"].abs().sum()
-        
-        sma_weights = {}
-        if sma_abs_sum > 0:
-            sma_selected["target_weight"] = (sma_selected["raw_weight"] / sma_abs_sum) * config.TARGET_EXPOSURE
-            sma_weights = sma_selected.set_index("ticker")["target_weight"].to_dict()
+        sma_weights, _ = build_regime_filtered_weights(
+            friday_obs[["ticker", "pred_proba"]].copy(),
+            is_bull=sma_is_bull,
+            target_exposure=config.TARGET_EXPOSURE,
+            confidence_threshold=0.02,
+            max_gross=config.MAX_GROSS_EXPOSURE,
+            max_net=config.MAX_NET_EXPOSURE,
+            max_short=config.MAX_SHORT_EXPOSURE,
+            max_long=config.MAX_LONG_EXPOSURE,
+            max_position=config.MAX_POSITION_WEIGHT,
+            apply_kalman_short_scaling=False,
+        )
             
         sma_ret = sum(w * ticker_returns.get(t, 0.0) for t, w in sma_weights.items())
         equity_sma *= (1.0 + sma_ret)
@@ -340,29 +282,18 @@ def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_emb
         # --- C. HMM + Kalman Upgraded ---
         hmm_raw = friday_obs[["ticker", "pred_proba"]].copy()
         hmm_raw["kalman_beta"] = hmm_raw["ticker"].map(ticker_betas).fillna(1.0)
-        hmm_raw["raw_weight"] = hmm_raw["pred_proba"] - 0.5
-        
-        def scale_short(row):
-            w = row["raw_weight"]
-            if w < 0:
-                beta = row["kalman_beta"]
-                return w / max(abs(beta), 0.5)
-            return w
-        hmm_raw["raw_weight"] = hmm_raw.apply(scale_short, axis=1)
-        
-        hmm_longs = hmm_raw[hmm_raw["raw_weight"] >= 0.02].copy()
-        if hmm_is_bull:
-            hmm_shorts = pd.DataFrame()
-        else:
-            hmm_shorts = hmm_raw[hmm_raw["raw_weight"] <= -0.02].copy()
-            
-        hmm_selected = pd.concat([hmm_longs, hmm_shorts])
-        hmm_abs_sum = hmm_selected["raw_weight"].abs().sum()
-        
-        hmm_weights = {}
-        if hmm_abs_sum > 0:
-            hmm_selected["target_weight"] = (hmm_selected["raw_weight"] / hmm_abs_sum) * config.TARGET_EXPOSURE
-            hmm_weights = hmm_selected.set_index("ticker")["target_weight"].to_dict()
+        hmm_weights, _ = build_regime_filtered_weights(
+            hmm_raw,
+            is_bull=hmm_is_bull,
+            target_exposure=config.TARGET_EXPOSURE,
+            confidence_threshold=0.02,
+            max_gross=config.MAX_GROSS_EXPOSURE,
+            max_net=config.MAX_NET_EXPOSURE,
+            max_short=config.MAX_SHORT_EXPOSURE,
+            max_long=config.MAX_LONG_EXPOSURE,
+            max_position=config.MAX_POSITION_WEIGHT,
+            apply_kalman_short_scaling=True,
+        )
             
         hmm_ret = sum(w * ticker_returns.get(t, 0.0) for t, w in hmm_weights.items())
         equity_hmm *= (1.0 + hmm_ret)
@@ -371,7 +302,7 @@ def run_backtest_unseen(df_all_feat, df_full, gspc_df, friday_dates, company_emb
         # --- D. High-Confidence Longs (P >= 0.53) ---
         high_long_df = _select_top_k(friday_obs)
         _hl_w = _inverse_vol_weights(high_long_df, target_exposure=1.0)
-        ret_high_long = sum(wt * ticker_returns.get(t, 0.0) for t, wt in _hl_w.items())
+        ret_high_long = weighted_return(_hl_w, ticker_returns)
         
         equity_high_long *= (1.0 + ret_high_long)
         hl_values.append(equity_high_long)
@@ -537,7 +468,8 @@ def main():
     print("=" * 135)
     
     # Save a detailed comparison results file in brain/artifact directory
-    artifact_path = "/Users/manuelruckerabella/.gemini/antigravity/brain/5ff25afd-4ae7-4146-9d7d-4675e86fc3e6/unseen_oos_comparison.md"
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    artifact_path = os.path.join(RESULTS_DIR, "unseen_oos_comparison.md")
     print(f"[Exporting] Writing detailed comparisons to {artifact_path}...")
     
     with open(artifact_path, "w") as f:

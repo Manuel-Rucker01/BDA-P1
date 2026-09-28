@@ -14,11 +14,15 @@ import pandas as pd
 import duckdb
 import yfinance as yf
 
+from pickle_compat import register_pickle_compat
+
 # Paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "ExploitationZone"))
+EXPLOITATION_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "..", "ExploitationZone"))
 MODEL_PATH = os.path.join(EXPLOITATION_DIR, "best_model.pkl")
 MACRO_KG_PATH = os.path.join(EXPLOITATION_DIR, "macroeconomic_graph.ttl")
+
+register_pickle_compat()
 
 # --- Helper Technical Indicators (matching pipeline exactly) ---
 
@@ -40,32 +44,12 @@ def compute_macd_signal(macd_series, span_signal=9):
     return macd_series.ewm(span=span_signal, adjust=False).mean()
 
 def load_macro_features(macro_ttl_path: str):
-    from rdflib import Graph as RdfGraph, Namespace
-    g = RdfGraph()
-    g.parse(macro_ttl_path, format="turtle")
-    macro_onto = Namespace("http://bda.upc.edu/macro/ontology#")
-    macro_ent = Namespace("http://bda.upc.edu/macro/resource/")
-
-    rows = []
-    for s in set(g.subjects()):
-        if not str(s).startswith(str(macro_ent)):
-            continue
-        country = str(s).replace(str(macro_ent), "").replace("_", " ")
-        gdp = g.value(s, macro_onto.gdpUSD)
-        growth = g.value(s, macro_onto.gdpGrowthPercent)
-        inflation = g.value(s, macro_onto.inflationPercent)
-        trade = g.value(s, macro_onto.tradePercentOfGDP)
-        interest = g.value(s, macro_onto.interestRatePercent)
-        if gdp is not None or growth is not None or inflation is not None or trade is not None or interest is not None:
-            rows.append({
-                "country": country,
-                "gdp_usd": float(gdp) if gdp is not None else None,
-                "gdp_growth_pct": float(growth) if growth is not None else None,
-                "inflation_pct": float(inflation) if inflation is not None else None,
-                "trade_pct": float(trade) if trade is not None else None,
-                "interest_rate_pct": float(interest) if interest is not None else None,
-            })
-    return pd.DataFrame(rows)
+    import sys
+    pipeline_dir = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
+    if pipeline_dir not in sys.path:
+        sys.path.append(pipeline_dir)
+    from features.macro_provider import load_static_macro_features
+    return load_static_macro_features(macro_ttl_path)
 
 def fetch_company_metadata():
     db_path = os.path.join(EXPLOITATION_DIR, "ExploitationZone.duckdb")
@@ -291,7 +275,7 @@ def main():
     latest_df = latest_df.merge(emb_df, on="ticker", how="inner")
     
     # Extract matrices
-    X_tab = latest_df[tabular_cols].fillna(0).values.astype(np.float32)
+    X_tab = latest_df.reindex(columns=tabular_cols, fill_value=0).fillna(0).values.astype(np.float32)
     X_emb = latest_df[pca_cols].fillna(0).values.astype(np.float32)
     X_full = np.concatenate([X_tab, X_emb], axis=1)
     
@@ -302,7 +286,11 @@ def main():
     model_probas = []
     for m in mix_models:
         if m in trained_models:
-            y_proba = trained_models[m].predict_proba(X_full_s)[:, 1]
+            est = trained_models[m]
+            if hasattr(est, "predict_proba"):
+                y_proba = est.predict_proba(X_full_s)[:, 1]
+            else:
+                y_proba = est.predict(X_full_s)
             model_probas.append(y_proba)
             
     latest_df["pred_proba"] = np.mean(model_probas, axis=0)
