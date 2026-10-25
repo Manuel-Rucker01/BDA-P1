@@ -1,0 +1,8 @@
+{
+  "tripped_at": "2026-10-18T08:19:52+00:00",
+  "peak_equity": 111059.74,
+  "current_equity": 91658.37,
+  "drawdown_pct": 17.469309760674758,
+  "threshold_pct": 15.0,
+  "instructions": "Delete this file manually after you have investigated the drawdown.  The bot will refuse to submit orders while this file exists."
+}
