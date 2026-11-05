@@ -790,8 +790,36 @@ def build_feature_matrices(df_obs, company_embeddings, embed_dim_real):
 # on all data up to a cut date and evaluates on the following window.  An
 # embargo of EMBARGO_DAYS sits between train and test to prevent the
 # 30-day forward-return target from leaking across the boundary.
-N_FOLDS = 5
+N_FOLDS = int(os.environ.get("N_FOLDS", "5"))   # env override; default 5
 EMBARGO_DAYS = 30
+
+# Optional training-window controls (default: empty = use every labeled date,
+# i.e. unchanged behavior). Applied to the FEATURE date of the observation
+# frame AFTER all per-ticker window features are computed (so lags/rolling
+# stats still see the pre-window history) and BEFORE fold construction.
+# Note: an observation's 30d label extends ~30 sessions past its feature date,
+# so TRAIN_END_DATE should sit ~6 weeks before any holdout start.
+TRAIN_START_DATE = os.environ.get("TRAIN_START_DATE", "").strip()
+TRAIN_END_DATE = os.environ.get("TRAIN_END_DATE", "").strip()
+
+
+def apply_train_window(df_obs):
+    """Filter the observation frame to TRAIN_START_DATE <= Date <= TRAIN_END_DATE
+    (inclusive, either bound optional). No-op when both are unset."""
+    if not (TRAIN_START_DATE or TRAIN_END_DATE):
+        return df_obs
+    d = pd.to_datetime(df_obs["Date"]).dt.tz_localize(None)
+    mask = pd.Series(True, index=df_obs.index)
+    if TRAIN_START_DATE:
+        mask &= d >= pd.Timestamp(TRAIN_START_DATE)
+    if TRAIN_END_DATE:
+        mask &= d <= pd.Timestamp(TRAIN_END_DATE)
+    out = df_obs[mask.values].copy()
+    od = pd.to_datetime(out["Date"])
+    print(f"  -> [window] TRAIN_START_DATE={TRAIN_START_DATE or '-'} "
+          f"TRAIN_END_DATE={TRAIN_END_DATE or '-'}: kept {len(out):,}/{len(df_obs):,} rows, "
+          f"{od.nunique()} dates ({od.min().date()} -> {od.max().date()})")
+    return out
 
 
 # ── Part 4 P3: cross-sectional Z standardisation ──────────────────────────────
@@ -2010,6 +2038,7 @@ def main():
     df_obs = load_observation_features(DB_PATH)
     df_obs = attach_macro_features(df_obs, DB_PATH, MACRO_KG_PATH)
     df_obs = attach_news_features(df_obs, os.path.join(EXPLOITATION_DIR, "news_features.parquet"))
+    df_obs = apply_train_window(df_obs)
     feature_sets, y_rank, y_ret, merged, pca, tabular_cols, pca_cols = (
         build_feature_matrices(df_obs, company_embeddings, embed_dim_real)
     )

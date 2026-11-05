@@ -124,5 +124,100 @@ def update_all_tickers():
     else:
         print(f"[INFO]: No new data to add. Master dataset is up to date.")
 
+# --------------------------------------------------------------------------- #
+# Alpaca full-window refresh (HISTORY_SOURCE=alpaca)
+# --------------------------------------------------------------------------- #
+# Output schema identical to the yfinance path (what the Formatted zone reads):
+#   Date (index), Open, High, Low, Close, Volume, Dividends, Stock Splits,
+#   Company, Capital Gains
+# Alpaca SIP bars are split+dividend adjusted (Adjustment.ALL), i.e. the same
+# convention as yfinance's auto-adjusted Ticker.history; the corporate-action
+# columns are therefore 0 / empty, exactly as yfinance reports on most rows.
+#
+# The whole [HISTORY_START, HISTORY_END] window is re-downloaded in ONE pass
+# (no appending) so adjustment factors are consistent across the series.
+# Tickers that Alpaca does not return (delisted / renamed) keep their rows
+# from the previous CSV, so downstream training does not silently drop dead
+# names (survivorship bias).
+#
+# Env:
+#   HISTORY_SOURCE=alpaca      enable this path (default: yfinance incremental)
+#   HISTORY_START=YYYY-MM-DD   window start (default 2024-06-01)
+#   HISTORY_END=YYYY-MM-DD     inclusive end (default: last completed close)
+#   ACTIVE_ACCOUNT             Alpaca key set used by trading_agent.config
+OUTPUT_COLUMNS = ["Open", "High", "Low", "Close", "Volume", "Dividends",
+                  "Stock Splits", "Company", "Capital Gains"]
+
+
+def refresh_all_tickers_alpaca(start=None, end=None):
+    import sys
+    import datetime as dt
+
+    pipeline_dir = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "DataAnalysisPipeline2"))
+    if pipeline_dir not in sys.path:
+        sys.path.insert(0, pipeline_dir)
+    from trading_agent import market_data  # noqa: E402  (needs ACTIVE_ACCOUNT set first)
+
+    start = start or os.getenv("HISTORY_START", "2024-06-01")
+    end = end or os.getenv("HISTORY_END")
+    start_dt = dt.datetime.fromisoformat(start).replace(tzinfo=dt.timezone.utc)
+    if end:
+        # inclusive end date -> request up to the following midnight UTC
+        end_dt = (dt.datetime.fromisoformat(end) + timedelta(days=1)).replace(tzinfo=dt.timezone.utc)
+    else:
+        end_dt = market_data._last_completed_close_utc()
+
+    df_companies = pd.read_csv(COMPANIES_CSV_PATH)
+    tickers = (df_companies[TICKER_COLUMN_NAME].dropna().astype(str).str.strip())
+    tickers = [t for t in dict.fromkeys(tickers) if t]
+    print(f"[INFO]: Alpaca SIP refresh for {len(tickers)} tickers, "
+          f"{start_dt.date()} -> {end_dt.date()} (exclusive)")
+
+    bars = market_data._alpaca_daily_bars(tickers, start_dt, end_dt, verbose=True)
+    bars = bars.drop_duplicates(["ticker", "Date"], keep="first")
+    got = set(bars["ticker"])
+    print(f"[INFO]: Alpaca returned {len(got)}/{len(tickers)} tickers, {len(bars):,} bars "
+          f"({bars['Date'].min()} -> {bars['Date'].max()})")
+
+    df_new = pd.DataFrame({
+        "Date": pd.to_datetime(bars["Date"]),
+        "Open": bars["Open"].astype(float),
+        "High": bars["High"].astype(float),
+        "Low": bars["Low"].astype(float),
+        "Close": bars["company_close"].astype(float),
+        "Volume": bars["company_volume"].round().astype("int64"),
+        "Dividends": 0.0,
+        "Stock Splits": 0.0,
+        "Company": bars["ticker"].astype(str),
+        "Capital Gains": float("nan"),
+    })
+
+    # Survivorship: keep previous rows of tickers Alpaca no longer serves.
+    kept = pd.DataFrame()
+    if os.path.exists(RESULT_FILE_PATH):
+        old = pd.read_csv(RESULT_FILE_PATH, parse_dates=["Date"])
+        old["Company"] = old["Company"].astype(str).str.strip()
+        dead = sorted(set(old["Company"]) - got)
+        kept = old[old["Company"].isin(dead)]
+        print(f"[INFO]: Keeping {len(kept):,} legacy rows for {len(dead)} tickers not served "
+              f"by Alpaca (delisted/renamed): {dead[:25]}{' ...' if len(dead) > 25 else ''}")
+        kept = kept.reindex(columns=["Date"] + OUTPUT_COLUMNS)
+
+    df_final = pd.concat([df_new, kept], ignore_index=True)
+    df_final = (df_final.drop_duplicates(subset=["Date", "Company"], keep="first")
+                        .sort_values(["Company", "Date"]))
+    df_final["Date"] = df_final["Date"].dt.strftime("%Y-%m-%d")
+    df_final = df_final.set_index("Date")[OUTPUT_COLUMNS]
+    os.makedirs(os.path.dirname(RESULT_FILE_PATH), exist_ok=True)
+    df_final.to_csv(RESULT_FILE_PATH)
+    print(f"[INFO]: Saved {RESULT_FILE_PATH}: {len(df_final):,} rows, "
+          f"{df_final['Company'].nunique()} tickers, "
+          f"{df_final.index.min()} -> {df_final.index.max()}")
+    return df_final
+
+
 if __name__ == "__main__":
-    update_all_tickers()
+    if os.getenv("HISTORY_SOURCE", "yfinance").lower() == "alpaca":
+        refresh_all_tickers_alpaca()
+    else:
+        update_all_tickers()

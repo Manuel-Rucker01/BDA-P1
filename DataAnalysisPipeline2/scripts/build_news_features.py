@@ -66,13 +66,18 @@ from trading_agent.news_sentiment import (
 # over the training span and writes the parquet.
 
 
-def load_grid(db_path, limit_tickers=None):
+def load_grid(db_path, limit_tickers=None, grid_start=None, grid_end=None):
     con = duckdb.connect(db_path, read_only=True)
     grid = con.execute(
         'SELECT DISTINCT Symbol AS ticker, "Date" FROM master_dataset '
         'WHERE target_30d_rank IS NOT NULL'
     ).df()
     con.close()
+    d = pd.to_datetime(grid["Date"])
+    if grid_start:
+        grid = grid[d >= pd.Timestamp(grid_start)].copy()
+    if grid_end:
+        grid = grid[pd.to_datetime(grid["Date"]) <= pd.Timestamp(grid_end)].copy()
     if limit_tickers:
         keep = sorted(grid["ticker"].unique())[:limit_tickers]
         grid = grid[grid["ticker"].isin(keep)].copy()
@@ -83,10 +88,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit-tickers", type=int, default=None,
                     help="restrict to first N tickers (for a fast smoke test)")
+    ap.add_argument("--grid-start", default=None,
+                    help="only build features for master_dataset dates >= this (YYYY-MM-DD)")
+    ap.add_argument("--grid-end", default=None,
+                    help="only build features for master_dataset dates <= this (YYYY-MM-DD)")
+    ap.add_argument("--append", action="store_true",
+                    help="merge into the existing parquet instead of overwriting it; "
+                         "rows for (ticker, Date) keys rebuilt in this run replace old ones")
+    ap.add_argument("--raw-out", default=RAW_PARQUET,
+                    help="where to write the raw scored (article,ticker) rows")
     args = ap.parse_args()
 
     print(f"[news-features] backend = {sentiment_backend_name()}")
-    grid = load_grid(DB_PATH, args.limit_tickers)
+    grid = load_grid(DB_PATH, args.limit_tickers, args.grid_start, args.grid_end)
     tickers = sorted(grid["ticker"].unique())
     dmin = pd.to_datetime(grid["Date"]).min()
     dmax = pd.to_datetime(grid["Date"]).max()
@@ -99,9 +113,21 @@ def main():
     print(f"[news-features] raw (article,ticker) rows = {len(raw)} "
           f"covering {raw['ticker'].nunique() if not raw.empty else 0} tickers")
     if not raw.empty:
-        raw.to_parquet(RAW_PARQUET, index=False)
+        raw.to_parquet(args.raw_out, index=False)
 
     feats = build_asof_features(raw, grid)
+    if args.append and os.path.exists(OUT_PARQUET):
+        old = pd.read_parquet(OUT_PARQUET)
+        old["Date"] = pd.to_datetime(old["Date"]).dt.tz_localize(None)
+        # Drop every old row whose (ticker, Date) lies in the rebuilt grid, so a
+        # grid key that now has *no* news does not keep a stale old value.
+        g = grid.assign(Date=pd.to_datetime(grid["Date"]).dt.tz_localize(None))
+        key = pd.MultiIndex.from_frame(g[["ticker", "Date"]])
+        old = old[~pd.MultiIndex.from_frame(old[["ticker", "Date"]]).isin(key)]
+        print(f"[news-features] --append: keeping {len(old)} existing rows "
+              f"({old['Date'].min()}..{old['Date'].max()})")
+        feats = (pd.concat([old, feats], ignore_index=True)
+                   .sort_values(["ticker", "Date"]).reset_index(drop=True))
     feats.to_parquet(OUT_PARQUET, index=False)
     cov = feats["ticker"].nunique() if not feats.empty else 0
     print(f"[news-features] wrote {len(feats)} (ticker,Date) feature rows "
