@@ -806,14 +806,11 @@ class BDATradingAgent:
 
         print(f"[Agent] Fetching S&P 500 ({config.SP500_INDEX}) data to train Gaussian HMM...")
         try:
-            sp_df = yf.download(config.SP500_INDEX, period="380d", progress=False)
+            from . import market_data
+            # ^GSPC via yfinance, falling back to SPY from Alpaca.
+            sp_df = market_data.fetch_benchmark_closes(config.SP500_INDEX, lookback_days=380)
             if sp_df.empty:
                 raise ValueError("Downloaded DataFrame is empty.")
-            
-            if isinstance(sp_df.columns, pd.MultiIndex):
-                sp_df.columns = [col[0] for col in sp_df.columns]
-                
-            sp_df = sp_df.reset_index()
             sp_df = sp_df.sort_values("Date").reset_index(drop=True)
             
             sp_df["log_return"] = np.log(sp_df["Close"] / sp_df["Close"].shift(1))
@@ -843,89 +840,34 @@ class BDATradingAgent:
             return False
 
     def fetch_live_data(self):
-        """Downloads live historical bars for the active ticker universe.
+        """Downloads daily bars for the active ticker universe.
 
-        For small baskets (<= 30 tickers) we keep the per-ticker loop so error
-        reporting stays granular. For the full-universe mode (~1,890 tickers)
-        we use a single batched `yf.download(...)` call which is dramatically
-        faster (Yahoo parallelises internally) and only logs the names that
-        actually failed.
+        Uses ``market_data.fetch_daily_bars``: Alpaca SIP (adjusted, chunked,
+        retried) with a yfinance fallback, through the last completed close.
+        The lookback is ``config.LIVE_HISTORY_DAYS`` calendar days so 50-day
+        features and 26-span EMAs are fully warmed up -- the old 60-calendar-day
+        window (~41 sessions) left ``return_50d`` permanently 0 in production.
         """
+        from . import market_data
+
         n = len(config.TICKERS)
-        print(f"[Agent] Downloading 60 days of historical daily bars for {n} tickers...")
-
-        if n <= 30:
-            df_list = []
-            for ticker in config.TICKERS:
-                try:
-                    ticker_df = yf.download(ticker, period="60d", progress=False)
-                    if not ticker_df.empty:
-                        ticker_df = ticker_df.reset_index()
-                        ticker_df["ticker"] = ticker
-                        ticker_df = ticker_df.rename(columns={
-                            "Close": "company_close",
-                            "Volume": "company_volume",
-                            "Open": "Open",
-                            "High": "High",
-                            "Low": "Low"
-                        })
-                        if isinstance(ticker_df.columns, pd.MultiIndex):
-                            ticker_df.columns = [col[0] for col in ticker_df.columns]
-                        ticker_df["Date"] = pd.to_datetime(ticker_df["Date"]).dt.strftime('%Y-%m-%d')
-                        df_list.append(ticker_df)
-                except Exception as e:
-                    print(f"[WARNING] Failed to download data for {ticker}: {e}")
-            if not df_list:
-                raise RuntimeError("No historical bars could be fetched for any tickers.")
-            return pd.concat(df_list, ignore_index=True)
-
-        # ── Full-universe batched path ──────────────────────────────────────
-        # yfinance returns a MultiIndex (field, ticker) DataFrame in batch
-        # mode. We pivot it into long form with the same columns the per-
-        # ticker path produces.
-        batch = yf.download(
-            tickers=" ".join(config.TICKERS),
-            period="60d",
-            progress=False,
-            group_by="ticker",
-            auto_adjust=True,
-            threads=True,
-        )
-        if batch is None or batch.empty:
-            raise RuntimeError("Batched yfinance download returned no rows.")
-
-        long_rows = []
-        failures = []
-        for ticker in config.TICKERS:
-            try:
-                if isinstance(batch.columns, pd.MultiIndex):
-                    if ticker not in batch.columns.get_level_values(0):
-                        failures.append(ticker)
-                        continue
-                    sub = batch[ticker].dropna(how="all").reset_index()
-                else:
-                    sub = batch.dropna(how="all").reset_index()
-                if sub.empty:
-                    failures.append(ticker)
-                    continue
-                sub = sub.rename(columns={
-                    "Close": "company_close",
-                    "Volume": "company_volume",
-                    "Open": "Open",
-                    "High": "High",
-                    "Low": "Low",
-                })
-                sub["ticker"] = ticker
-                sub["Date"] = pd.to_datetime(sub["Date"]).dt.strftime("%Y-%m-%d")
-                long_rows.append(sub)
-            except Exception as e:
-                failures.append(ticker)
+        days = int(getattr(config, "LIVE_HISTORY_DAYS", 250))
+        print(f"[Agent] Downloading {days} days of daily bars for {n} tickers...")
+        df, failures = market_data.fetch_daily_bars(config.TICKERS, lookback_days=days)
         if failures:
-            print(f"[Agent] yfinance returned no data for {len(failures)} tickers "
-                  f"(first 10: {failures[:10]}). Continuing with the rest.")
-        if not long_rows:
-            raise RuntimeError("Batched yfinance download produced no usable rows.")
-        return pd.concat(long_rows, ignore_index=True)
+            print(f"[Agent] No data for {len(failures)} tickers (likely delisted; "
+                  f"first 10: {failures[:10]}). Continuing with the rest.")
+        if df.empty:
+            raise RuntimeError("No historical bars could be fetched for any tickers.")
+        # Hard guard: a mostly-empty universe means a data outage, and ranking
+        # the top-K from whatever survived produces an arbitrary book (the
+        # Aug-2026 incident). Refuse rather than trade on it.
+        coverage = df["ticker"].nunique() / max(n, 1)
+        min_cov = float(getattr(config, "MIN_UNIVERSE_COVERAGE", 0.80))
+        if n > 30 and coverage < min_cov:
+            raise RuntimeError(f"Universe coverage {coverage:.0%} below {min_cov:.0%} — "
+                               "refusing to rank a partial universe.")
+        return df
 
     def run_inference(self, price_history_df):
         """Performs feature calculations, PCA embedding projections, and Soft-Voting ensemble inference."""
@@ -1056,11 +998,10 @@ class BDATradingAgent:
         # 1. Download S&P 500 returns for Kalman Beta
         print("[Agent] Fetching S&P 500 history for Kalman Beta calculations...")
         try:
-            sp_kf_df = yf.download(config.SP500_INDEX, period="100d", progress=False)
-            if isinstance(sp_kf_df.columns, pd.MultiIndex):
-                sp_kf_df.columns = [col[0] for col in sp_kf_df.columns]
-            sp_kf_df = sp_kf_df.reset_index().sort_values("Date").reset_index(drop=True)
-            sp_kf_df["Date"] = pd.to_datetime(sp_kf_df["Date"]).dt.strftime('%Y-%m-%d')
+            from . import market_data
+            sp_kf_df = market_data.fetch_benchmark_closes(
+                config.SP500_INDEX, lookback_days=int(getattr(config, "LIVE_HISTORY_DAYS", 250)))
+            sp_kf_df = sp_kf_df.sort_values("Date").reset_index(drop=True)
             sp_kf_df["sp_return"] = sp_kf_df["Close"].pct_change().fillna(0)
             sp_returns_dict = sp_kf_df.set_index("Date")["sp_return"].to_dict()
         except Exception as e:

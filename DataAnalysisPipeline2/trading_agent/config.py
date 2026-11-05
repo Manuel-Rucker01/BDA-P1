@@ -113,6 +113,15 @@ CONFIDENCE_THRESHOLD = 0.53      # Probability threshold for High-Confidence Lon
 TARGET_EXPOSURE = 1.0           # Target total portfolio exposure
 MIN_ORDER_VALUE = 5.0           # Minimum USD order limit to avoid tiny fraction order rejections
 
+# --- Live market data ---
+# Calendar days of daily bars fetched for live inference. Must cover the
+# longest feature lookback (return_50d, 26-span MACD EMA) with warm-up; the old
+# 60-day window (~41 sessions) left return_50d permanently 0 in production.
+LIVE_HISTORY_DAYS = 250
+# Refuse to rank the universe if fewer than this fraction of tickers returned
+# data (a data outage would otherwise yield an arbitrary top-K book).
+MIN_UNIVERSE_COVERAGE = 0.80
+
 # --- Drawdown circuit breaker ---
 # Peak-to-trough drawdown (%) at which the bot halts and refuses to trade until
 # an operator manually clears the halt file. Set to 15% (was an implicit 5%
