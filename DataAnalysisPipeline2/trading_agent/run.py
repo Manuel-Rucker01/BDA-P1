@@ -297,6 +297,11 @@ def main():
         except Exception as e:
             print(f"[Attribution] [WARN] post-rebalance attribution failed: {e}")
 
+        # ── Monitoring (WS5): persist the scored universe of a LIVE execution ──
+        # Best-effort: a monitoring failure must never fail the run.
+        if exec_status.get("status") == "executed":
+            exec_status = {**exec_status, **_record_for_monitoring(agent, predictions, weights, prices_df)}
+
         # Machine-readable outcome + exit code for schedulers:
         # 0 ok (executed / dry-run), 2 halted, 3 partial (some orders failed), 1 error.
         import json as _json
@@ -322,6 +327,37 @@ def main():
 
 class _SkipState(Exception):
     """Internal: skip attribution/state persistence (dry-run, halted, error)."""
+
+
+def _record_for_monitoring(agent, predictions, weights, prices_df) -> dict:
+    """Write ops/predictions/<account>/<decision_date>.csv.gz (+ feature drift).
+
+    Returns fields to merge into RESULT_JSON; never raises."""
+    out = {}
+    try:
+        from . import monitoring
+        meta = getattr(agent, "model_metadata", None) or {}
+        model_id = monitoring.model_id_from(meta, config.MODEL_PATH)
+        out["model_id"] = model_id
+        account = os.getenv("ACTIVE_ACCOUNT", "weekly").lower()
+        # decision date = last bar the model saw (see monitoring module docstring)
+        decision_date = str(prices_df["Date"].max())[:10]
+        preds = agent.last_predictions_df if getattr(agent, "last_predictions_df", None) is not None \
+            else predictions
+        path = monitoring.record_predictions(preds, weights, decision_date, account, model_id)
+        out["predictions_file"] = os.path.relpath(path, monitoring.REPO_ROOT)
+        print(f"[Monitor] recorded {len(preds)} predictions -> {out['predictions_file']}")
+        try:
+            profile = meta.get("feature_profile") or (agent.model_data or {}).get("feature_profile")
+            drift = monitoring.feature_drift(agent.last_feature_matrix, profile)
+            monitoring.record_drift(drift, decision_date, account)
+            print(f"[Monitor] feature drift: " + (f"{drift['n_high']} features with PSI > "
+                  f"{drift['threshold']}" if drift["available"] else drift["reason"]))
+        except Exception as e:
+            print(f"[Monitor] [WARN] drift not recorded: {e}")
+    except Exception as e:
+        print(f"[Monitor] [WARN] predictions not recorded: {e}")
+    return out
 
 if __name__ == "__main__":
     main()

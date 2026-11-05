@@ -22,8 +22,15 @@ Usage::
     python -m DataAnalysisPipeline2.trading_agent.scheduled_rebalance --account monthly          # check only
     python -m DataAnalysisPipeline2.trading_agent.scheduled_rebalance --account monthly --execute
 
+Monitoring (WS5): ``--monitor`` -- implied after an actual ``--execute`` rebalance --
+refreshes ``ops/monitoring.{csv,md}`` from read-only market data and prints
+``MONITOR_JSON``. Monitoring never changes the exit code unless
+``--fail-on-alert`` is given and an alert fires (then exit 4 if it would
+otherwise be 0).
+
 Exit codes: 0 nothing to do or done, 1 error / not tradable, 2 halted by the
-drawdown breaker, 3 executed with some failed orders.
+drawdown breaker, 3 executed with some failed orders, 4 monitoring alert (only
+with ``--fail-on-alert``).
 """
 from __future__ import annotations
 
@@ -38,7 +45,7 @@ from zoneinfo import ZoneInfo
 
 NY = ZoneInfo("America/New_York")
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EXIT_OK, EXIT_ERROR, EXIT_HALTED, EXIT_PARTIAL = 0, 1, 2, 3
+EXIT_OK, EXIT_ERROR, EXIT_HALTED, EXIT_PARTIAL, EXIT_ALERT = 0, 1, 2, 3, 4
 
 
 def _log(msg: str) -> None:
@@ -140,6 +147,29 @@ def _notify(title: str, msg: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Monitoring post-step
+# --------------------------------------------------------------------------- #
+def should_monitor(args, outcome: dict) -> bool:
+    """--monitor always; --execute only when a rebalance was actually run."""
+    return bool(args.monitor or (args.execute and outcome.get("decision") == "trade"
+                                 and "result" in outcome))
+
+
+def monitor_exit_code(code: int, alerts, fail_on_alert: bool) -> int:
+    return EXIT_ALERT if (fail_on_alert and alerts and code == EXIT_OK) else code
+
+
+def run_monitoring(account: str, updater=None) -> dict:
+    """Refresh the monitoring report (read-only market data); never raises."""
+    try:
+        if updater is None:
+            from .monitoring import update_monitoring_report as updater
+        return updater(account)
+    except Exception as e:
+        return {"account": account, "error": f"{type(e).__name__}: {e}", "alerts": []}
+
+
+# --------------------------------------------------------------------------- #
 # Main
 # --------------------------------------------------------------------------- #
 def main(argv=None) -> int:
@@ -154,14 +184,35 @@ def main(argv=None) -> int:
     p.add_argument("--universe", default=os.getenv("BDA_UNIVERSE", "full"))
     p.add_argument("--strategy", default=os.getenv("BDA_STRATEGY", "top_k"))
     p.add_argument("--notify", action="store_true", help="macOS notification / GitHub summary")
+    p.add_argument("--monitor", action="store_true",
+                   help="refresh ops/monitoring.{csv,md} (read-only; implied after an --execute rebalance)")
+    p.add_argument("--fail-on-alert", action="store_true",
+                   help="exit 4 when monitoring raises an alert (otherwise the exit code is unaffected)")
     args = p.parse_args(argv)
 
+    outcome: dict = {}
+    code = _rebalance(args, outcome)
+    if should_monitor(args, outcome):
+        summary = run_monitoring(args.account.lower())
+        print("MONITOR_JSON: " + json.dumps(summary, default=str))
+        for a in summary.get("alerts", []):
+            _log(f"MONITOR ALERT [{a['rule']}] {a['message']}")
+        if summary.get("error"):
+            _log(f"monitoring failed (non-fatal): {summary['error']}")
+        code = monitor_exit_code(code, summary.get("alerts"), args.fail_on_alert)
+    return code
+
+
+def _rebalance(args, outcome: dict) -> int:
+    """The original preflight/decision/execute flow; fills ``outcome`` with the
+    extra fields of the final SCHEDULER_JSON (decision, result, ...)."""
     account_name = args.account.lower()
     os.environ["ACTIVE_ACCOUNT"] = account_name  # before importing config
     from . import config  # noqa: E402
     from .bot import BOT_ORDER_PREFIX  # noqa: E402
 
     def finish(code, title, msg, **extra):
+        outcome.update(extra)
         _log(msg)
         print("SCHEDULER_JSON: " + json.dumps({"exit": code, "account": account_name,
                                                 "cadence": args.cadence, "message": msg, **extra}))
