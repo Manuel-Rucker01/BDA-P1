@@ -1350,7 +1350,7 @@ class BDATradingAgent:
             print("[HALT] DrawdownCircuitBreaker is tripped — refusing to submit any orders.")
             print(f"[HALT] Inspect {self.circuit_breaker.history_path} and remove the halt file manually after review.")
             print("=" * 80)
-            return
+            return {"status": "halted", "reason": "halt_file"}
 
         if has_credentials and not dry_run:
             try:
@@ -1365,7 +1365,8 @@ class BDATradingAgent:
                 if status["halted"]:
                     print("[HALT] Drawdown threshold breached — bot just halted.  Aborting rebalance.")
                     print("=" * 80)
-                    return
+                    return {"status": "halted", "reason": "drawdown",
+                            "drawdown_pct": status["drawdown_pct"]}
             except Exception as e:
                 print(f"[CircuitBreaker] [WARN] Could not fetch live equity: {e}.  Proceeding with rebalance.")
 
@@ -1464,7 +1465,7 @@ class BDATradingAgent:
             print(f"TRADED VOLUME ELIMINATED (SAVINGS)      : ${volume_saved:,.2f} ({pct_saved:.2f}% reduction)")
             print(f"ESTIMATED TRANSACTION COST SAVED (0.2%): ${volume_saved * 0.0020:,.2f}")
             print("=" * 80)
-            return
+            return {"status": "dry_run"}
 
         # Alpaca live trading execution
         try:
@@ -1511,27 +1512,50 @@ class BDATradingAgent:
             trades_to_execute.sort(key=lambda x: x["delta"])
 
             print(f"\n[Broker] Dispatching {len(trades_to_execute)} optimized differential orders...")
+
+            # One failing order (untradable symbol, rejected size, ...) must not
+            # abort the rest of the rebalance: sells run first, so aborting
+            # mid-way would leave the book half in cash. Record and continue.
+            n_ok, failures = 0, []
+
+            def _try(fn, tkr):
+                nonlocal n_ok
+                try:
+                    fn()
+                    n_ok += 1
+                    return True
+                except Exception as oe:
+                    failures.append({"ticker": tkr, "error": str(oe)})
+                    print(f"  -> [ORDER-FAILED] {tkr}: {oe}")
+                    return False
+
             for trade in trades_to_execute:
                 ticker = trade["ticker"]
                 delta = trade["delta"]
                 target_w = trade["target_w"]
 
-                # Get latest price of the stock to calculate whole shares
-                ticker_price = 1.0
+                # Latest price to size whole shares. Never fall back to a fake
+                # price: the old 1.0 fallback turned a $5k delta into 5,000
+                # shares. Without a real price we skip sizing (full
+                # liquidations don't need one -- they use close_position).
+                ticker_price = None
                 if prices_df is not None:
                     ticker_rows = prices_df[prices_df["ticker"] == ticker]
                     if not ticker_rows.empty:
                         ticker_price = float(ticker_rows.sort_values("Date").iloc[-1]["company_close"])
-                    else:
-                        try:
-                            ticker_price = float(yf.download(ticker, period="1d", progress=False).iloc[-1]["Close"])
-                        except Exception:
-                            ticker_price = 1.0
-                else:
+                if ticker_price is None or not (ticker_price > 0):
                     try:
-                        ticker_price = float(yf.download(ticker, period="1d", progress=False).iloc[-1]["Close"])
+                        from . import market_data
+                        _b, _ = market_data.fetch_daily_bars([ticker], lookback_days=10, verbose=False)
+                        if not _b.empty:
+                            ticker_price = float(_b.sort_values("Date").iloc[-1]["company_close"])
                     except Exception:
-                        ticker_price = 1.0
+                        ticker_price = None
+                full_liquidation = (target_w == 0.0 and delta < 0)
+                if (ticker_price is None or not (ticker_price > 0)) and not full_liquidation:
+                    print(f"  -> [skip] No reliable price for {ticker}; not sizing an order.")
+                    failures.append({"ticker": ticker, "error": "no price"})
+                    continue
 
                 if delta < 0:
                     # Sell
@@ -1539,7 +1563,7 @@ class BDATradingAgent:
                     side_str = "flat" if target_w == 0.0 else ("short" if target_w < 0 else "long")
                     if target_w == 0.0:
                         print(f"  -> [ORDER] Liquidating 100% of {ticker} (Value: ${abs(delta):,.2f})")
-                        client.close_position(ticker)
+                        _try(lambda t=ticker: client.close_position(t), ticker)
                         action = "SELL (Liquidate)"
                         qty_logged = 0
                     else:
@@ -1549,7 +1573,7 @@ class BDATradingAgent:
                         if qty > 0:
                             print(f"  -> [ORDER] Selling {qty} shares of {ticker} to reduce exposure (Value: ${qty * ticker_price:,.2f}, price: ${ticker_price:.2f})")
                             order = MarketOrderRequest(symbol=ticker, qty=qty, side=side, time_in_force=TimeInForce.DAY)
-                            client.submit_order(order)
+                            _try(lambda o=order: client.submit_order(o), ticker)
                         else:
                             print(f"  -> [skip] Order value for {ticker} is too small for a whole share (Value: ${abs(delta):,.2f}).")
                 else:
@@ -1562,7 +1586,7 @@ class BDATradingAgent:
                     if qty > 0:
                         print(f"  -> [ORDER] Buying {qty} shares of {ticker} to establish/increase exposure (Value: ${qty * ticker_price:,.2f}, price: ${ticker_price:.2f})")
                         order = MarketOrderRequest(symbol=ticker, qty=qty, side=side, time_in_force=TimeInForce.DAY)
-                        client.submit_order(order)
+                        _try(lambda o=order: client.submit_order(o), ticker)
                     else:
                         print(f"  -> [skip] Order value for {ticker} is too small for a whole share (Value: ${delta:,.2f}).")
 
@@ -1578,11 +1602,15 @@ class BDATradingAgent:
                 except Exception as e:
                     print(f"  -> [WARN] trade logger failed for {ticker}: {e}")
 
-            print("[Broker] Portfolio rebalance completed successfully.")
+            print(f"[Broker] Rebalance finished: {n_ok} orders submitted, {len(failures)} failed.")
             print("=" * 80)
+            status = "executed" if n_ok > 0 or not trades_to_execute else "error"
+            return {"status": status, "submitted": n_ok, "failed": len(failures),
+                    "failures": failures}
         except Exception as e:
             print(f"\n[ERROR] Alpaca Broker Execution failure: {e}")
             print("=" * 80)
+            return {"status": "error", "error": str(e)}
 
     def record_attribution(self, *, weights_prev, weights_curr,
                             realised_returns, benchmark_return,

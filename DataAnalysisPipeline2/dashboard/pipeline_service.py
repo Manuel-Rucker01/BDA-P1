@@ -35,7 +35,7 @@ import pandas as pd
 # "run as a loose script" invocation styles.
 try:  # package style: python -m DataAnalysisPipeline2.dashboard.app
     from ..trading_agent.bot import BDATradingAgent
-    from ..trading_agent import config
+    from ..trading_agent import config, operational
 except ImportError:  # script style: python app.py from the dashboard dir
     import sys
     _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -45,7 +45,7 @@ except ImportError:  # script style: python app.py from the dashboard dir
         if p not in sys.path:
             sys.path.insert(0, p)
     from DataAnalysisPipeline2.trading_agent.bot import BDATradingAgent
-    from DataAnalysisPipeline2.trading_agent import config
+    from DataAnalysisPipeline2.trading_agent import config, operational
 
 
 _AGENT_LOCK = threading.Lock()
@@ -57,7 +57,9 @@ _AGENT: BDATradingAgent | None = None
 _JOBS: dict[str, dict] = {}
 _JOBS_LOCK = threading.Lock()
 
-AGENT_LOGS_DIR = os.path.join(config.AGENT_DIR, "agent_logs")
+def _logs_dir() -> str:
+    """Agent state dir of the ACTIVE account (switches with the account)."""
+    return operational.AGENT_LOG_DIR
 
 
 # --------------------------------------------------------------------------- #
@@ -76,6 +78,12 @@ def _apply_account(name: str) -> dict:
     config.ALPACA_SECRET_KEY = acct["secret_key"]
     config.ALPACA_URL = acct["url"]
     config.ALPACA_PAPER_TRADING = acct["paper"]
+    # Per-account agent state (equity history / halt file / trades) so one
+    # account's drawdown breaker never sees another account's peak.
+    operational.set_log_dir(config.account_log_dir(name))
+    if _AGENT is not None:
+        _AGENT.trade_logger.path = operational.TRADES_PATH
+        _AGENT.circuit_breaker.history_path = operational.EQUITY_HISTORY_PATH
     return acct
 
 
@@ -221,8 +229,8 @@ def _run_pipeline_blocking(job_id: str, universe: str, strategy: str,
 
         # Cache everything execute() needs. We serialise prices_df to disk so a
         # restart does not strand a pending proposal mid-flight.
-        cache_path = os.path.join(AGENT_LOGS_DIR, "dashboard_pending.parquet")
-        os.makedirs(AGENT_LOGS_DIR, exist_ok=True)
+        cache_path = os.path.join(_logs_dir(), "dashboard_pending.parquet")
+        os.makedirs(_logs_dir(), exist_ok=True)
         try:
             prices_df.to_parquet(cache_path)
         except Exception:
@@ -344,15 +352,24 @@ def execute(job_id: str) -> dict:
             prices_df = None
 
     agent = _get_agent()
+    _apply_account(get_active_account())  # agent now exists: re-point its loggers
     try:
-        agent.execute_alpaca_rebalance(weights, prices_df=prices_df, dry_run=False)
+        res = agent.execute_alpaca_rebalance(weights, prices_df=prices_df, dry_run=False) or {}
+        st = res.get("status")
+        if st == "halted":
+            return {"ok": False, "error": "Drawdown circuit breaker is tripped for this "
+                    "account — no orders were placed.", "result": res}
+        if st == "error":
+            return {"ok": False, "error": f"Order execution failed: {res.get('error')}", "result": res}
         _persist_attribution_state(agent, prices_df, weights)
         with _JOBS_LOCK:
             _JOBS[job_id]["_executed"] = True
             _JOBS[job_id]["executed_at"] = datetime.now(timezone.utc).isoformat()
-        return {"ok": True, "message": "Orders submitted to Alpaca (paper="
-                f"{config.ALPACA_PAPER_TRADING}).",
-                "paper": config.ALPACA_PAPER_TRADING}
+        msg = f"{res.get('submitted', 0)} orders submitted to Alpaca (paper={config.ALPACA_PAPER_TRADING})."
+        if res.get("failed"):
+            msg += f" {res['failed']} failed: {[f['ticker'] for f in res.get('failures', [])]}"
+        return {"ok": True, "message": msg, "paper": config.ALPACA_PAPER_TRADING,
+                "result": {k: v for k, v in res.items() if k != "failures"}}
     except Exception as e:
         return {"ok": False, "error": f"{e}", "traceback": traceback.format_exc()}
 
@@ -361,7 +378,7 @@ def _persist_attribution_state(agent, prices_df, weights):
     """Mirror run.py's post-rebalance attribution + last_weights.json write."""
     try:
         import yfinance as yf
-        state_path = os.path.join(AGENT_LOGS_DIR, "last_weights.json")
+        state_path = os.path.join(_logs_dir(), "last_weights.json")
         prev_state = None
         if os.path.exists(state_path):
             with open(state_path) as f:
@@ -480,7 +497,7 @@ def get_history() -> dict:
     """Equity curve, drawdown, per-period attribution and recent trades."""
     out = {"ok": True, "equity": [], "attribution": [], "trades": []}
 
-    eq_path = os.path.join(AGENT_LOGS_DIR, "equity_history.csv")
+    eq_path = os.path.join(_logs_dir(), "equity_history.csv")
     if os.path.exists(eq_path):
         try:
             df = pd.read_csv(eq_path)
@@ -494,7 +511,7 @@ def get_history() -> dict:
         except Exception as e:
             out["equity_error"] = str(e)
 
-    at_path = os.path.join(AGENT_LOGS_DIR, "attribution.csv")
+    at_path = os.path.join(_logs_dir(), "attribution.csv")
     if os.path.exists(at_path):
         try:
             df = pd.read_csv(at_path)
@@ -510,7 +527,7 @@ def get_history() -> dict:
         except Exception as e:
             out["attribution_error"] = str(e)
 
-    tr_path = os.path.join(AGENT_LOGS_DIR, "trades.csv")
+    tr_path = os.path.join(_logs_dir(), "trades.csv")
     if os.path.exists(tr_path):
         try:
             df = pd.read_csv(tr_path).tail(60).iloc[::-1]

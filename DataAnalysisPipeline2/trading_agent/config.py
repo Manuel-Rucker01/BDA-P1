@@ -82,6 +82,15 @@ def resolve_account(name=None):
     }
 
 
+def account_log_dir(name=None):
+    """Per-account agent state directory (equity history, halt file, trades,
+    decisions, last_weights). Each account gets its own so a new account's
+    drawdown breaker never inherits another account's peak equity. The bare
+    agent_logs/ root is kept as the archive of the single-account era."""
+    name = (name or os.getenv("ACTIVE_ACCOUNT", "weekly") or "weekly").lower()
+    return os.path.join(AGENT_DIR, "agent_logs", "accounts", name)
+
+
 # Module-level ALPACA_API_KEY / ALPACA_SECRET_KEY resolve to the ACTIVE account
 # so existing code (bot.py, backtests, the CLI runner) keeps working unchanged.
 # The dashboard can re-point these at runtime via pipeline_service.set_active_account().

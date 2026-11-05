@@ -226,19 +226,22 @@ def main():
             print("=" * 80)
             return
             
-        agent.execute_alpaca_rebalance(weights, prices_df=prices_df, dry_run=is_dry_run)
+        exec_status = agent.execute_alpaca_rebalance(
+            weights, prices_df=prices_df, dry_run=is_dry_run) or {"status": "unknown"}
 
         # ── Performance attribution against the previous rebalance ────────
         # We persist the most-recent decision's target weights to a small
         # state file so the next invocation can attribute realised returns
-        # between rebalances.
+        # between rebalances. Only when orders were actually executed: a
+        # dry-run or a halted run must never mutate state.
         try:
             import json
-            import yfinance as yf
+            from . import operational, market_data
 
-            state_path = os.path.join(
-                os.path.dirname(__file__), "agent_logs", "last_weights.json"
-            )
+            if exec_status.get("status") != "executed":
+                raise _SkipState()
+
+            state_path = os.path.join(operational.AGENT_LOG_DIR, "last_weights.json")
             prev_state = None
             if os.path.exists(state_path):
                 with open(state_path) as f:
@@ -261,11 +264,7 @@ def main():
             bench_return = 0.0
             if prev_state is not None:
                 try:
-                    sp = yf.download(config.SP500_INDEX, period="3mo", progress=False)
-                    if isinstance(sp.columns, pd.MultiIndex):
-                        sp.columns = [c[0] for c in sp.columns]
-                    sp = sp.reset_index()
-                    sp["Date"] = pd.to_datetime(sp["Date"]).dt.strftime("%Y-%m-%d")
+                    sp = market_data.fetch_benchmark_closes(config.SP500_INDEX, lookback_days=120)
                     window_start = prev_state.get("period_end")
                     window_rows = sp[sp["Date"] >= window_start].sort_values("Date")
                     if len(window_rows) >= 2:
@@ -293,14 +292,36 @@ def main():
                     "period_end": str(prices_df["Date"].max()),
                     "weights": weights,
                 }, f)
+        except _SkipState:
+            pass
         except Exception as e:
             print(f"[Attribution] [WARN] post-rebalance attribution failed: {e}")
 
+        # Machine-readable outcome + exit code for schedulers:
+        # 0 ok (executed / dry-run), 2 halted, 3 partial (some orders failed), 1 error.
+        import json as _json
+        st = exec_status.get("status")
+        print("RESULT_JSON: " + _json.dumps({k: v for k, v in exec_status.items() if k != "failures"}))
+        if st == "halted":
+            print("\nRun halted by the drawdown circuit breaker — no orders placed.")
+            sys.exit(2)
+        if st == "error":
+            print(f"\n[CRITICAL ERROR] Order execution failed: {exec_status.get('error', exec_status)}", file=sys.stderr)
+            sys.exit(1)
+        if st == "executed" and exec_status.get("failed", 0) > 0:
+            print(f"\n[WARN] {exec_status['failed']} orders failed: {exec_status.get('failures')}")
+            sys.exit(3)
         print("\nBDA Production Trading Runner run completed successfully.")
-        
+
+    except SystemExit:
+        raise
     except Exception as e:
         print(f"\n[CRITICAL ERROR] Bot execution terminated with failure: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+class _SkipState(Exception):
+    """Internal: skip attribution/state persistence (dry-run, halted, error)."""
 
 if __name__ == "__main__":
     main()
