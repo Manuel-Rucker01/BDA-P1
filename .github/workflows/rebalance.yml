@@ -20,10 +20,12 @@ name: Monthly rebalance (paper)
 
 on:
   schedule:
-    # Weekdays on the 1st-7th of each month, twice a day, inside US market hours
-    # in both EST and EDT. All but one run per month are no-ops.
-    - cron: "45 15 1-7 * 1-5"
-    - cron: "15 18 1-7 * 1-5"
+    # Days 1-7 of each month, twice a day, inside US market hours in both EST and
+    # EDT. (Don't also restrict day-of-week: cron ORs day-of-month and day-of-week
+    # when both are set, which would fire on every weekday of the month.) Weekend
+    # runs and runs after the monthly rebalance are cheap no-ops.
+    - cron: "45 15 1-7 * *"
+    - cron: "15 18 1-7 * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -110,8 +112,12 @@ jobs:
             --account monthly --execute --notify ${{ steps.pre.outputs.force }} | tee run.log
 
       - name: Append to ops/rebalance_log.md (+ monitoring files)
-        # Every scheduled/execute/start/monitor run (incl. halts and errors); not manual read-only checks.
-        if: always() && steps.pre.outcome != 'skipped' && inputs.mode != 'check'
+        # Runs that did something (trade, halt, error) and manual monitor runs; not no-op
+        # skips or read-only checks. The monthly trade commit also keeps the schedule
+        # alive on a public repo (idle schedules auto-disable after 60 days).
+        if: >-
+          always() && steps.pre.outcome != 'skipped' && inputs.mode != 'check' &&
+          (steps.pre.outputs.decision != 'skip' || inputs.mode == 'monitor')
         run: |
           mkdir -p ops
           [ -f ops/rebalance_log.md ] || printf '| UTC | trigger | result |\n|---|---|---|\n' > ops/rebalance_log.md
