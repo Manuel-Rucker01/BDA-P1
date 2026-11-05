@@ -244,7 +244,7 @@ def classify_name(symbol: str, name: str | None, exchange: str | None) -> tuple[
     sym_cls, sym_reason = classify_symbol(symbol, exchange)
     if sym_cls is not None:
         return sym_cls, sym_reason
-    n = (name or "").strip()
+    n = name.strip() if isinstance(name, str) else ""
     if not n:
         return "common", f"no_name;{sym_reason}"
     if _ETF_NAME.search(n) and (_ETF_STRONG.search(n) or not _ISSUER_SUFFIX.search(n)):
@@ -273,7 +273,7 @@ def classify_name(symbol: str, name: str | None, exchange: str | None) -> tuple[
 
 
 def is_spac_like(name: str | None) -> bool:
-    return bool(name) and bool(_SPAC_NAME.search(name))
+    return isinstance(name, str) and bool(_SPAC_NAME.search(name))
 
 
 def classify_assets(assets: pd.DataFrame) -> pd.DataFrame:
@@ -559,6 +559,11 @@ def build_classification(assets: pd.DataFrame | None = None, ca: pd.DataFrame | 
 
     allc = allc.merge(wk.rename(columns={"symbol": "fetch_symbol"}), on="fetch_symbol", how="left")
     allc["has_bars"] = allc["n_weeks"].fillna(0) > 0
+    # Delisted to the OTC market: Alpaca now reports exchange=OTC, but SIP bars
+    # (exchange-listed securities only) exist for the listed period.
+    otc = (allc["exchange"] == "OTC") & (allc["name_cls"] == "common") & allc["has_bars"]
+    allc.loc[otc, "cls"] = "common"
+    allc.loc[otc, "reason"] = "exchange_now_OTC;sip_bars_while_listed"
     allc["in_universe"] = (allc["cls"] == "common") & allc["has_bars"]
     cols = ["id", "symbol", "fetch_symbol", "name", "exchange", "status", "source", "cls", "reason",
             "name_verified", "spac_like", "etf_corr", "etf_match", "ca_evidence", "first_week",
@@ -731,3 +736,148 @@ def eligible(panel: pd.DataFrame, min_price: float = 3.0, min_adv_usd: float = 2
     only information available at that date's close? Same rule for training
     rows and live scoring. See ``eligibility_details``."""
     return eligibility_details(panel, min_price, min_adv_usd, min_bars)["eligible"].astype(bool)
+
+
+def eligible_counts(write: bool = True, **rule) -> pd.DataFrame:
+    """Universe size per session under ``eligible`` on the cleaned store."""
+    from .prices import load_prices
+    px = load_prices(columns=["company_close", "company_volume"], with_raw=True)
+    det = eligibility_details(px, **rule)
+    out = (det.groupby("Date").agg(n_with_bar=("ticker", "size"), n_eligible=("eligible", "sum"))
+              .reset_index())
+    if write:
+        out.to_parquet(os.path.join(data_dir("universe"), "eligible_counts.parquet"), index=False)
+        yr = det[det["eligible"]].groupby(det["Date"].str[:4])["ticker"].nunique()
+        yr.rename("n_unique_eligible").to_frame().to_parquet(
+            os.path.join(data_dir("universe"), "eligible_unique_per_year.parquet"))
+    return out
+
+
+# =========================================================================== #
+# 8. Report
+# =========================================================================== #
+def write_report(sample_n: int = 8, seed: int = 0) -> str:
+    from ._alpaca import md_table
+    cl = load_classification()
+    ud = data_dir("universe")
+    calib = pd.read_parquet(os.path.join(ud, "etf_test_calibration.parquet"))
+    seg = load_segments()
+    rng = np.random.default_rng(seed)
+    listed = cl[(cl["exchange"].isin(LISTED_EXCHANGES)) | cl["exchange"].isna()]
+    L = ["# v3 universe report (WS1)", "",
+         f"Built from `{ud}`. Candidates: {len(cl):,} rows "
+         f"({', '.join(f'{k}: {v:,}' for k, v in cl['source'].value_counts().items())}).", "",
+         "## Universe: common stocks with SIP bars since 2016", ""]
+    u = cl[cl["in_universe"]]
+    by = u.groupby(u["source"] + ":" + u["status"].fillna("?"))["fetch_symbol"].nunique()
+    L += [md_table(by.rename("symbols")), "",
+          f"**{u['fetch_symbol'].nunique():,} distinct symbols** are downloaded "
+          f"(spac-like names among them: {int(u.drop_duplicates('fetch_symbol')['spac_like'].sum()):,}, kept "
+          "but flagged `spac_like`). `alpaca_assets:active` are currently listed; everything else "
+          "(Alpaca inactive, the 2018 NASDAQ list, symbols found only by discovery) is a delisted "
+          "or renamed security — the survivorship-bias correction.", "",
+          "## Classification counts (NASDAQ/NYSE/AMEX + unknown-exchange candidates)", "",
+          md_table(pd.crosstab(listed["cls"], listed["source"] + ":" + listed["status"].fillna("?"),
+                               margins=True)), "",
+          f"Other exchanges (ARCA, BATS, OTC, TXSE) are excluded wholesale: "
+          f"{int((cl['cls'] == 'non_listed_exchange').sum()):,} asset rows.", "",
+          "Rules (first match wins, `universe.classify_name`): exchange filter → decisive symbol "
+          "patterns (`.WS`, `.U`, `.RT`, `.PR*`, `-P`, `.WI`, CUSIP-like, NASDAQ 5th letter W/U/R/X) → "
+          "name keywords (ETF/ETN sponsors and wording; preferred/depositary/cumulative/perpetual; "
+          "warrant; unit (not LP common units); right (not ADS 'right to receive'); notes/debentures/"
+          "bonds 'due YYYY'; royalty/grantor/commodity/crypto/liquidating trusts; closed-end funds by "
+          "'Fund'/'Municipal'/sponsor+fund wording) → NASDAQ 5th letter P/O/N/M (preferred) or G/H/I/L "
+          "(notes) unless the name says common/class/ordinary (GOOGL) → common. ADRs, REIT 'shares of "
+          "beneficial interest' and MLP common units stay common.", ""]
+    for c in [c for c in CLASSES if c in set(listed["cls"])]:
+        sub = listed[(listed["cls"] == c) & listed["has_bars"]]
+        if not len(sub):
+            sub = listed[listed["cls"] == c]
+        smp = sub.iloc[rng.choice(len(sub), size=min(sample_n, len(sub)), replace=False)]
+        L += [f"### Spot-check: {c} ({len(listed[listed['cls'] == c]):,} rows)", "",
+              md_table(smp[["symbol", "name", "exchange", "status", "source", "reason"]]
+                       .assign(name=lambda d: d["name"].fillna("").str.slice(0, 80)), index=False), ""]
+    un = cl[~cl["name_verified"] & (cl["exchange"].isna() | cl["exchange"].isin(LISTED_EXCHANGES))]
+    L += ["## Unnamed symbols (discovery / blank Alpaca names): ETF-likeness test", "",
+          "SIP only carries exchange-listed securities, so every discovered symbol was listed at some "
+          "point since 2016, but without a name it could be a (dead) ETF. Test: weekly log returns, max "
+          "|corr| with any *named* ETF over >= 26 common weeks (single-stock trackers removed from the "
+          "references). A dead ETF almost always has a live twin; a company does not. Calibration on "
+          "named securities (self excluded):", "", md_table(calib, index=False), "",
+          f"Threshold used: {ETF_CORR_THRESHOLD}. Overrides: acquiree of a cash merger / worthless "
+          "removal (Alpaca corporate actions) → company; acquiree of a stock merger into an ETF/fund → "
+          "fund. Result for unnamed rows:", "",
+          md_table(un.groupby(["source", "cls"]).size().rename("rows")), ""]
+    for c in ("common", "etf"):
+        sub = un[(un["cls"] == c) & un["etf_corr"].notna()]
+        if len(sub):
+            smp = sub.iloc[rng.choice(len(sub), size=min(12, len(sub)), replace=False)]
+            L += [f"Sample unnamed → {c}:", "",
+                  md_table(smp[["fetch_symbol", "first_week", "last_week", "n_weeks", "etf_corr",
+                                "etf_match", "ca_evidence"]], index=False), ""]
+    if seg is not None:
+        ms = seg[seg["n_seg"] > 1]
+        L += ["## Symbol reuse", "",
+              "Rule (`universe.detect_symbol_reuse`): only traded bars count (Alpaca glues reused "
+              "symbols with zero-volume filler bars); a new segment starts after > 90 calendar days "
+              "without a traded bar, or > 7 days when Alpaca lists more than one security under the "
+              "symbol (active+inactive duplicates or `SYM_DELISTED`); such a multi-security symbol "
+              "without a gap is split at a one-day move > ln 3 (price-level break). The latest segment "
+              "keeps the symbol, earlier ones become `SYM~1`, `SYM~2`… Segment class: the current "
+              "segment takes the active security's class, past segments the class shared by the "
+              "symbol's other securities (disagreement → `ambiguous`, excluded). Kept = common and "
+              ">= 5 traded bars. Note the earlier segments' *adjusted* price level can be wrong (Alpaca "
+              "applies the newest company's split factors to the whole symbol), but returns within a "
+              "segment are unaffected and `close_raw` stays correct.", "",
+              f"* symbols in the store: {seg['symbol'].nunique():,}; with > 1 segment: "
+              f"{ms['symbol'].nunique():,} ({int((ms['seg'] > 1).sum()):,} splits: "
+              f"{', '.join(f'{k} {v}' for k, v in ms.loc[ms['seg'] > 1, 'split_reason'].value_counts().items())});",
+              f"* multi-security symbols: {seg.loc[seg['multi_security'], 'symbol'].nunique():,};",
+              f"* segments excluded: {int((~seg['keep']).sum()):,} "
+              f"({', '.join(f'{k} {v}' for k, v in seg.loc[~seg['keep'], 'cls'].value_counts().items())}).", ""]
+        ex = ms.sort_values(["multi_security", "symbol"], ascending=[False, True])
+        exs = ex[ex["symbol"].isin(ex["symbol"].drop_duplicates().head(14))]
+        L += ["Examples:", "", md_table(exs[["ticker", "start", "end", "n_bars", "gap_before_days",
+                                             "split_reason", "multi_security", "cls", "keep"]], index=False), ""]
+    p = os.path.join(ud, "eligible_counts.parquet")
+    if os.path.exists(p):
+        ec = pd.read_parquet(p)
+        yr = ec.groupby(ec["Date"].str[:4]).agg(sessions=("Date", "size"), mean_with_bar=("n_with_bar", "mean"),
+                                                mean_eligible=("n_eligible", "mean"),
+                                                min_eligible=("n_eligible", "min"),
+                                                max_eligible=("n_eligible", "max"))
+        up = os.path.join(ud, "eligible_unique_per_year.parquet")
+        if os.path.exists(up):
+            yr = yr.join(pd.read_parquet(up))
+        L += ["## Universe size under `eligible(min_price=3, min_adv_usd=2e6, min_bars=120)`", "",
+              "Per session on the cleaned store (price = raw close, ADV = 20-session mean of "
+              "close×volume, history counted from 2016-01-01 so 2016 ramps up):", "",
+              md_table(yr.round(0)), "", "Per-date counts: `eligible_counts.parquet`.", ""]
+    txt = "\n".join(L)
+    with open(os.path.join(ud, "universe_report.md"), "w") as f:
+        f.write(txt)
+    return txt
+
+
+if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser(description="v3 universe builder")
+    ap.add_argument("step", choices=["snapshot", "discover", "classify", "reuse", "eligibility", "report"])
+    a = ap.parse_args()
+    if a.step == "snapshot":
+        c = AlpacaClient()
+        snapshot_assets(c)
+        snapshot_corporate_actions(c)
+    elif a.step == "discover":
+        discover_symbols(extra_symbols=candidate_extra_symbols(load_assets(), load_corporate_actions(),
+                                                               load_nasdaq_2018()))
+    elif a.step == "classify":
+        build_classification()
+    elif a.step == "reuse":
+        from .prices import load_prices
+        detect_symbol_reuse(load_prices(clean=False, columns=["company_close", "company_volume"],
+                                        with_raw=False))
+    elif a.step == "eligibility":
+        eligible_counts()
+    else:
+        print(write_report())

@@ -18,6 +18,7 @@ import threading
 import time
 from typing import Iterable
 
+import numpy as np
 import pandas as pd
 
 DEFAULT_DATA_DIR = "/Users/manuelruckerabella/Workspace/UNI/Q6/BDA/bda_data_v3"
@@ -44,6 +45,20 @@ def last_completed_close_utc(now: dt.datetime | None = None) -> dt.datetime:
     if now - end < dt.timedelta(minutes=20):  # free plan: last 15 min are "recent"
         end -= dt.timedelta(minutes=20)
     return end
+
+
+def md_table(df, index: bool = True, floatfmt: str = "{:,.3f}") -> str:
+    """Markdown table without the optional ``tabulate`` dependency."""
+    if isinstance(df, pd.Series):
+        df = df.to_frame()
+    d = df.reset_index() if index else df
+    fmt = lambda v: ("" if v is None or (isinstance(v, float) and np.isnan(v)) else
+                     floatfmt.format(v) if isinstance(v, (float, np.floating)) else
+                     f"{v:,}" if isinstance(v, (int, np.integer)) and not isinstance(v, bool) else str(v))
+    head = "| " + " | ".join(map(str, d.columns)) + " |"
+    sep = "|" + "|".join("---" for _ in d.columns) + "|"
+    rows = ["| " + " | ".join(fmt(v) for v in r) + " |" for r in d.itertuples(index=False)]
+    return "\n".join([head, sep] + rows)
 
 
 def to_ny_date(ts: pd.Series) -> pd.Series:
