@@ -1,0 +1,733 @@
+"""Survivorship-free, point-in-time US common-stock universe (WS1).
+
+Pipeline (``build_universe``)
+-----------------------------
+1. **Candidates** from three sources, because Alpaca's *inactive* asset list is
+   far from complete (TWTR, ATVI, SIVB, FRC, BBBY are absent from it although
+   their SIP bars exist):
+
+   * ``/v2/assets`` active + inactive (named; snapshot ``assets_<date>.parquet``);
+   * ``datasets/nasdaq_companies.csv`` -- a ~2018 NASDAQ listing (named);
+   * **symbol discovery**: weekly SIP bars for *every* 1-4 letter symbol
+     2016 -> today (plus every other candidate symbol). SIP only carries
+     exchange-listed securities, so anything that returns bars was listed on a
+     US exchange at some point since 2016. Corporate actions (mergers,
+     worthless removals) are snapshotted as supporting evidence.
+
+2. **Classification** (``classify_name``): exchange filter (NASDAQ/NYSE/AMEX),
+   then name keywords AND symbol patterns -> one of ``CLASSES`` with a reason.
+   Symbols with no name (discovered only, or blank asset names) are classified
+   by ``classify_unnamed``: a weekly-return correlation test against every
+   *named* ETF -- a dead ETF almost always has a live twin (same index/theme)
+   with |corr| >= 0.95, a company does not. The threshold is calibrated on named
+   stocks/ETFs and the calibration is printed in the report.
+
+3. **Symbol reuse** (``detect_symbol_reuse``): Alpaca bars are keyed by symbol,
+   so a reused symbol returns one series spanning two companies, sometimes
+   glued by zero-volume filler bars and with the *new* company's split factors
+   applied to the old one (AMTD 2016 shows $10,893). Histories are split into
+   segments at long trading gaps / price breaks; each segment gets its own
+   ticker id and class (see the rule in the function docstring).
+
+4. ``eligible``: PIT rule per (ticker, Date) using only data up to that date.
+
+Outputs under ``<data>/universe/``: ``assets_<date>.parquet``,
+``corporate_actions_<date>.parquet``, ``discovery_weekly.parquet``,
+``classification.parquet``, ``segments.parquet``, ``eligible_counts.parquet``
+and ``universe_report.md``.
+"""
+from __future__ import annotations
+
+import datetime as dt
+import glob
+import itertools
+import json
+import os
+import re
+import string
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import numpy as np
+import pandas as pd
+
+from ._alpaca import AlpacaClient, data_dir, last_completed_close_utc, to_ny_date
+
+LISTED_EXCHANGES = ("NASDAQ", "NYSE", "AMEX")
+HISTORY_START = "2016-01-01"
+CLASSES = ("common", "etf", "fund", "trust", "warrant", "unit", "right",
+           "preferred", "note", "other", "non_listed_exchange")
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+NASDAQ_2018_CSV = os.path.join(REPO_ROOT, "datasets", "nasdaq_companies.csv")
+VALID_SYMBOL = re.compile(r"^[A-Z]{1,5}(\.[A-Z]{1,2})?$")
+
+
+def _today() -> str:
+    return dt.date.today().isoformat()
+
+
+def _latest(pattern: str) -> str | None:
+    files = sorted(glob.glob(pattern))
+    return files[-1] if files else None
+
+
+# =========================================================================== #
+# 1. Snapshots
+# =========================================================================== #
+def snapshot_assets(client: AlpacaClient | None = None, date: str | None = None) -> pd.DataFrame:
+    """All us_equity assets (active + inactive) with every field Alpaca returns."""
+    client = client or AlpacaClient()
+    frames = [pd.DataFrame(client.get_assets(s)) for s in ("active", "inactive")]
+    df = pd.concat(frames, ignore_index=True)
+    df["snapshot_date"] = date or _today()
+    df.to_parquet(os.path.join(data_dir("universe"), f"assets_{date or _today()}.parquet"), index=False)
+    return df
+
+
+CA_TYPES = ("cash_merger", "stock_merger", "stock_and_cash_merger", "name_change",
+            "worthless_removal", "redemption", "forward_split", "reverse_split",
+            "unit_split", "spin_off")
+
+
+def snapshot_corporate_actions(client: AlpacaClient | None = None, start: str = HISTORY_START,
+                               end: str | None = None, date: str | None = None) -> pd.DataFrame:
+    """Non-dividend corporate actions (Alpaca coverage is sparse before ~2019)."""
+    client = client or AlpacaClient()
+    end = end or last_completed_close_utc().date().isoformat()
+    rows = []
+    for y in range(int(start[:4]), int(end[:4]) + 1):
+        ys, ye = max(start, f"{y}-01-01"), min(end, f"{y}-12-31")
+        for typ, recs in client.get_corporate_actions(CA_TYPES, ys, ye).items():
+            for r in recs:
+                rows.append({"ca_type": typ, **{k: (json.dumps(v) if isinstance(v, (list, dict)) else v)
+                                                for k, v in r.items()}})
+    df = pd.DataFrame(rows).drop_duplicates("id")
+    df.to_parquet(os.path.join(data_dir("universe"), f"corporate_actions_{date or _today()}.parquet"),
+                  index=False)
+    return df
+
+
+def load_assets(path: str | None = None) -> pd.DataFrame:
+    path = path or _latest(os.path.join(data_dir("universe"), "assets_*.parquet"))
+    if not path:
+        raise FileNotFoundError("no assets snapshot; run snapshot_assets()")
+    return pd.read_parquet(path)
+
+
+def load_corporate_actions(path: str | None = None) -> pd.DataFrame:
+    path = path or _latest(os.path.join(data_dir("universe"), "corporate_actions_*.parquet"))
+    return pd.read_parquet(path) if path else pd.DataFrame(columns=["ca_type"])
+
+
+# =========================================================================== #
+# 2. Classification of named securities
+# =========================================================================== #
+def _rx(p: str) -> re.Pattern:
+    return re.compile(p, re.I)
+
+
+# Order matters: the first matching rule wins.
+_ETF_NAME = _rx(
+    r"\betf\b|\betns?\b|exchange[- ]traded|\bindex (fund|shares)\b|\bishares\b|proshares|direxion|"
+    r"\bspdr\b|wisdomtree|vaneck|\bglobal x\b|graniteshares|yieldmax|roundhill|leverage shares|"
+    r"\btidal\b|defiance|\bpacer\b|\bvictoryshares\b|\bvanguard\b.*\b(index|shares)\b|"
+    r"\binvesco\b.*\b(shares|portfolio|qqq|trust, series)\b|\bfirst trust\b.*\b(fund|etf|portfolio|index)\b|"
+    r"\b(daily|2x|3x|-1x|-2x|-3x)\b.*\b(bull|bear|long|short|inverse)\b|\bultra(pro)?\s?(short)?\b.*\bproshares|"
+    r"\btrust,? series 1\b|\bselect sector\b|\bself-indexed\b|\bbulletshares\b|\bmicrosectors\b"
+)
+# An ETF-sponsor *company* (WisdomTree, Inc.) is not an ETF.
+_ETF_STRONG = _rx(r"\betf|\betn|fund|trust|shares|index|portfolio|daily|\b\dx\b|ultra|bull|bear")
+_ISSUER_SUFFIX = _rx(r"\b(inc|corp|corporation|ltd|limited|plc|holdings|co)\.?,?$")
+_WARRANT_NAME = _rx(r"\bwarrants?\b|\bwts?\b(?!\w)|\bwt exp\b")
+_RIGHT_NAME = _rx(r"\brights?\b(?! offering)|contingent value|subscription right")
+_UNIT_NAME = _rx(r"\bunits?\b")
+_LP_UNIT = _rx(r"common units|limited partner|partnership units|\blp units|representing limited|unitholder|"
+               r"\bclass [a-z] units$")
+_PREF_NAME = _rx(
+    r"\bpreferred\b|\bpreference\b|\bpfd\b|non-?cumulative|\bcumulative\b|perpetual|"
+    r"fixed[- ]to[- ]floating|fixed[- ]rate reset|depositary shares?,? each representing a 1/|"
+    r"\bseries [a-z]{1,2}\b.*%|%.*\bseries [a-z]{1,2}\b|\btrust preferred\b"
+)
+_NOTE_NAME = _rx(
+    r"\bnotes?\b|\bdebentures?\b|\bsubordinated\b(?! voting)|\bbaby bonds?\b|\bdue\b[^%]*\b(19|20)\d\d\b|\d{4} notes|"
+    r"%\s*(senior|junior|fixed|notes|bonds)|\bmortgage bonds?\b|\bbonds?\b.*%|%.*\bbonds?\b"
+)
+_FUND_SPONSORS = (
+    r"blackrock|nuveen|eaton vance|gabelli|pimco|calamos|cohen & steers|western asset|invesco|aberdeen|"
+    r"abrdn|franklin|john hancock|royce|tekla|virtus|saba|neuberger|doubleline|flaherty|\bmfs\b|putnam|templeton|"
+    r"allspring|wells fargo|kayne anderson|tortoise|clearbridge|guggenheim|duff & phelps|pioneer|"
+    r"brookfield|highland|first trust|nexpoint|bancroft|ellsworth|adams|general american|liberty all-star|"
+    r"source capital|central securities|tri-continental|zweig|cornerstone|oxford lane|eagle point|"
+    r"pgim|voya|federated|dws|morgan stanley|lazard|apollo|blackstone|ares dynamic|barings|angel oak|"
+    r"bny mellon|dreyfus|delaware|macquarie|mainstay|miller/howard|principal|thornburg|"
+    r"ishares|vanguard|schwab|sprott physical|central fund|riverNorth|alliancebe?rn?stein|columbia seligman"
+)
+_FUND_NAME = _rx(
+    r"\bfunds?\b|closed[- ]end|\bincome trust\b|\bcredit opportunities\b|\bpremier income\b|"
+    r"\bcef\b|\bmunicipal\b|\bmuni\b|\binterval\b"
+)
+# Sponsor + fund-like word, unless the name reads like the sponsor's own operating company.
+_FUND_SPONSOR_NAME = _rx(
+    rf"({_FUND_SPONSORS}).*\b(trust|income|strategies|opportunit\w*|portfolio|total return|premium|"
+    r"yield|dividend|credit|bond|tax[- ]?(advantaged|free|managed)|limited duration|floating rate)\b"
+)
+_OPERATING_CO = _rx(r"management|partners|group|holdings|corporation|financial|asset management|"
+                    r"bancorp|\bcorp\b|renewable|infrastructure corp|realty|reit\b")
+_TRUST_NAME = _rx(
+    r"units? of beneficial interest|royalty trust|\bgrantor\b|"
+    r"\btrust\b.*\b(bitcoin|ethereum|ether|gold|silver|platinum|palladium|oil|commodit\w*|currency|"
+    r"crypto|digital asset|solana|xrp|litecoin)\b|"
+    r"\b(bitcoin|ethereum|ether|gold|silver|platinum|palladium|crypto|digital asset|solana|xrp)\b.*\btrust\b|"
+    r"\b(energy|oil|gas|minerals?|royalty|basin|petroleum|realty royalty) trust\b|"
+    r"\b(liquidating|litigation|liquidation) trust\b|\bunit investment trust\b|\bdepositary receipts? trust\b"
+)
+_WHEN_ISSUED = _rx(r"when[- ]issued|\bw/i\b|\bwhen issued\b|\bescrow\b|\bcontingent\b|\bstub\b")
+_COMMON_HINT = _rx(r"common stock|common shares|ordinary shares?|\bclass [a-c]\b|capital stock|"
+                   r"american depositary|\bads\b|\badr\b|shares of beneficial interest|common units")
+_SPAC_NAME = _rx(r"\bacquisition (corp|corporation|company|co|limited|ltd|inc|holdings)\b|"
+                 r"\bblank check\b|\bspac\b|\bmerger (corp|corporation|sub)\b|"
+                 r"\b(acquisition|merger) corp\b")
+
+
+def classify_symbol(symbol: str, exchange: str | None = None) -> tuple[str | None, str]:
+    """Symbol-pattern rules. Returns (class or None if inconclusive, reason)."""
+    s = (symbol or "").upper().replace("_DELISTED", "")
+    if not s:
+        return "other", "sym:empty"
+    if re.search(r"\d", s) or not re.fullmatch(r"[A-Z.\-/ ]+", s):
+        return "other", "sym:cusip_or_nonstandard"
+    if re.search(r"\.WS(\.[A-Z])?$|\.W$|/WS|\.WT$", s):
+        return "warrant", "sym:.WS"
+    if re.search(r"\.U$|\.UN$|/U$", s):
+        return "unit", "sym:.U"
+    if re.search(r"\.RT$|\.R$|\.RTW?I?$", s):
+        return "right", "sym:.RT"
+    if re.search(r"\.PR[A-Z]?$|-P[A-Z]?$|\.P[A-Z]$|/PR", s):
+        return "preferred", "sym:.PR/-P"
+    if re.search(r"\.(WI|WD|CL|CV|EC|PT|ID|NT)$", s):
+        return "other", "sym:when_issued_or_special"
+    if (exchange in (None, "NASDAQ")) and re.fullmatch(r"[A-Z]{5}", s):
+        last = s[-1]
+        if last == "W":
+            return "warrant", "sym:nasdaq_5th_W"
+        if last == "U":
+            return "unit", "sym:nasdaq_5th_U"
+        if last == "R":
+            return "right", "sym:nasdaq_5th_R"
+        if last == "X":
+            return "fund", "sym:5th_X_mutual_fund"
+        if last in "PONM":
+            return None, f"sym:nasdaq_5th_{last}_preferred_if_not_common"
+        if last in "GHIL":
+            return None, f"sym:nasdaq_5th_{last}_note_if_not_common"
+        if last == "Z":
+            return None, "sym:nasdaq_5th_Z_misc"
+    return None, "sym:plain"
+
+
+def classify_name(symbol: str, name: str | None, exchange: str | None) -> tuple[str, str]:
+    """Classify one security. Returns (class, reason).
+
+    Rules, first match wins:
+      1. exchange not NASDAQ/NYSE/AMEX            -> non_listed_exchange
+      2. symbol pattern decisive (.WS/.U/.RT/.PR, NASDAQ 5th letter W/U/R/X,
+         CUSIP-like)                               -> warrant/unit/right/preferred/fund/other
+      3. name keywords: ETF/ETN, warrant, right, unit (not LP common units),
+         preferred, note/debenture, closed-end fund, trust (royalty/grantor/
+         commodity/crypto/liquidating), when-issued/escrow
+      4. NASDAQ 5th letter P/O/N/M (preferred) or G/H/I/L (notes) unless the
+         name says common/class/ordinary (e.g. GOOGL)
+      5. otherwise common (ADRs and MLP common units stay common)
+    """
+    if exchange is not None and exchange not in LISTED_EXCHANGES:
+        return "non_listed_exchange", f"exchange:{exchange}"
+    sym_cls, sym_reason = classify_symbol(symbol, exchange)
+    if sym_cls is not None:
+        return sym_cls, sym_reason
+    n = (name or "").strip()
+    if not n:
+        return "common", f"no_name;{sym_reason}"
+    if _ETF_NAME.search(n) and (_ETF_STRONG.search(n) or not _ISSUER_SUFFIX.search(n)):
+        return "etf", "name:etf/etn"
+    if (_PREF_NAME.search(n) and not re.match(r"preferred\b", n, re.I)
+            and not (re.search(r"common stock|ordinary shares", n, re.I) and "%" not in n)):
+        return "preferred", "name:preferred"
+    if _WARRANT_NAME.search(n):
+        return "warrant", "name:warrant"
+    if _UNIT_NAME.search(n) and not _LP_UNIT.search(n):
+        return "unit", "name:unit"
+    if _RIGHT_NAME.search(n) and not re.search(r"depositary|depository", n, re.I):
+        return "right", "name:right"
+    if _NOTE_NAME.search(n):
+        return "note", "name:note/debenture"
+    if _TRUST_NAME.search(n):
+        return "trust", "name:trust"
+    if _FUND_NAME.search(n) or (_FUND_SPONSOR_NAME.search(n) and not _OPERATING_CO.search(n)):
+        return "fund", "name:fund/closed-end"
+    if _WHEN_ISSUED.search(n):
+        return "other", "name:when_issued/escrow/contingent"
+    if sym_reason.startswith("sym:nasdaq_5th_") and not _COMMON_HINT.search(n):
+        letter = sym_reason.split("_")[2]
+        return ("preferred" if letter in "PONM" else "note" if letter in "GHIL" else "other"), sym_reason
+    return "common", ("name:common_hint" if _COMMON_HINT.search(n) else "name:default_common")
+
+
+def is_spac_like(name: str | None) -> bool:
+    return bool(name) and bool(_SPAC_NAME.search(name))
+
+
+def classify_assets(assets: pd.DataFrame) -> pd.DataFrame:
+    """Vectorised ``classify_name`` over an assets snapshot."""
+    out = assets[["id", "symbol", "name", "exchange", "status"]].copy()
+    res = [classify_name(s, n, e) for s, n, e in zip(out["symbol"], out["name"], out["exchange"])]
+    out["cls"] = [r[0] for r in res]
+    out["reason"] = [r[1] for r in res]
+    out["spac_like"] = out["name"].map(is_spac_like)
+    out["fetch_symbol"] = out["symbol"].str.replace("_DELISTED", "", regex=False)
+    out["source"] = "alpaca_assets"
+    return out
+
+
+def load_nasdaq_2018(path: str = NASDAQ_2018_CSV) -> pd.DataFrame:
+    """~2018 NASDAQ company list shipped in ``datasets/`` (named, pre-2020 coverage)."""
+    if not os.path.exists(path):
+        return pd.DataFrame(columns=["symbol", "name"])
+    df = pd.read_csv(path, usecols=["Symbol", "Name"]).rename(columns={"Symbol": "symbol", "Name": "name"})
+    df["symbol"] = (df["symbol"].astype(str).str.strip()
+                    .str.replace("^", ".PR", regex=False).str.replace("~", "", regex=False))
+    return df.drop_duplicates("symbol")
+
+
+# =========================================================================== #
+# 3. Symbol discovery (weekly SIP bars for every 1-4 letter symbol)
+# =========================================================================== #
+def all_short_symbols(max_len: int = 4) -> list[str]:
+    out = []
+    for n in range(1, max_len + 1):
+        out.extend("".join(p) for p in itertools.product(string.ascii_uppercase, repeat=n))
+    return out
+
+
+def _weekly_frame(raw: pd.DataFrame) -> pd.DataFrame:
+    if not len(raw):
+        return pd.DataFrame(columns=["symbol", "Date", "close", "volume"])
+    return pd.DataFrame({
+        "symbol": raw["symbol"].astype(str),
+        "Date": to_ny_date(raw["timestamp"]),
+        "close": raw["close"].astype(float),
+        "volume": raw["volume"].astype(float),
+    })
+
+
+def discover_symbols(client: AlpacaClient | None = None, extra_symbols=(), batch_size: int = 4000,
+                     workers: int = 3, start: str = HISTORY_START, end: dt.datetime | None = None,
+                     log=print) -> pd.DataFrame:
+    """Weekly (split+dividend adjusted) SIP bars for every 1-4 letter symbol plus
+    ``extra_symbols``. Resumable: each batch is checkpointed to
+    ``universe/_discovery/b<k>.parquet`` and skipped on re-run."""
+    client = client or AlpacaClient()
+    ddir = data_dir("universe", "_discovery")
+    man_path = os.path.join(ddir, "manifest.json")
+    if os.path.exists(man_path):
+        man = json.load(open(man_path))
+    else:
+        syms = all_short_symbols()
+        extra = sorted({s for s in extra_symbols if isinstance(s, str) and VALID_SYMBOL.match(s)} - set(syms))
+        syms = syms + extra
+        end = end or last_completed_close_utc()
+        man = {"start": start, "end": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+               "batches": [syms[i:i + batch_size] for i in range(0, len(syms), batch_size)]}
+        json.dump(man, open(man_path, "w"))
+    todo = [k for k in range(len(man["batches"]))
+            if not os.path.exists(os.path.join(ddir, f"b{k:05d}.parquet"))]
+    log(f"[discover] {len(man['batches'])} batches, {len(todo)} to do")
+    t0 = time.time()
+
+    def run(k):
+        raw, invalid = client.get_bars(man["batches"][k], man["start"], man["end"], timeframe="1Week",
+                                       adjustment="all")
+        df = _weekly_frame(raw)
+        tmp = os.path.join(ddir, f"b{k:05d}.tmp")
+        df.to_parquet(tmp, index=False)
+        os.replace(tmp, os.path.join(ddir, f"b{k:05d}.parquet"))
+        return k, df["symbol"].nunique(), invalid
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for fut in as_completed([ex.submit(run, k) for k in todo]):
+            k, n, invalid = fut.result()
+            done += 1
+            log(f"[discover] batch {k} -> {n} symbols{' invalid=' + str(invalid) if invalid else ''} "
+                f"({done}/{len(todo)}, {time.time() - t0:.0f}s, {client.n_requests} requests)")
+    frames = [pd.read_parquet(f) for f in sorted(glob.glob(os.path.join(ddir, "b*.parquet")))]
+    out = pd.concat(frames, ignore_index=True).drop_duplicates(["symbol", "Date"])
+    out.to_parquet(os.path.join(data_dir("universe"), "discovery_weekly.parquet"), index=False)
+    log(f"[discover] {out['symbol'].nunique()} symbols with SIP bars since {man['start']}")
+    return out
+
+
+CA_SYMBOL_COLS = ("symbol", "acquiree_symbol", "acquirer_symbol", "old_symbol", "new_symbol",
+                  "source_symbol", "alternate_symbol")
+
+
+def candidate_extra_symbols(assets: pd.DataFrame, ca: pd.DataFrame, nasdaq18: pd.DataFrame) -> list[str]:
+    """Every non-1-4-letter symbol worth probing: listed-exchange assets, the
+    2018 NASDAQ list and all symbols named in corporate actions."""
+    syms = set(assets.loc[assets["exchange"].isin(LISTED_EXCHANGES), "symbol"]
+               .str.replace("_DELISTED", "", regex=False))
+    syms |= set(nasdaq18["symbol"])
+    for c in CA_SYMBOL_COLS:
+        if c in ca.columns:
+            syms |= set(ca[c].dropna().astype(str))
+    return sorted(s for s in syms if VALID_SYMBOL.match(s))
+
+
+def load_discovery() -> pd.DataFrame:
+    return pd.read_parquet(os.path.join(data_dir("universe"), "discovery_weekly.parquet"))
+
+
+# =========================================================================== #
+# 4. Unnamed symbols: ETF-likeness by weekly-return correlation
+# =========================================================================== #
+ETF_CORR_THRESHOLD = 0.95
+MIN_OVERLAP_WEEKS = 26
+
+
+def weekly_returns(weekly: pd.DataFrame) -> pd.DataFrame:
+    """Date x symbol weekly log returns; |r| > 1 (split glitches) -> NaN."""
+    w = weekly[weekly["close"] > 0].pivot_table(index="Date", columns="symbol", values="close", aggfunc="last")
+    r = np.log(w).diff()
+    return r.where(r.abs() <= 1.0)
+
+
+def _standardize(r: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    x = r.to_numpy(dtype="float64")
+    m = np.isfinite(x)
+    mu = np.nansum(x, 0) / np.maximum(m.sum(0), 1)
+    z = np.where(m, x - mu, 0.0)
+    sd = np.sqrt((z ** 2).sum(0) / np.maximum(m.sum(0) - 1, 1))
+    z = np.where(m, z / np.where(sd > 0, sd, np.nan), 0.0)
+    return np.nan_to_num(z), m.astype("float64")
+
+
+def max_abs_corr(target: pd.DataFrame, refs: pd.DataFrame, min_overlap: int = MIN_OVERLAP_WEEKS,
+                 exclude_self: bool = False, block: int = 2000) -> pd.DataFrame:
+    """For each column of ``target``: max |corr| with any column of ``refs`` over
+    >= ``min_overlap`` common weeks (pairwise, approximated with per-series
+    standardisation), plus the best-matching reference symbol."""
+    refs = refs.reindex(target.index)
+    zr, mr = _standardize(refs)
+    out_c, out_r, out_n = [], [], []
+    cols = list(target.columns)
+    for i in range(0, len(cols), block):
+        zt, mt = _standardize(target[cols[i:i + block]])
+        n = mt.T @ mr
+        c = (zt.T @ zr) / np.maximum(n - 1, 1)
+        c = np.where(n >= min_overlap, np.abs(c), np.nan)
+        if exclude_self:
+            idx = {s: k for k, s in enumerate(refs.columns)}
+            for k, s in enumerate(cols[i:i + block]):
+                if s in idx:
+                    c[k, idx[s]] = np.nan
+        allnan = np.all(np.isnan(c), 1)
+        j = np.nanargmax(np.where(np.isnan(c), -1, c), 1)
+        out_c.extend(np.where(allnan, np.nan, c[np.arange(len(j)), j]))
+        out_r.extend(np.where(allnan, None, np.asarray(refs.columns)[j]))
+        out_n.extend((mt.sum(0)).astype(int))
+    return pd.DataFrame({"symbol": cols, "etf_corr": out_c, "etf_match": out_r, "n_weeks": out_n})
+
+
+def etf_reference_set(ret: pd.DataFrame, named: pd.DataFrame, tracker_corr: float = 0.97) -> tuple[list, list]:
+    """Named ETFs (any exchange) usable as references, minus single-stock
+    trackers (|corr| >= ``tracker_corr`` with a named common stock), and the named
+    listed common stocks used for calibration."""
+    etfs = sorted(set(named.loc[named["name_cls"] == "etf", "fetch_symbol"]) & set(ret.columns))
+    commons = sorted(set(named.loc[(named["cls"] == "common") & named["name_verified"], "fetch_symbol"])
+                     & set(ret.columns))
+    trk = max_abs_corr(ret[etfs], ret[commons])
+    trackers = set(trk.loc[trk["etf_corr"] >= tracker_corr, "symbol"])
+    return [e for e in etfs if e not in trackers], commons
+
+
+def calibrate_etf_test(ret: pd.DataFrame, refs: list, commons: list, etfs: list,
+                       thresholds=(0.85, 0.9, 0.93, 0.95, 0.97)) -> pd.DataFrame:
+    """Share of named commons / named ETFs that the corr test flags as ETF-like."""
+    sc = max_abs_corr(ret[commons], ret[refs], exclude_self=True)
+    se = max_abs_corr(ret[etfs], ret[refs], exclude_self=True)
+    rows = []
+    for t in thresholds:
+        rows.append({"threshold": t,
+                     "commons_flagged_pct": round(100 * (sc["etf_corr"] >= t).mean(), 2),
+                     "etfs_flagged_pct": round(100 * (se["etf_corr"] >= t).mean(), 2),
+                     "n_commons": len(sc), "n_etfs": len(se)})
+    return pd.DataFrame(rows)
+
+
+def corporate_action_evidence(ca: pd.DataFrame, named_cls: dict) -> pd.DataFrame:
+    """Per symbol: was it an acquiree of a cash merger / of a stock merger into
+    a fund or ETF, or removed as worthless (bankruptcy)?"""
+    rows = []
+    for _, r in ca.iterrows():
+        t = r.get("ca_type")
+        if t in ("cash_mergers", "stock_mergers", "stock_and_cash_mergers") and isinstance(r.get("acquiree_symbol"), str):
+            acq_cls = named_cls.get(r.get("acquirer_symbol"))
+            ev = "merged_into_fund" if acq_cls in ("etf", "fund", "trust") else "acquired_company"
+            rows.append((r["acquiree_symbol"], ev, r.get("effective_date") or r.get("process_date")))
+        elif t == "worthless_removals" and isinstance(r.get("symbol"), str):
+            rows.append((r["symbol"], "worthless_removal", r.get("process_date")))
+    df = pd.DataFrame(rows, columns=["symbol", "ca_evidence", "ca_date"])
+    pri = {"merged_into_fund": 0, "acquired_company": 1, "worthless_removal": 2}
+    return (df.assign(p=df["ca_evidence"].map(pri)).sort_values(["symbol", "p"])
+              .drop_duplicates("symbol").drop(columns="p"))
+
+
+# =========================================================================== #
+# 5. Classification table
+# =========================================================================== #
+def build_classification(assets: pd.DataFrame | None = None, ca: pd.DataFrame | None = None,
+                         weekly: pd.DataFrame | None = None, nasdaq18: pd.DataFrame | None = None,
+                         threshold: float = ETF_CORR_THRESHOLD, write: bool = True, log=print):
+    """One row per candidate (asset row, 2018-list row or discovered symbol).
+
+    Columns: id, symbol, fetch_symbol, name, exchange, status, source, cls,
+    reason, name_verified, spac_like, etf_corr, etf_match, ca_evidence,
+    first_week, last_week, n_weeks, in_universe.
+    Returns (classification, calibration_table).
+    """
+    assets = assets if assets is not None else load_assets()
+    ca = ca if ca is not None else load_corporate_actions()
+    weekly = weekly if weekly is not None else load_discovery()
+    nasdaq18 = nasdaq18 if nasdaq18 is not None else load_nasdaq_2018()
+
+    a = classify_assets(assets)
+    a["name_cls"] = [classify_name(s, n, None)[0] if isinstance(n, str) and n.strip() else None
+                     for s, n in zip(a["symbol"], a["name"])]
+    a["name_verified"] = a["name"].fillna("").str.strip() != ""
+
+    known = set(a["fetch_symbol"])
+    n18 = nasdaq18[~nasdaq18["symbol"].isin(known)].copy()
+    res = [classify_name(s, n, "NASDAQ") for s, n in zip(n18["symbol"], n18["name"])]
+    n18 = pd.DataFrame({"id": None, "symbol": n18["symbol"], "name": n18["name"], "exchange": "NASDAQ",
+                        "status": "unknown", "cls": [r[0] for r in res], "reason": [r[1] for r in res],
+                        "spac_like": n18["name"].map(is_spac_like), "fetch_symbol": n18["symbol"],
+                        "source": "nasdaq_2018", "name_cls": [r[0] for r in res], "name_verified": True})
+    known |= set(n18["fetch_symbol"])
+
+    wk = weekly.groupby("symbol").agg(first_week=("Date", "min"), last_week=("Date", "max"),
+                                      n_weeks=("Date", "size")).reset_index()
+    disc = wk[~wk["symbol"].isin(known)]
+    d = pd.DataFrame({"id": None, "symbol": disc["symbol"], "name": None, "exchange": None,
+                      "status": "unknown", "cls": None, "reason": None, "spac_like": False,
+                      "fetch_symbol": disc["symbol"], "source": "discovery", "name_cls": None,
+                      "name_verified": False})
+    allc = pd.concat([a, n18, d], ignore_index=True)
+
+    # Unnamed rows on listed exchanges or of unknown exchange -> corr test.
+    unnamed = (~allc["name_verified"]) & (allc["exchange"].isna() | allc["exchange"].isin(LISTED_EXCHANGES))
+    ret = weekly_returns(weekly)
+    refs, commons = etf_reference_set(ret, allc[allc["name_verified"]])
+    named_etfs = sorted(set(allc.loc[allc["name_cls"] == "etf", "fetch_symbol"]) & set(ret.columns))
+    calib = calibrate_etf_test(ret, refs, commons, named_etfs)
+    log(f"[universe] {len(refs)} reference ETFs; calibration:\n{calib.to_string(index=False)}")
+    targets = sorted(set(allc.loc[unnamed, "fetch_symbol"]) & set(ret.columns))
+    sc = max_abs_corr(ret[targets], ret[refs]).set_index("symbol") if targets else pd.DataFrame(
+        columns=["etf_corr", "etf_match", "n_weeks"])
+
+    named_cls = dict(zip(allc.loc[allc["name_verified"], "fetch_symbol"], allc.loc[allc["name_verified"], "cls"]))
+    ev = corporate_action_evidence(ca, named_cls).set_index("symbol")
+    allc["ca_evidence"] = allc["fetch_symbol"].map(ev["ca_evidence"])
+    allc["etf_corr"] = allc["fetch_symbol"].map(sc["etf_corr"]) if len(sc) else np.nan
+    allc["etf_match"] = allc["fetch_symbol"].map(sc["etf_match"]) if len(sc) else None
+
+    for i in allc.index[unnamed]:
+        sym, ex = allc.at[i, "fetch_symbol"], allc.at[i, "exchange"]
+        scls, sreason = classify_symbol(sym, ex)
+        corr, evid = allc.at[i, "etf_corr"], allc.at[i, "ca_evidence"]
+        if scls is not None:
+            c, r = scls, f"unnamed;{sreason}"
+        elif sreason.startswith("sym:nasdaq_5th_"):
+            c, r = "other", f"unnamed;{sreason}"  # 5-letter, no name: cannot tell
+        elif evid == "merged_into_fund":
+            c, r = "fund", "unnamed;ca:merged_into_fund"
+        elif pd.notna(corr) and corr >= threshold and evid not in ("acquired_company", "worthless_removal"):
+            c, r = "etf", f"unnamed;etf_like corr={corr:.3f} vs {allc.at[i, 'etf_match']}"
+        elif pd.isna(corr):
+            c, r = "common", "unnamed;short_history_untested" + (f";ca:{evid}" if isinstance(evid, str) else "")
+        else:
+            c, r = "common", f"unnamed;not_etf_like corr={corr:.3f}" + (f";ca:{evid}" if isinstance(evid, str) else "")
+        allc.at[i, "cls"], allc.at[i, "reason"] = c, r
+
+    allc = allc.merge(wk.rename(columns={"symbol": "fetch_symbol"}), on="fetch_symbol", how="left")
+    allc["has_bars"] = allc["n_weeks"].fillna(0) > 0
+    allc["in_universe"] = (allc["cls"] == "common") & allc["has_bars"]
+    cols = ["id", "symbol", "fetch_symbol", "name", "exchange", "status", "source", "cls", "reason",
+            "name_verified", "spac_like", "etf_corr", "etf_match", "ca_evidence", "first_week",
+            "last_week", "n_weeks", "has_bars", "in_universe"]
+    allc = allc[cols]
+    if write:
+        allc.to_parquet(os.path.join(data_dir("universe"), "classification.parquet"), index=False)
+        calib.to_parquet(os.path.join(data_dir("universe"), "etf_test_calibration.parquet"), index=False)
+    return allc, calib
+
+
+def load_classification() -> pd.DataFrame:
+    return pd.read_parquet(os.path.join(data_dir("universe"), "classification.parquet"))
+
+
+# =========================================================================== #
+# 6. Symbol reuse
+# =========================================================================== #
+REUSE_GAP_DAYS = 90          # calendar days without a traded bar -> new listing
+REUSE_GAP_DAYS_MULTI = 7     # ... when Alpaca knows >1 security under the symbol
+PRICE_BREAK_LOG = np.log(3)  # one-day |log return| treated as a company switch (multi only)
+CURRENT_DAYS = 10            # segment ending within N days of the store end is "current"
+
+
+def detect_symbol_reuse(prices: pd.DataFrame, classification: pd.DataFrame | None = None,
+                        write: bool = True) -> pd.DataFrame:
+    """Split each symbol's history into listings ("segments").
+
+    Rule (documented in the report):
+      * only traded bars count (volume > 0): Alpaca glues reused symbols with
+        zero-volume filler bars;
+      * a new segment starts after a gap > 90 calendar days between traded
+        bars, or > 7 days when the symbol is *multi* -- Alpaca lists more than
+        one security under it (active+inactive duplicates or ``SYM_DELISTED``);
+      * a multi symbol with a single segment is split at its largest one-day
+        move if |log return| > ln 3 (a different company's price level);
+      * segment ids: the latest segment keeps the symbol, earlier ones become
+        ``SYM~1``, ``SYM~2``... (oldest first);
+      * segment class: the current segment (ending within 10 days of the store
+        end) takes the class of the symbol's *active* security; earlier or
+        non-current segments take the class shared by its other securities --
+        if those disagree the segment is ``ambiguous`` and excluded;
+      * kept = class common and >= 5 traded bars.
+    ``prices`` needs ticker, Date, company_close, company_volume.
+    """
+    classification = classification if classification is not None else load_classification()
+    cl = classification[classification["fetch_symbol"].notna()]
+    rows_by_sym = {s: g for s, g in cl.groupby("fetch_symbol")}
+    multi_syms = {s for s, g in rows_by_sym.items()
+                  if (g["source"] == "alpaca_assets").sum() > 1 or g["symbol"].str.endswith("_DELISTED").any()}
+    px = prices.loc[prices["company_volume"] > 0, ["ticker", "Date", "company_close"]] \
+        .sort_values(["ticker", "Date"])
+    store_end = pd.Timestamp(px["Date"].max())
+    out = []
+    for sym, g in px.groupby("ticker", sort=False):
+        d = pd.to_datetime(g["Date"].to_numpy())
+        c = g["company_close"].to_numpy(dtype=float)
+        multi = sym in multi_syms
+        gap = np.r_[0, np.diff(d.values).astype("timedelta64[D]").astype(int)]
+        cut = gap > (REUSE_GAP_DAYS_MULTI if multi else REUSE_GAP_DAYS)
+        why = np.where(cut, "gap", "").astype(object)
+        if multi and not cut.any() and len(c) > 1:
+            lr = np.abs(np.diff(np.log(np.where(c > 0, c, np.nan))))
+            if np.nanmax(np.r_[lr, 0]) > PRICE_BREAK_LOG:
+                k = int(np.nanargmax(lr)) + 1
+                cut[k], why[k] = True, "price_break"
+        seg_no = np.cumsum(cut)
+        n_seg = seg_no.max() + 1
+        g_rows = rows_by_sym.get(sym)
+        for s in range(n_seg):
+            m = seg_no == s
+            start, end = d[m][0], d[m][-1]
+            current = (store_end - end).days <= CURRENT_DAYS
+            cls, cls_reason = _segment_class(g_rows, current, s == n_seg - 1)
+            ticker = sym if s == n_seg - 1 else f"{sym}~{s + 1}"
+            out.append({"symbol": sym, "seg": s + 1, "n_seg": n_seg, "ticker": ticker,
+                        "start": start.strftime("%Y-%m-%d"), "end": end.strftime("%Y-%m-%d"),
+                        "n_bars": int(m.sum()), "gap_before_days": int(gap[m][0]) if s else 0,
+                        "split_reason": (why[m][0] or None) if s else None, "multi_security": multi,
+                        "current": current, "cls": cls, "cls_reason": cls_reason})
+    seg = pd.DataFrame(out)
+    seg["keep"] = (seg["cls"] == "common") & (seg["n_bars"] >= 5)
+    if write:
+        seg.to_parquet(os.path.join(data_dir("universe"), "segments.parquet"), index=False)
+        _SEG_CACHE.clear()
+    return seg
+
+
+def _segment_class(rows: pd.DataFrame | None, current: bool, is_last: bool) -> tuple[str, str]:
+    if rows is None or not len(rows):
+        return "unknown", "no_classification_row"
+    if len(rows) == 1:
+        return rows["cls"].iloc[0], "single_security"
+    active = rows[rows["status"] == "active"]
+    others = rows[rows["status"] != "active"]
+    if current and is_last and len(active):
+        cls = active["cls"].unique()
+        return (cls[0], "current->active_security") if len(cls) == 1 else ("ambiguous", "active_disagree")
+    pool = others if len(others) else rows
+    cls = pool["cls"].unique()
+    if len(cls) == 1:
+        return cls[0], "past->inactive_securities"
+    return "ambiguous", "past_securities_disagree:" + "/".join(sorted(map(str, cls)))
+
+
+_SEG_CACHE: dict = {}
+
+
+def load_segments() -> pd.DataFrame | None:
+    p = os.path.join(data_dir("universe"), "segments.parquet")
+    if not os.path.exists(p):
+        return None
+    mt = os.path.getmtime(p)
+    if _SEG_CACHE.get("mtime") != mt:
+        _SEG_CACHE.update(mtime=mt, df=pd.read_parquet(p))
+    return _SEG_CACHE["df"]
+
+
+def apply_segments(df: pd.DataFrame, segments: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Map store rows (ticker = symbol) to segment ids and drop excluded
+    segments / bars between segments. Symbols without segment info pass."""
+    seg = segments if segments is not None else load_segments()
+    if seg is None or not len(df):
+        return df
+    simple = seg.groupby("symbol").filter(lambda g: len(g) == 1 and g["keep"].all())["symbol"]
+    special = seg[~seg["symbol"].isin(set(simple))]
+    mask = df["ticker"].isin(set(special["symbol"]))
+    if not mask.any():
+        return df
+    part = df[mask].merge(special[["symbol", "ticker", "start", "end", "keep"]]
+                          .rename(columns={"ticker": "seg_ticker", "symbol": "ticker"}), on="ticker")
+    part = part[(part["Date"] >= part["start"]) & (part["Date"] <= part["end"]) & part["keep"]]
+    part = part.assign(ticker=part["seg_ticker"]).drop(columns=["seg_ticker", "start", "end", "keep"])
+    return pd.concat([df[~mask], part], ignore_index=True)
+
+
+# =========================================================================== #
+# 7. Point-in-time eligibility
+# =========================================================================== #
+def eligibility_details(panel: pd.DataFrame, min_price: float = 3.0, min_adv_usd: float = 2e6,
+                        min_bars: int = 120, adv_window: int = 20) -> pd.DataFrame:
+    """Per (ticker, Date): n_bars, price, adv_usd, eligible -- each computed from
+    rows up to and including that date only (rolling/cumulative per ticker),
+    aligned to ``panel``'s index.
+
+    * price = ``close_raw`` (actual printed close) when present, else
+      ``company_close``. Adjusted closes are *not* PIT: a later 10:1 split
+      makes 2016 prices look 10x smaller.
+    * adv_usd = mean of company_close x company_volume over the last
+      ``adv_window`` sessions (split-invariant), NaN until a full window exists.
+    * n_bars = number of bars of the ticker so far (history starts 2016-01-01).
+    """
+    p = panel[["ticker", "Date"]].copy()
+    p["_c"] = panel["company_close"].astype(float)
+    p["_dv"] = p["_c"] * panel["company_volume"].astype(float)
+    p["price"] = panel["close_raw"].astype(float).fillna(p["_c"]) if "close_raw" in panel else p["_c"]
+    order = p.sort_values(["ticker", "Date"], kind="mergesort").index
+    q = p.loc[order]
+    g = q.groupby("ticker", sort=False)
+    q["n_bars"] = g.cumcount() + 1
+    q["adv_usd"] = g["_dv"].transform(lambda s: s.rolling(adv_window, min_periods=adv_window).mean())
+    q["eligible"] = ((q["price"] >= min_price) & (q["adv_usd"] >= min_adv_usd)
+                     & (q["n_bars"] >= min_bars)).fillna(False)
+    return q.loc[panel.index, ["ticker", "Date", "n_bars", "price", "adv_usd", "eligible"]]
+
+
+def eligible(panel: pd.DataFrame, min_price: float = 3.0, min_adv_usd: float = 2e6,
+             min_bars: int = 120) -> pd.Series:
+    """Boolean Series aligned to ``panel``: is (ticker, Date) investable using
+    only information available at that date's close? Same rule for training
+    rows and live scoring. See ``eligibility_details``."""
+    return eligibility_details(panel, min_price, min_adv_usd, min_bars)["eligible"].astype(bool)
