@@ -13,6 +13,9 @@ import duckdb
 import yfinance as yf
 
 from . import config
+
+# client_order_id prefix of every order this bot submits (see scheduled_rebalance).
+BOT_ORDER_PREFIX = "bda-"
 from .operational import (
     TradeLogger, TradeLogRow,
     DrawdownCircuitBreaker,
@@ -1518,6 +1521,15 @@ class BDATradingAgent:
             # mid-way would leave the book half in cash. Record and continue.
             n_ok, failures = 0, []
 
+            # Tag every order so a stateless scheduler can tell "already
+            # rebalanced this period" from Alpaca's order history alone.
+            import uuid as _uuid
+            _run_tag = (self.last_decision_ctx.decision_id[:10]
+                        if getattr(self, "last_decision_ctx", None) else _uuid.uuid4().hex[:10])
+
+            def _coid(tkr):
+                return f"{BOT_ORDER_PREFIX}{_run_tag}-{tkr}-{_uuid.uuid4().hex[:6]}"[:120]
+
             def _try(fn, tkr):
                 nonlocal n_ok
                 try:
@@ -1572,7 +1584,8 @@ class BDATradingAgent:
                         qty_logged = qty
                         if qty > 0:
                             print(f"  -> [ORDER] Selling {qty} shares of {ticker} to reduce exposure (Value: ${qty * ticker_price:,.2f}, price: ${ticker_price:.2f})")
-                            order = MarketOrderRequest(symbol=ticker, qty=qty, side=side, time_in_force=TimeInForce.DAY)
+                            order = MarketOrderRequest(symbol=ticker, qty=qty, side=side, time_in_force=TimeInForce.DAY,
+                                                       client_order_id=_coid(ticker))
                             _try(lambda o=order: client.submit_order(o), ticker)
                         else:
                             print(f"  -> [skip] Order value for {ticker} is too small for a whole share (Value: ${abs(delta):,.2f}).")
@@ -1585,7 +1598,8 @@ class BDATradingAgent:
                     qty_logged = qty
                     if qty > 0:
                         print(f"  -> [ORDER] Buying {qty} shares of {ticker} to establish/increase exposure (Value: ${qty * ticker_price:,.2f}, price: ${ticker_price:.2f})")
-                        order = MarketOrderRequest(symbol=ticker, qty=qty, side=side, time_in_force=TimeInForce.DAY)
+                        order = MarketOrderRequest(symbol=ticker, qty=qty, side=side, time_in_force=TimeInForce.DAY,
+                                                       client_order_id=_coid(ticker))
                         _try(lambda o=order: client.submit_order(o), ticker)
                     else:
                         print(f"  -> [skip] Order value for {ticker} is too small for a whole share (Value: ${delta:,.2f}).")

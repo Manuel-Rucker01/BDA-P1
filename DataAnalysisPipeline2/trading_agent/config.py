@@ -119,7 +119,17 @@ TICKERS = HIGH_ALPHA_TICKERS
 
 # --- Model & Trading Parameters ---
 CONFIDENCE_THRESHOLD = 0.53      # Probability threshold for High-Confidence Longs
-TARGET_EXPOSURE = 1.0           # Target total portfolio exposure
+def _env_num(name, default, cast=float):
+    """Strategy knobs can be overridden via env (BDA_<NAME>) so a scheduler or a
+    cloud job can configure them without code changes."""
+    v = os.getenv(f"BDA_{name}")
+    try:
+        return cast(v) if v not in (None, "") else default
+    except ValueError:
+        return default
+
+
+TARGET_EXPOSURE = _env_num("TARGET_EXPOSURE", 1.0)  # Target total portfolio exposure
 MIN_ORDER_VALUE = 5.0           # Minimum USD order limit to avoid tiny fraction order rejections
 
 # --- Live market data ---
@@ -136,7 +146,7 @@ MIN_UNIVERSE_COVERAGE = 0.80
 # an operator manually clears the halt file. Set to 15% (was an implicit 5%
 # default): this concentrated book routinely swings ~10%, so a 5% stop re-trips
 # on every run. Raise/lower to match your real risk tolerance.
-DRAWDOWN_LIMIT_PCT = 15.0
+DRAWDOWN_LIMIT_PCT = _env_num("DRAWDOWN_LIMIT_PCT", 15.0)
 
 # --- Portfolio exposure guardrails (used by regime_filtered long/short mode) ---
 # Gross exposure is sum(abs(weights)); net exposure is abs(sum(weights)).
@@ -155,8 +165,8 @@ MAX_LONG_EXPOSURE = 1.0
 # that quant funds use — it preserves the cross-sectional Z preprocessing
 # the model was trained with AND produces a concentrated, low-overhead
 # portfolio.
-TOP_PCT_THRESHOLD = 5.0          # Default: only consider top 5% of ranked universe
-TOP_K_HOLDINGS = 10              # Cap actually-held positions at 10.
+TOP_PCT_THRESHOLD = _env_num("TOP_PCT_THRESHOLD", 5.0)   # only consider top X% of ranked universe
+TOP_K_HOLDINGS = _env_num("TOP_K_HOLDINGS", 10, int)     # cap actually-held positions
 EQUAL_WEIGHT_TOP_K = True        # (legacy) equal-weight when WEIGHTING_SCHEME='equal'
 
 # --- Sector concentration cap (DISABLED by default; kept as a tested knob) ---
@@ -169,7 +179,7 @@ EQUAL_WEIGHT_TOP_K = True        # (legacy) equal-weight when WEIGHTING_SCHEME='
 # per the subsets backtest), so forcing sector diversification adds low/negative-IC
 # bets and dilutes the concentrated edge. Grinold's law assumes uniform per-bet
 # skill, which does not hold here. Left at 1.0 (no cap); set <1.0 to re-enable.
-MAX_SECTOR_WEIGHT = 1.0
+MAX_SECTOR_WEIGHT = _env_num("MAX_SECTOR_WEIGHT", 1.0)
 
 # --- Intra-basket position weighting ---
 # How capital is split across the held top-K names. The alpha layer chooses
@@ -187,7 +197,7 @@ WEIGHTING_SCHEME = "inverse_vol"
 # the inverse-vol book, and so regime_filtered cannot concentrate gross
 # exposure in one name. With K=10 the equal-weight baseline is 0.10; 0.25 lets
 # the risk tilt act without letting a single name become the whole portfolio.
-MAX_POSITION_WEIGHT = 0.25
+MAX_POSITION_WEIGHT = _env_num("MAX_POSITION_WEIGHT", 0.25)
 # Floor on realized volatility used in the 1/vol calculation (guards against
 # division blow-ups on a name with a near-zero trailing vol).
 VOL_FLOOR = 1e-3
