@@ -61,7 +61,7 @@ backtest-full: ## Full canonical OOS backtest (both windows, slower)
 	cd $(BT) && $(PY) canonical_oos.py
 
 test: ## Run all unit tests (agent safety, scheduler, overlay, scoring, helpers)
-	$(PY) -m pytest -q DataAnalysisPipeline2/trading_agent/ $(BT)/test_overlay.py $(BT)/test_scoring.py
+	$(PY) -m pytest -q DataAnalysisPipeline2/trading_agent/ DataAnalysisPipeline2/features/ $(BT)/test_overlay.py $(BT)/test_scoring.py
 
 reset-halt: ## Clear ACCOUNT's local drawdown halt file (manual reset after review)
 	@if [ -f $(HALT) ]; then rm -v $(HALT); else echo "no halt file for '$(ACCOUNT)' — not halted"; fi

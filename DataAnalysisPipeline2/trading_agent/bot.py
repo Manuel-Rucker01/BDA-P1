@@ -732,6 +732,7 @@ class BDATradingAgent:
         self.company_embeddings = {}
         self.model_metadata = {}
         self.cs_z_standardize = False
+        self.feature_version = 1  # 2 = shared features/core.py (set from the manifest)
         self.hmm_probs = np.array([0.5, 0.5])
         self.hmm_state = 0
         self.kalman_betas = {}
@@ -777,6 +778,9 @@ class BDATradingAgent:
         # apply the same transform at inference (per-date z-score on the
         # live cross-section). Falls back to global scaler otherwise.
         self.cs_z_standardize = bool(self.model_data.get("cs_z_standardize", False))
+        self.feature_version = int((self.model_metadata or {}).get("feature_version", 1))
+        if self.feature_version >= 2 and not self.cs_z_standardize:
+            raise ValueError("feature_version>=2 artefacts must use cross-sectional z-scoring")
         if self.model_metadata:
             expected_cols = self.model_metadata.get("feature_columns")
             current_cols = self.tabular_cols + self.pca_cols
@@ -880,14 +884,26 @@ class BDATradingAgent:
             "price_history_df",
         )
         metadata_df = fetch_company_metadata()
-        latest_as_of = price_history_df["Date"].max()
-        macro_df = get_macro_features_for_date(latest_as_of, config.MACRO_KG_PATH)
+        if self.feature_version >= 2:
+            # Shared training/live feature module: same code, same eligibility
+            # (price >= $1, enough history, a bar on the decision date).
+            from features import core as feat_core
+            print("[Agent] Computing feature_version-2 features (shared training/live module)...")
+            meta = metadata_df[["ticker", "Sector"]] if "Sector" in metadata_df.columns else None
+            df_features = feat_core.compute_features(price_history_df, meta)
+            latest_df = feat_core.decision_rows(df_features)
+            print(f"[Agent] Eligible on {latest_df['Date'].max()}: {len(latest_df)}/"
+                  f"{price_history_df['ticker'].nunique()} tickers "
+                  f"(price >= ${feat_core.MIN_PRICE:.0f}, >= {feat_core.MIN_HISTORY} bars, fresh bar)")
+        else:
+            latest_as_of = price_history_df["Date"].max()
+            macro_df = get_macro_features_for_date(latest_as_of, config.MACRO_KG_PATH)
 
-        print("[Agent] Computing technical and macroeconomic features...")
-        df_features = compute_live_features(price_history_df, metadata_df, macro_df)
+            print("[Agent] Computing technical and macroeconomic features...")
+            df_features = compute_live_features(price_history_df, metadata_df, macro_df)
 
-        # Retrieve the single latest day of trading for live predictions
-        latest_df = df_features.sort_values("Date").groupby("ticker").last().reset_index()
+            # Retrieve the single latest day of trading for live predictions
+            latest_df = df_features.sort_values("Date").groupby("ticker").last().reset_index()
 
         found_tickers = []
         emb_list = []
@@ -945,19 +961,25 @@ class BDATradingAgent:
         # Scale features using standard scaling
         validate_required_columns(latest_df, self.tabular_cols, "live tabular feature frame")
         validate_required_columns(latest_df, self.pca_cols, "live embedding feature frame")
-        X_tab = latest_df[self.tabular_cols].fillna(0).values.astype(np.float32)
-        X_emb = latest_df[self.pca_cols].fillna(0).values.astype(np.float32)
-        X_full = np.concatenate([X_tab, X_emb], axis=1)
-        if self.cs_z_standardize:
-            # Single-date cross-section z-score (mirrors training preprocessing)
-            mean = X_full.mean(axis=0, keepdims=True)
-            std = X_full.std(axis=0, keepdims=True) + 1e-8
-            X_full_s = np.clip((X_full - mean) / std, -6.0, 6.0).astype(np.float32)
+        if self.feature_version >= 2:
+            # The exact robust z-score the model was trained with.
+            X_full_df = feat_core.cross_sectional_zscore(
+                latest_df, self.tabular_cols + self.pca_cols, date_col="Date"
+            ).reset_index(drop=True)
         else:
-            X_full_s = self.scaler.transform(X_full)
+            X_tab = latest_df[self.tabular_cols].fillna(0).values.astype(np.float32)
+            X_emb = latest_df[self.pca_cols].fillna(0).values.astype(np.float32)
+            X_full = np.concatenate([X_tab, X_emb], axis=1)
+            if self.cs_z_standardize:
+                # Single-date cross-section z-score (mirrors training preprocessing)
+                mean = X_full.mean(axis=0, keepdims=True)
+                std = X_full.std(axis=0, keepdims=True) + 1e-8
+                X_full_s = np.clip((X_full - mean) / std, -6.0, 6.0).astype(np.float32)
+            else:
+                X_full_s = self.scaler.transform(X_full)
 
-        # Convert back to a DataFrame with identical feature names to prevent scikit-learn/LGBM warnings
-        X_full_df = pd.DataFrame(X_full_s, columns=self.tabular_cols + self.pca_cols)
+            # Convert back to a DataFrame with identical feature names to prevent scikit-learn/LGBM warnings
+            X_full_df = pd.DataFrame(X_full_s, columns=self.tabular_cols + self.pca_cols)
 
         # ── Ensemble inference (regressor interface) ──────────────────────
         # The new best_model.pkl ships REGRESSORS trained against the 30-day
