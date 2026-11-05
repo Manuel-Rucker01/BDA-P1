@@ -210,8 +210,8 @@ def _run_pipeline_blocking(job_id: str, universe: str, strategy: str,
         config.TICKERS = [t for t in config.TICKERS if t in agent.company_embeddings]
 
         _set(stage="Detecting market regime")
-        is_bull = agent.check_market_regime(force_regime=force_regime)
-        regime = "bull" if is_bull else "bear"
+        is_bull = agent.check_market_regime(force_regime=force_regime, strategy=strategy)
+        regime = "n/a" if is_bull is None else ("bull" if is_bull else "bear")
 
         _set(stage=f"Fetching live prices ({len(config.TICKERS)} tickers)")
         prices_df = agent.fetch_live_data()

@@ -203,6 +203,36 @@ MAX_POSITION_WEIGHT = _env_num("MAX_POSITION_WEIGHT", 0.25)
 # division blow-ups on a name with a near-zero trailing vol).
 VOL_FLOOR = 1e-3
 
+# --- v3 portfolio construction (WS4; see trading_agent/portfolio.py) ---
+# The model's skill is in the broad cross-sectional ranking, not the top-10, so
+# these books are wide and the per-sector cap is STRICT (never relaxed).
+# long_only_v3: K names best-first, <= V3_MAX_PER_SECTOR per sector, inverse-vol
+# weights capped at V3_MAX_WEIGHT, total <= V3_TARGET_EXPOSURE (rest = cash).
+V3_K = _env_num("V3_K", 30, int)
+V3_MAX_PER_SECTOR = _env_num("V3_MAX_PER_SECTOR", 5, int)
+V3_MAX_WEIGHT = _env_num("V3_MAX_WEIGHT", 0.06)
+V3_TARGET_EXPOSURE = _env_num("V3_TARGET_EXPOSURE", TARGET_EXPOSURE)
+# long_short_neutral: long top LS_N_LONG / short bottom LS_N_SHORT (shortable +
+# easy-to-borrow only), dollar-neutral at LS_GROSS gross (long = |short| =
+# LS_GROSS/2), per-name cap LS_MAX_WEIGHT, strict per-leg sector cap, and
+# sector-neutral weighting unless LS_SECTOR_NEUTRAL=0.
+LS_N_LONG = _env_num("LS_N_LONG", 40, int)
+LS_N_SHORT = _env_num("LS_N_SHORT", 40, int)
+LS_GROSS = _env_num("LS_GROSS", 1.6)
+LS_MAX_WEIGHT = _env_num("LS_MAX_WEIGHT", 0.04)
+LS_MAX_PER_SECTOR = _env_num("LS_MAX_PER_SECTOR", 8, int)
+LS_SECTOR_NEUTRAL = bool(_env_num("LS_SECTOR_NEUTRAL", 1, int))
+
+# --- Execution ---
+# Skip trades smaller than this fraction of equity (and < MIN_ORDER_VALUE):
+# avoids churning on small weight drifts. Full liquidations are never skipped.
+MIN_TRADE_PCT = _env_num("MIN_TRADE_PCT", 0.0025)
+# Exposure-reducing orders (sells / covers) are sent first and the bot waits up
+# to FILL_WAIT_TIMEOUT_S for them to fill (polling every FILL_POLL_INTERVAL_S)
+# before sending buys / new shorts. Unfilled orders are reported.
+FILL_WAIT_TIMEOUT_S = _env_num("FILL_WAIT_TIMEOUT_S", 60.0)
+FILL_POLL_INTERVAL_S = _env_num("FILL_POLL_INTERVAL_S", 2.0)
+
 # --- Broad-Market Regime Switching ---
 # Enable the S&P 500 trend filter (shut off short exposure in bull regimes)
 REGIME_FILTER_ENABLED = True

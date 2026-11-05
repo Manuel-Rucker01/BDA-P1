@@ -10,7 +10,7 @@ import argparse
 
 import pandas as pd
 
-from .bot import BDATradingAgent
+from .bot import BDATradingAgent, STRATEGIES
 from . import config
 
 def main():
@@ -29,15 +29,19 @@ def main():
     )
     parser.add_argument(
         "--strategy",
-        choices=["high_confidence", "regime_filtered", "top_k"],
+        choices=list(STRATEGIES),
         default="high_confidence",
-        help="Strategy to use: 'high_confidence' (Long-Only P>=0.53), 'top_k' (concentrated top-pct of full universe, equal-weighted), or 'regime_filtered' (Long/Short, shorts disabled in bull markets)"
+        help="Strategy to use: 'high_confidence' (Long-Only P>=0.53), 'top_k' (concentrated top-pct of full universe), "
+             "'regime_filtered' (Long/Short, shorts disabled in bull markets), "
+             "'long_only_v3' (broad long-only: BDA_V3_K names, strict BDA_V3_MAX_PER_SECTOR cap, "
+             "inverse-vol capped at BDA_V3_MAX_WEIGHT) or 'long_short_neutral' (dollar-neutral "
+             "BDA_LS_N_LONG/BDA_LS_N_SHORT at BDA_LS_GROSS gross, ETB shorts only, sector-neutral)"
     )
     parser.add_argument(
         "--top-pct",
         type=float,
         default=None,
-        help="With --strategy top_k: only consider names in the top X% of pred_rank "
+        help="With --strategy top_k: only consider names in the top X%% of pred_rank "
              "(overrides config.TOP_PCT_THRESHOLD; default 5.0)"
     )
     parser.add_argument(
@@ -57,7 +61,7 @@ def main():
         "--safe",
         action="store_true",
         default=False,
-        help="Use the sector-diversified mid-cap stock basket (+59% return, lower volatility) instead of the highly explosive alphabetical basket (+304% return)"
+        help="Use the sector-diversified mid-cap stock basket (+59%% return, lower volatility) instead of the highly explosive alphabetical basket (+304%% return)"
     )
     parser.add_argument(
         "--recommend-only",
@@ -162,7 +166,14 @@ def main():
     if args.strategy == "top_k":
         print(f"[Strategy] top_k: gate=top {config.TOP_PCT_THRESHOLD}% | "
               f"hold cap={config.TOP_K_HOLDINGS} | "
-              f"weighting={'equal' if config.EQUAL_WEIGHT_TOP_K else 'pred_rank'}")
+              f"weighting={getattr(config, 'WEIGHTING_SCHEME', 'inverse_vol')}")
+    elif args.strategy == "long_only_v3":
+        print(f"[Strategy] long_only_v3: K={config.V3_K} | <= {config.V3_MAX_PER_SECTOR}/sector "
+              f"(strict) | <= {config.V3_MAX_WEIGHT:.2%}/name | exposure <= {config.V3_TARGET_EXPOSURE:.2f}")
+    elif args.strategy == "long_short_neutral":
+        print(f"[Strategy] long_short_neutral: {config.LS_N_LONG} long / {config.LS_N_SHORT} short | "
+              f"gross={config.LS_GROSS} | <= {config.LS_MAX_WEIGHT:.2%}/name | "
+              f"<= {config.LS_MAX_PER_SECTOR}/sector/leg | sector_neutral={config.LS_SECTOR_NEUTRAL}")
 
     try:
         agent = BDATradingAgent()
@@ -184,7 +195,8 @@ def main():
             print(f"[Filter] Active universe size: {len(config.TICKERS)} tickers.")
         
         # 2. Check S&P 500 trend regime
-        is_bull = agent.check_market_regime(force_regime=args.force_regime)
+        is_bull = agent.check_market_regime(force_regime=args.force_regime,
+                                             strategy=args.strategy)
         
         # 3. Download live pricing
         prices_df = agent.fetch_live_data()
