@@ -207,14 +207,16 @@ def main(argv=None) -> int:
          f"drawdown={dd:.2f}% bot_orders_this_period={n_bot} -> {d['action']}: {d['reason']}")
 
     if d["action"] == "skip":
-        return finish(EXIT_OK, "BDA rebalance", f"Nothing to do: {d['reason']}.")
+        return finish(EXIT_OK, "BDA rebalance", f"Nothing to do: {d['reason']}.", decision="skip")
     if d["action"] == "error":
-        return finish(EXIT_ERROR, "BDA rebalance: account problem", d["reason"])
+        return finish(EXIT_ERROR, "BDA rebalance: account problem", d["reason"], decision="error")
     if d["action"] == "halt":
         return finish(EXIT_HALTED, "BDA rebalance HALTED",
-                      f"{d['reason']}. No orders placed. Review, then set BDA_BREAKER_ACK_DATE to resume.")
+                      f"{d['reason']}. No orders placed. Review, then set BDA_BREAKER_ACK_DATE to resume.",
+                      decision="halt")
     if not args.execute:
-        return finish(EXIT_OK, "BDA rebalance", f"Check only: WOULD rebalance now ({d['reason']}).")
+        return finish(EXIT_OK, "BDA rebalance", f"Check only: WOULD rebalance now ({d['reason']}).",
+                      decision="trade")
 
     # 2. Run the exact CLI pipeline live for this account.
     cmd = [sys.executable, "-m", "DataAnalysisPipeline2.trading_agent.run",
@@ -231,7 +233,8 @@ def main(argv=None) -> int:
     code = {0: EXIT_OK, 2: EXIT_HALTED, 3: EXIT_PARTIAL}.get(proc.returncode, EXIT_ERROR)
     msg = (f"Rebalance {result.get('status', 'failed')}: {result.get('submitted', 0)} orders, "
            f"{result.get('failed', 0)} failed (exit {proc.returncode}).")
-    return finish(code, "BDA rebalance", msg, traded=result.get("submitted", 0) > 0, result=result)
+    return finish(code, "BDA rebalance", msg, decision="trade",
+                  traded=result.get("submitted", 0) > 0, result=result)
 
 
 if __name__ == "__main__":

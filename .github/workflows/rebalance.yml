@@ -1,0 +1,113 @@
+# Monthly PAPER-trading rebalance on GitHub Actions.
+#
+# OFF until you opt in (Settings -> Secrets and variables -> Actions):
+#   secrets:   ALPACA_API_KEY_MONTHLY, ALPACA_SECRET_KEY_MONTHLY   (paper keys)
+#   variable:  BDA_TRADING_ENABLED = true
+# "check" runs (read-only) work with just the secrets, so you can test first.
+#
+# The runner (DataAnalysisPipeline2/trading_agent/scheduled_rebalance.py) trades at
+# most once per month and only if: paper endpoint, account ACTIVE, market open,
+# first 3 trading days of the month, no bot orders yet this month, and drawdown
+# within BDA_DRAWDOWN_LIMIT_PCT. Halts and errors fail the job -> GitHub emails you.
+name: Monthly rebalance (paper)
+
+on:
+  schedule:
+    # Weekdays on the 1st-7th of each month, twice a day, inside US market hours
+    # in both EST and EDT. All but one run per month are no-ops.
+    - cron: "45 15 1-7 * 1-5"
+    - cron: "15 18 1-7 * 1-5"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "check = read-only preflight | execute = rebalance if due | start = rebalance now, off-schedule"
+        type: choice
+        options: [check, execute, start]
+        default: check
+
+permissions:
+  contents: write   # appends ops/rebalance_log.md (also keeps the schedule alive on a public repo)
+
+concurrency:
+  group: bda-rebalance
+  cancel-in-progress: false
+
+jobs:
+  rebalance:
+    if: vars.BDA_TRADING_ENABLED == 'true' || inputs.mode == 'check'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ALPACA_PAPER_TRADING: "True"
+      ALPACA_API_KEY_MONTHLY: ${{ secrets.ALPACA_API_KEY_MONTHLY }}
+      ALPACA_SECRET_KEY_MONTHLY: ${{ secrets.ALPACA_SECRET_KEY_MONTHLY }}
+      BDA_CADENCE: monthly
+      BDA_BREAKER_ACK_DATE: ${{ vars.BDA_BREAKER_ACK_DATE }}
+      # Portfolio construction; override any of these with repository variables.
+      BDA_TOP_K_HOLDINGS: ${{ vars.BDA_TOP_K_HOLDINGS || '20' }}
+      BDA_MAX_SECTOR_WEIGHT: ${{ vars.BDA_MAX_SECTOR_WEIGHT || '0.2' }}
+      BDA_MAX_POSITION_WEIGHT: ${{ vars.BDA_MAX_POSITION_WEIGHT || '0.10' }}
+      BDA_TARGET_EXPOSURE: ${{ vars.BDA_TARGET_EXPOSURE || '0.98' }}
+      BDA_MIN_ORDER_VALUE: ${{ vars.BDA_MIN_ORDER_VALUE || '250' }}
+      BDA_DRAWDOWN_LIMIT_PCT: ${{ vars.BDA_DRAWDOWN_LIMIT_PCT || '15' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-bot.txt
+
+      - run: pip install -r requirements-bot.txt
+
+      - name: Preflight (read-only)
+        id: pre
+        run: |
+          MODE="${{ inputs.mode || 'execute' }}"
+          FORCE=""; [ "$MODE" = "start" ] && FORCE="--force-due"
+          python -m DataAnalysisPipeline2.trading_agent.scheduled_rebalance --account monthly $FORCE | tee pre.log
+          DECISION=$(sed -n 's/^SCHEDULER_JSON: //p' pre.log | python -c 'import sys,json; print(json.load(sys.stdin)["decision"])')
+          echo "decision=$DECISION" >> "$GITHUB_OUTPUT"
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "force=$FORCE" >> "$GITHUB_OUTPUT"
+
+      - name: Model LFS id
+        id: oid
+        if: steps.pre.outputs.decision == 'trade' && steps.pre.outputs.mode != 'check'
+        run: echo "oid=$(git lfs ls-files -l | awk '/best_model.pkl/{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Restore model from cache
+        id: cache
+        if: steps.pre.outputs.decision == 'trade' && steps.pre.outputs.mode != 'check'
+        uses: actions/cache@v4
+        with:
+          path: ExploitationZone/best_model.pkl
+          key: bda-model-${{ steps.oid.outputs.oid }}
+
+      - name: Fetch model (cache miss)
+        if: steps.pre.outputs.decision == 'trade' && steps.pre.outputs.mode != 'check' && steps.cache.outputs.cache-hit != 'true'
+        run: git lfs pull --include="ExploitationZone/best_model.pkl"
+
+      - name: Rebalance
+        if: steps.pre.outputs.decision == 'trade' && steps.pre.outputs.mode != 'check'
+        run: |
+          python -m DataAnalysisPipeline2.trading_agent.scheduled_rebalance \
+            --account monthly --execute --notify ${{ steps.pre.outputs.force }} | tee run.log
+
+      - name: Append to ops/rebalance_log.md
+        # Every scheduled/execute/start run (incl. halts and errors); not manual read-only checks.
+        if: always() && steps.pre.outcome != 'skipped' && inputs.mode != 'check'
+        run: |
+          mkdir -p ops
+          [ -f ops/rebalance_log.md ] || printf '| UTC | trigger | result |\n|---|---|---|\n' > ops/rebalance_log.md
+          J=$(cat run.log pre.log 2>/dev/null | sed -n 's/^SCHEDULER_JSON: //p' | head -1)
+          echo "| $(date -u +%Y-%m-%dT%H:%MZ) | ${{ github.event_name }} | ${J:-no output} |" >> ops/rebalance_log.md
+          git config user.name "bda-rebalance-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ops/rebalance_log.md
+          git commit -m "ops: rebalance log $(date -u +%F)" || exit 0
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && git push || echo "log push failed (non-fatal)"

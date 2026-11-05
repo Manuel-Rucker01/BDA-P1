@@ -1,0 +1,17 @@
+# Pinned runtime for the automated rebalance (inference + execution only).
+# scikit-learn / catboost / xgboost / lightgbm must match the versions the model
+# artefact was trained with, or unpickling may fail or change predictions.
+numpy==1.26.4
+scipy==1.16.3
+pandas==2.3.3
+scikit-learn==1.8.0
+catboost==1.2.10
+xgboost==3.2.0
+lightgbm==4.6.0
+duckdb==1.5.0
+pyarrow==23.0.1
+alpaca-py==0.43.4
+yfinance==1.2.0
+python-dotenv==1.2.1
+requests==2.32.5
+rdflib==7.2.1
