@@ -24,3 +24,4 @@ DataAnalysisPipeline2/results/_posttrain_price_cache.parquet
 DataAnalysisPipeline2/results/_*_cache.parquet
 DataAnalysisPipeline2/trading_agent/agent_logs/
 catboost_info/
+DataAnalysisPipeline2/dashboard/users.json
