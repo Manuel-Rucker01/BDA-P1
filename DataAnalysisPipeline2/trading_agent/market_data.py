@@ -50,7 +50,7 @@ def _chunks(seq, size):
 # --------------------------------------------------------------------------- #
 # Alpaca (primary)
 # --------------------------------------------------------------------------- #
-def _alpaca_daily_bars(tickers, start, end, chunk_size=200, retries=3, verbose=True):
+def _alpaca_daily_bars(tickers, start, end, chunk_size=200, retries=5, verbose=True):
     from alpaca.data.enums import Adjustment
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
