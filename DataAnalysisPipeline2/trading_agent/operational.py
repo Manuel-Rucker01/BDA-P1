@@ -32,19 +32,37 @@ import pandas as pd
 
 # ── Filesystem layout ──────────────────────────────────────────────────────────
 
-AGENT_LOG_DIR = os.environ.get(
-    "BDA_AGENT_LOG_DIR",
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "agent_logs")),
-)
-SNAPSHOT_DIR  = os.path.join(AGENT_LOG_DIR, "decisions")
-TRADES_PATH   = os.path.join(AGENT_LOG_DIR, "trades.csv")
-DECISIONS_PATH = os.path.join(AGENT_LOG_DIR, "decisions.csv")
-ATTRIBUTION_PATH = os.path.join(AGENT_LOG_DIR, "attribution.csv")
-EQUITY_HISTORY_PATH = os.path.join(AGENT_LOG_DIR, "equity_history.csv")
-HALT_FILE     = os.path.join(AGENT_LOG_DIR, ".agent_halted")
+def _default_log_dir() -> str:
+    """BDA_AGENT_LOG_DIR wins; otherwise one directory per active account."""
+    env = os.environ.get("BDA_AGENT_LOG_DIR")
+    if env:
+        return os.path.abspath(env)
+    try:
+        from . import config
+        return config.account_log_dir()
+    except Exception:  # imported outside the package (e.g. some tests)
+        return os.path.abspath(os.path.join(os.path.dirname(__file__), "agent_logs"))
 
-# Bootstrap log dirs at import — every other call assumes they exist
-os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+
+def set_log_dir(path: str) -> str:
+    """Re-point every agent state path at ``path`` (used when the dashboard
+    switches accounts at runtime). Module globals are read at call time by the
+    helpers below, so reassigning them is sufficient for new writes."""
+    global AGENT_LOG_DIR, SNAPSHOT_DIR, TRADES_PATH, DECISIONS_PATH
+    global ATTRIBUTION_PATH, EQUITY_HISTORY_PATH, HALT_FILE
+    AGENT_LOG_DIR = os.path.abspath(path)
+    SNAPSHOT_DIR = os.path.join(AGENT_LOG_DIR, "decisions")
+    TRADES_PATH = os.path.join(AGENT_LOG_DIR, "trades.csv")
+    DECISIONS_PATH = os.path.join(AGENT_LOG_DIR, "decisions.csv")
+    ATTRIBUTION_PATH = os.path.join(AGENT_LOG_DIR, "attribution.csv")
+    EQUITY_HISTORY_PATH = os.path.join(AGENT_LOG_DIR, "equity_history.csv")
+    HALT_FILE = os.path.join(AGENT_LOG_DIR, ".agent_halted")
+    # Bootstrap log dirs — every other call assumes they exist
+    os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+    return AGENT_LOG_DIR
+
+
+set_log_dir(_default_log_dir())
 
 
 # ── Reproducibility hash ──────────────────────────────────────────────────────
@@ -175,8 +193,9 @@ class TradeLogger:
     """Structured trade log.  One row per *order* (so a rebalance with N
     deltas writes N rows, sharing the same decision_id)."""
 
-    def __init__(self, path: str = TRADES_PATH):
-        self.path = path
+    def __init__(self, path: str | None = None):
+        # Resolved at call time (not def time) so set_log_dir() is honoured.
+        self.path = path or TRADES_PATH
 
     def log(self, row: TradeLogRow) -> None:
         _append_csv(self.path, asdict(row))
@@ -198,9 +217,10 @@ class DrawdownCircuitBreaker:
     chase losses.
     """
 
-    def __init__(self, threshold_pct: float = 5.0, history_path: str = EQUITY_HISTORY_PATH):
+    def __init__(self, threshold_pct: float = 5.0, history_path: str | None = None):
         self.threshold = threshold_pct / 100.0
-        self.history_path = history_path
+        # Resolved at call time (not def time) so set_log_dir() is honoured.
+        self.history_path = history_path or EQUITY_HISTORY_PATH
 
     # --- Halt file management -------------------------------------------------
 
