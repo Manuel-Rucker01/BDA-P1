@@ -130,7 +130,8 @@ def _env_num(name, default, cast=float):
 
 
 TARGET_EXPOSURE = _env_num("TARGET_EXPOSURE", 1.0)  # Target total portfolio exposure
-MIN_ORDER_VALUE = 5.0           # Minimum USD order limit to avoid tiny fraction order rejections
+# Minimum USD per order: skips churn trades on tiny weight drifts.
+MIN_ORDER_VALUE = _env_num("MIN_ORDER_VALUE", 5.0)
 
 # --- Live market data ---
 # Calendar days of daily bars fetched for live inference. Must cover the
