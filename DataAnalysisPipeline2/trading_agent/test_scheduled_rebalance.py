@@ -51,6 +51,19 @@ def test_idempotent_once_bot_orders_exist_this_period():
     assert r["action"] == "skip" and "already rebalanced" in r["reason"]
 
 
+def test_empty_new_account_is_built_at_next_session_even_off_schedule():
+    days = [dt.date(2026, 12, d) for d in (1, 2, 3, 4, 7)]
+    r = _decide(trading_days=days, today=days[4], n_positions=0)
+    assert r["action"] == "trade" and "initial build" in r["reason"]
+    # ...but never off-hours, and not again once the bot has placed orders
+    assert _decide(trading_days=days, today=days[4], n_positions=0,
+                   clock={"is_open": False})["action"] == "skip"
+    assert _decide(trading_days=days, today=days[4], n_positions=0,
+                   bot_orders_this_period=5)["action"] == "skip"
+    # a funded account still waits for its window
+    assert _decide(trading_days=days, today=days[4], n_positions=10)["action"] == "skip"
+
+
 def test_drawdown_breaker_halts():
     r = _decide(drawdown_pct=16.0)
     assert r["action"] == "halt"

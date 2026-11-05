@@ -72,8 +72,11 @@ def decide(*, account: dict, clock: dict, trading_days: list, bot_orders_this_pe
            drawdown_pct: float, limit_pct: float, today: dt.date, cadence: str,
            retry_days: int, now: dt.datetime, session_open: dt.datetime | None,
            session_close: dt.datetime | None, min_after_open: int, min_before_close: int,
-           force_due: bool = False) -> dict:
-    """Return {"action": "trade"|"skip"|"halt"|"error", "reason": str}."""
+           force_due: bool = False, n_positions: int = 1) -> dict:
+    """Return {"action": "trade"|"skip"|"halt"|"error", "reason": str}.
+
+    A brand-new, empty account (no positions and no bot orders this period) is
+    built at the next valid session instead of waiting for the next period."""
     if account.get("status") != "ACTIVE":
         return {"action": "error", "reason": f"account status {account.get('status')}"}
     if account.get("trading_blocked") or account.get("account_blocked"):
@@ -84,7 +87,8 @@ def decide(*, account: dict, clock: dict, trading_days: list, bot_orders_this_pe
         return {"action": "skip", "reason": f"within {min_after_open} min of the open"}
     if session_close and now > session_close - dt.timedelta(minutes=min_before_close):
         return {"action": "skip", "reason": f"within {min_before_close} min of the close"}
-    if not force_due:
+    initial_build = n_positions == 0 and bot_orders_this_period == 0
+    if not force_due and not initial_build:
         if today not in trading_days:
             return {"action": "skip", "reason": "today is not a trading day"}
         nth = trading_days.index(today) + 1
@@ -97,7 +101,8 @@ def decide(*, account: dict, clock: dict, trading_days: list, bot_orders_this_pe
     if drawdown_pct > limit_pct:
         return {"action": "halt",
                 "reason": f"drawdown {drawdown_pct:.2f}% exceeds limit {limit_pct:.2f}%"}
-    return {"action": "trade", "reason": f"due ({cadence}), market open, drawdown {drawdown_pct:.2f}%"}
+    why = "initial build of an empty account" if initial_build and not force_due else f"due ({cadence})"
+    return {"action": "trade", "reason": f"{why}, market open, drawdown {drawdown_pct:.2f}%"}
 
 
 # --------------------------------------------------------------------------- #
@@ -190,6 +195,7 @@ def main(argv=None) -> int:
             s_open = dt.datetime.combine(today, dt.time.fromisoformat(sess["open"]), tzinfo=NY)
             s_close = dt.datetime.combine(today, dt.time.fromisoformat(sess["close"]), tzinfo=NY)
         n_bot = _bot_orders_since(api, pstart, BOT_ORDER_PREFIX)
+        n_pos = len(api.get("/v2/positions"))
         hist = api.get("/v2/account/portfolio/history", period="all", timeframe="1D")
         ack = os.getenv("BDA_BREAKER_ACK_DATE")  # operator's manual breaker reset, YYYY-MM-DD
         hdates = [dt.datetime.fromtimestamp(t, NY).date().isoformat() for t in (hist.get("timestamp") or [])]
@@ -198,7 +204,7 @@ def main(argv=None) -> int:
         return finish(EXIT_ERROR, "BDA rebalance: API error", f"Alpaca API error during preflight: {e}")
 
     d = decide(account=account, clock=clock, trading_days=trading_days,
-               bot_orders_this_period=n_bot, drawdown_pct=dd,
+               bot_orders_this_period=n_bot, n_positions=n_pos, drawdown_pct=dd,
                limit_pct=float(config.DRAWDOWN_LIMIT_PCT), today=today, cadence=args.cadence,
                retry_days=args.retry_days, now=now, session_open=s_open, session_close=s_close,
                min_after_open=args.min_after_open, min_before_close=args.min_before_close,
