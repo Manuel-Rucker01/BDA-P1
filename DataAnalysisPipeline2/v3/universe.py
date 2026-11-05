@@ -19,7 +19,7 @@ Pipeline (``build_universe``)
    Symbols with no name (discovered only, or blank asset names) are classified
    by ``classify_unnamed``: a weekly-return correlation test against every
    *named* ETF -- a dead ETF almost always has a live twin (same index/theme)
-   with |corr| >= 0.95, a company does not. The threshold is calibrated on named
+   with |corr| >= 0.95 (or >= 0.8 with low volatility), a company does not. The rule is calibrated on named
    stocks/ETFs and the calibration is printed in the report.
 
 3. **Symbol reuse** (``detect_symbol_reuse``): Alpaca bars are keyed by symbol,
@@ -389,8 +389,18 @@ def load_discovery() -> pd.DataFrame:
 # =========================================================================== #
 # 4. Unnamed symbols: ETF-likeness by weekly-return correlation
 # =========================================================================== #
-ETF_CORR_THRESHOLD = 0.95
+ETF_CORR_THRESHOLD = 0.95      # |corr| with a named ETF -> ETF-like ...
+ETF_CORR_LOW_VOL = 0.80        # ... or this |corr| together with
+ETF_MAX_ANN_VOL = 0.20         # annualised weekly-return vol below 20%
 MIN_OVERLAP_WEEKS = 26
+
+
+def etf_like(corr, ann_vol, hi: float = ETF_CORR_THRESHOLD, lo: float = ETF_CORR_LOW_VOL,
+             vmax: float = ETF_MAX_ANN_VOL):
+    """The ETF-likeness rule (vectorised); NaN corr -> False (untested)."""
+    corr, ann_vol = np.asarray(corr, float), np.asarray(ann_vol, float)
+    with np.errstate(invalid="ignore"):
+        return (corr >= hi) | ((corr >= lo) & (ann_vol < vmax))
 
 
 def weekly_returns(weekly: pd.DataFrame) -> pd.DataFrame:
@@ -400,29 +410,40 @@ def weekly_returns(weekly: pd.DataFrame) -> pd.DataFrame:
     return r.where(r.abs() <= 1.0)
 
 
-def _standardize(r: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+def _centered(r: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """Zero-filled, own-mean-centred values (numerical stability) and the mask."""
     x = r.to_numpy(dtype="float64")
     m = np.isfinite(x)
-    mu = np.nansum(x, 0) / np.maximum(m.sum(0), 1)
-    z = np.where(m, x - mu, 0.0)
-    sd = np.sqrt((z ** 2).sum(0) / np.maximum(m.sum(0) - 1, 1))
-    z = np.where(m, z / np.where(sd > 0, sd, np.nan), 0.0)
-    return np.nan_to_num(z), m.astype("float64")
+    mu = np.nansum(np.where(m, x, 0.0), 0) / np.maximum(m.sum(0), 1)
+    return np.where(m, x - mu, 0.0), m.astype("float64")
+
+
+def _pairwise_corr(xt, mt, xr, mr):
+    """Exact pairwise-complete Pearson correlation between all columns of two
+    zero-filled matrices with masks (sums restricted to the common weeks)."""
+    n = mt.T @ mr
+    sx, sy = xt.T @ mr, mt.T @ xr
+    sxx, syy = (xt ** 2).T @ mr, mt.T @ (xr ** 2)
+    sxy = xt.T @ xr
+    num = n * sxy - sx * sy
+    den = np.sqrt(np.clip(n * sxx - sx ** 2, 0, None) * np.clip(n * syy - sy ** 2, 0, None))
+    with np.errstate(invalid="ignore", divide="ignore"):
+        c = np.where(den > 0, num / den, np.nan)
+    return np.clip(c, -1, 1), n
 
 
 def max_abs_corr(target: pd.DataFrame, refs: pd.DataFrame, min_overlap: int = MIN_OVERLAP_WEEKS,
                  exclude_self: bool = False, block: int = 2000) -> pd.DataFrame:
     """For each column of ``target``: max |corr| with any column of ``refs`` over
     >= ``min_overlap`` common weeks (pairwise, approximated with per-series
-    standardisation), plus the best-matching reference symbol."""
+    pairwise-complete Pearson), plus the best-matching reference symbol."""
     refs = refs.reindex(target.index)
-    zr, mr = _standardize(refs)
+    xr, mr = _centered(refs)
     out_c, out_r, out_n = [], [], []
     cols = list(target.columns)
     for i in range(0, len(cols), block):
-        zt, mt = _standardize(target[cols[i:i + block]])
-        n = mt.T @ mr
-        c = (zt.T @ zr) / np.maximum(n - 1, 1)
+        xt, mt = _centered(target[cols[i:i + block]])
+        c, n = _pairwise_corr(xt, mt, xr, mr)
         c = np.where(n >= min_overlap, np.abs(c), np.nan)
         if exclude_self:
             idx = {s: k for k, s in enumerate(refs.columns)}
@@ -450,16 +471,25 @@ def etf_reference_set(ret: pd.DataFrame, named: pd.DataFrame, tracker_corr: floa
 
 
 def calibrate_etf_test(ret: pd.DataFrame, refs: list, commons: list, etfs: list,
-                       thresholds=(0.85, 0.9, 0.93, 0.95, 0.97)) -> pd.DataFrame:
-    """Share of named commons / named ETFs that the corr test flags as ETF-like."""
+                       rules=((0.90, 0, 0), (0.93, 0, 0), (0.95, 0, 0), (0.97, 0, 0),
+                              (0.95, 0.80, 0.20), (0.95, 0.70, 0.20), (0.93, 0.80, 0.25))) -> pd.DataFrame:
+    """Share of named commons / named ETFs flagged ETF-like by each candidate
+    rule (hi corr, low corr, max annual vol); self excluded from references.
+    ``*_tested`` = among series with >= 26 overlapping weeks."""
+    vol = ret.std() * np.sqrt(52)
     sc = max_abs_corr(ret[commons], ret[refs], exclude_self=True)
     se = max_abs_corr(ret[etfs], ret[refs], exclude_self=True)
     rows = []
-    for t in thresholds:
-        rows.append({"threshold": t,
-                     "commons_flagged_pct": round(100 * (sc["etf_corr"] >= t).mean(), 2),
-                     "etfs_flagged_pct": round(100 * (se["etf_corr"] >= t).mean(), 2),
-                     "n_commons": len(sc), "n_etfs": len(se)})
+    for hi, lo, vmax in rules:
+        fc = etf_like(sc["etf_corr"], vol.reindex(sc["symbol"]).values, hi, lo, vmax)
+        fe = etf_like(se["etf_corr"], vol.reindex(se["symbol"]).values, hi, lo, vmax)
+        te = se["etf_corr"].notna().to_numpy()
+        rows.append({"rule": f"corr>={hi}" + (f" or (corr>={lo} and vol<{vmax:.0%})" if lo else ""),
+                     "used": (hi, lo, vmax) == (ETF_CORR_THRESHOLD, ETF_CORR_LOW_VOL, ETF_MAX_ANN_VOL),
+                     "commons_flagged_pct": round(100 * fc.mean(), 2),
+                     "etfs_flagged_pct": round(100 * fe.mean(), 2),
+                     "etfs_tested_flagged_pct": round(100 * fe[te].mean(), 2),
+                     "n_commons": len(sc), "n_etfs": len(se), "n_etfs_tested": int(te.sum())})
     return pd.DataFrame(rows)
 
 
@@ -486,7 +516,7 @@ def corporate_action_evidence(ca: pd.DataFrame, named_cls: dict) -> pd.DataFrame
 # =========================================================================== #
 def build_classification(assets: pd.DataFrame | None = None, ca: pd.DataFrame | None = None,
                          weekly: pd.DataFrame | None = None, nasdaq18: pd.DataFrame | None = None,
-                         threshold: float = ETF_CORR_THRESHOLD, write: bool = True, log=print):
+                         write: bool = True, log=print):
     """One row per candidate (asset row, 2018-list row or discovered symbol).
 
     Columns: id, symbol, fetch_symbol, name, exchange, status, source, cls,
@@ -538,6 +568,7 @@ def build_classification(assets: pd.DataFrame | None = None, ca: pd.DataFrame | 
     allc["ca_evidence"] = allc["fetch_symbol"].map(ev["ca_evidence"])
     allc["etf_corr"] = allc["fetch_symbol"].map(sc["etf_corr"]) if len(sc) else np.nan
     allc["etf_match"] = allc["fetch_symbol"].map(sc["etf_match"]) if len(sc) else None
+    allc["ann_vol"] = allc["fetch_symbol"].map(ret.std() * np.sqrt(52))
 
     for i in allc.index[unnamed]:
         sym, ex = allc.at[i, "fetch_symbol"], allc.at[i, "exchange"]
@@ -549,12 +580,13 @@ def build_classification(assets: pd.DataFrame | None = None, ca: pd.DataFrame | 
             c, r = "other", f"unnamed;{sreason}"  # 5-letter, no name: cannot tell
         elif evid == "merged_into_fund":
             c, r = "fund", "unnamed;ca:merged_into_fund"
-        elif pd.notna(corr) and corr >= threshold and evid not in ("acquired_company", "worthless_removal"):
-            c, r = "etf", f"unnamed;etf_like corr={corr:.3f} vs {allc.at[i, 'etf_match']}"
+        elif etf_like(corr, allc.at[i, "ann_vol"]) and evid not in ("acquired_company", "worthless_removal"):
+            c, r = "etf", (f"unnamed;etf_like corr={corr:.3f} vs {allc.at[i, 'etf_match']} "
+                           f"vol={allc.at[i, 'ann_vol']:.0%}")
         elif pd.isna(corr):
             c, r = "common", "unnamed;short_history_untested" + (f";ca:{evid}" if isinstance(evid, str) else "")
         else:
-            c, r = "common", f"unnamed;not_etf_like corr={corr:.3f}" + (f";ca:{evid}" if isinstance(evid, str) else "")
+            c, r = "common", f"unnamed;not_etf_like corr={corr:.3f} vol={allc.at[i, 'ann_vol']:.0%}" + (f";ca:{evid}" if isinstance(evid, str) else "")
         allc.at[i, "cls"], allc.at[i, "reason"] = c, r
 
     allc = allc.merge(wk.rename(columns={"symbol": "fetch_symbol"}), on="fetch_symbol", how="left")
@@ -566,7 +598,7 @@ def build_classification(assets: pd.DataFrame | None = None, ca: pd.DataFrame | 
     allc.loc[otc, "reason"] = "exchange_now_OTC;sip_bars_while_listed"
     allc["in_universe"] = (allc["cls"] == "common") & allc["has_bars"]
     cols = ["id", "symbol", "fetch_symbol", "name", "exchange", "status", "source", "cls", "reason",
-            "name_verified", "spac_like", "etf_corr", "etf_match", "ca_evidence", "first_week",
+            "name_verified", "spac_like", "etf_corr", "etf_match", "ann_vol", "ca_evidence", "first_week",
             "last_week", "n_weeks", "has_bars", "in_universe"]
     allc = allc[cols]
     if write:
@@ -804,7 +836,9 @@ def write_report(sample_n: int = 8, seed: int = 0) -> str:
           "|corr| with any *named* ETF over >= 26 common weeks (single-stock trackers removed from the "
           "references). A dead ETF almost always has a live twin; a company does not. Calibration on "
           "named securities (self excluded):", "", md_table(calib, index=False), "",
-          f"Threshold used: {ETF_CORR_THRESHOLD}. Overrides: acquiree of a cash merger / worthless "
+          f"Rule used: corr >= {ETF_CORR_THRESHOLD} or (corr >= {ETF_CORR_LOW_VOL} and annualised vol < "
+          f"{ETF_MAX_ANN_VOL:.0%}). ETFs the rule misses are mostly illiquid (median weekly dollar volume "
+          "~10x below stocks), so the $2M ADV eligibility filter removes most of the residue. Overrides: acquiree of a cash merger / worthless "
           "removal (Alpaca corporate actions) → company; acquiree of a stock merger into an ETF/fund → "
           "fund. Result for unnamed rows:", "",
           md_table(un.groupby(["source", "cls"]).size().rename("rows")), ""]
@@ -814,7 +848,7 @@ def write_report(sample_n: int = 8, seed: int = 0) -> str:
             smp = sub.iloc[rng.choice(len(sub), size=min(12, len(sub)), replace=False)]
             L += [f"Sample unnamed → {c}:", "",
                   md_table(smp[["fetch_symbol", "first_week", "last_week", "n_weeks", "etf_corr",
-                                "etf_match", "ca_evidence"]], index=False), ""]
+                                "etf_match", "ann_vol", "ca_evidence"]], index=False), ""]
     if seg is not None:
         ms = seg[seg["n_seg"] > 1]
         L += ["## Symbol reuse", "",
