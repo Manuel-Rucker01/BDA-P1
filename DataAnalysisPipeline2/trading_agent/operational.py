@@ -136,7 +136,7 @@ def build_decision_context(
         universe=universe_hash,
         hmm_state=int(hmm_state),
         hmm_prob_bull=float(hmm_probs[0]) if len(hmm_probs) > 0 else float("nan"),
-        regime_label="bull" if hmm_state == 0 else "bear",
+        regime_label=("bull" if hmm_state == 0 else "bear" if hmm_state == 1 else "n/a"),
     )
 
 

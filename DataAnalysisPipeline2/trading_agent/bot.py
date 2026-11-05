@@ -7,6 +7,7 @@ determines the S&P 500 market regime, and dispatches optimized differential trad
 import os
 import pickle
 import sys
+import time
 import numpy as np
 import pandas as pd
 import duckdb
@@ -102,89 +103,12 @@ def inverse_volatility_weights(tickers, vols, target_exposure=1.0,
     return {t: float(wi) for t, wi in zip(tickers, w)}
 
 
-def portfolio_exposure_summary(weights):
-    """Return long/short/gross/net exposure for a signed weight mapping."""
-    vals = np.asarray(list(weights.values()), dtype=float) if weights else np.asarray([], dtype=float)
-    if vals.size == 0:
-        return {"long": 0.0, "short": 0.0, "gross": 0.0, "net": 0.0}
-    long_exposure = float(vals[vals > 0].sum())
-    short_exposure = float(-vals[vals < 0].sum())
-    return {
-        "long": long_exposure,
-        "short": short_exposure,
-        "gross": long_exposure + short_exposure,
-        "net": float(vals.sum()),
-    }
-
-
-def enforce_portfolio_constraints(weights, *, max_gross, max_net, max_short,
-                                  max_long, max_position, tol=1e-10):
-    """Clip and scale signed weights to satisfy portfolio exposure guardrails.
-
-    The transformation only reduces exposure: per-name clips first, side caps
-    second, then gross/net caps. This keeps rank-based allocations intact within
-    each side while ensuring the final book cannot exceed configured limits.
-    """
-    if not weights:
-        return {}
-
-    capped = {
-        t: float(np.clip(w, -max_position, max_position))
-        for t, w in weights.items()
-    }
-
-    for _ in range(4):
-        summary = portfolio_exposure_summary(capped)
-        long_exp = summary["long"]
-        short_exp = summary["short"]
-
-        if long_exp > max_long + tol and long_exp > 0:
-            scale = max_long / long_exp
-            capped = {t: (w * scale if w > 0 else w) for t, w in capped.items()}
-        if short_exp > max_short + tol and short_exp > 0:
-            scale = max_short / short_exp
-            capped = {t: (w * scale if w < 0 else w) for t, w in capped.items()}
-
-        summary = portfolio_exposure_summary(capped)
-        if summary["gross"] > max_gross + tol and summary["gross"] > 0:
-            scale = max_gross / summary["gross"]
-            capped = {t: w * scale for t, w in capped.items()}
-
-        summary = portfolio_exposure_summary(capped)
-        net = summary["net"]
-        if net > max_net + tol and summary["long"] > 0:
-            allowed_long = max(max_net + summary["short"], 0.0)
-            scale = min(1.0, allowed_long / summary["long"])
-            capped = {t: (w * scale if w > 0 else w) for t, w in capped.items()}
-        elif net < -max_net - tol and summary["short"] > 0:
-            allowed_short = max(max_net + summary["long"], 0.0)
-            scale = min(1.0, allowed_short / summary["short"])
-            capped = {t: (w * scale if w < 0 else w) for t, w in capped.items()}
-
-    return {t: (0.0 if abs(w) < tol else float(w)) for t, w in capped.items()}
-
-
-def assert_portfolio_invariants(weights, *, max_gross, max_net, max_short,
-                                max_long, max_position, tol=1e-8):
-    """Raise if a signed weight mapping breaches configured exposure limits."""
-    summary = portfolio_exposure_summary(weights)
-    max_abs_name = max((abs(float(w)) for w in weights.values()), default=0.0)
-    checks = {
-        "gross": summary["gross"] <= max_gross + tol,
-        "net": abs(summary["net"]) <= max_net + tol,
-        "short": summary["short"] <= max_short + tol,
-        "long": summary["long"] <= max_long + tol,
-        "position": max_abs_name <= max_position + tol,
-    }
-    if not all(checks.values()):
-        failed = ", ".join(k for k, ok in checks.items() if not ok)
-        raise AssertionError(
-            f"Portfolio invariant breach ({failed}): "
-            f"long={summary['long']:.6f}, short={summary['short']:.6f}, "
-            f"gross={summary['gross']:.6f}, net={summary['net']:.6f}, "
-            f"max_abs_position={max_abs_name:.6f}"
-        )
-    return summary
+# Exposure invariants live in portfolio.py (pure, shared with the v3 books);
+# re-exported here so existing imports of bot.<name> keep working.
+from .portfolio import (  # noqa: E402
+    portfolio_exposure_summary, enforce_portfolio_constraints,
+    assert_portfolio_invariants, long_only_book, long_short_book,
+)
 
 
 def build_regime_filtered_weights(predictions_df, *, is_bull,
@@ -718,6 +642,37 @@ def validate_required_columns(df, required_cols, context):
         )
 
 
+# Strategies whose book actually depends on the HMM regime. Everything else
+# skips the (network + fit) regime step entirely.
+REGIME_STRATEGIES = frozenset({"regime_filtered"})
+STRATEGIES = ("high_confidence", "regime_filtered", "top_k", "long_only_v3", "long_short_neutral")
+
+
+def strategy_uses_regime(strategy):
+    return strategy in REGIME_STRATEGIES
+
+
+def passes_min_trade(delta_val, curr_val, target_val, equity):
+    """Minimum trade size: |delta| must be >= MIN_ORDER_VALUE and >=
+    MIN_TRADE_PCT x equity. Closing a held position to zero is exempt from the
+    percentage rule so small leftovers never get stranded."""
+    if abs(delta_val) < config.MIN_ORDER_VALUE:
+        return False
+    if target_val == 0.0 and curr_val != 0.0:
+        return True
+    return abs(delta_val) >= getattr(config, "MIN_TRADE_PCT", 0.0) * float(equity)
+
+
+_FILLED = "filled"
+_TERMINAL_UNFILLED = {"canceled", "cancelled", "expired", "rejected", "done_for_day",
+                      "replaced", "stopped", "suspended"}
+
+
+def _order_status(order):
+    st = getattr(order, "status", None)
+    return str(getattr(st, "value", st)).lower() if st is not None else "unknown"
+
+
 # --- Core Trading Agent Class ---
 
 class BDATradingAgent:
@@ -793,11 +748,21 @@ class BDATradingAgent:
               f"cs_z_standardize={self.cs_z_standardize}  "
               f"schema_version={self.model_metadata.get('artifact_schema_version', 'legacy')}")
 
-    def check_market_regime(self, force_regime=None):
+    def check_market_regime(self, force_regime=None, strategy=None):
         """
         Determines the current S&P 500 trend regime using a 2-state Gaussian HMM.
         Returns is_bull = True if the latest decoded state is State 0 (Low Volatility Bull), else False.
+
+        When ``strategy`` is given and does not use the regime (only
+        ``regime_filtered`` does), the HMM is not fitted at all: it has no
+        effect on those books. Returns None and records hmm_state = -1.
         """
+        if strategy is not None and not strategy_uses_regime(strategy) and not force_regime:
+            print(f"[Agent] regime not used by {strategy}; skipping the S&P 500 HMM fit.")
+            self.hmm_state = -1
+            self.hmm_probs = np.array([np.nan, np.nan])
+            return None
+
         if force_regime:
             is_bull = force_regime.lower() == "bull"
             print(f"[Agent] Regime forced by operator: {'BULL (Shorts Disabled)' if is_bull else 'BEAR (Shorts Enabled)'}")
@@ -1138,6 +1103,46 @@ class BDATradingAgent:
             print(f"[News] sentiment tilt failed ({e}); predictions unchanged.")
             return predictions_df
 
+    def _asset_borrowable(self, client, symbol):
+        """(ok, reason) for opening/increasing a short on ``symbol``: the asset
+        must be shortable AND easy-to-borrow. Cached per agent run, so the
+        weights step and the execution step query each symbol once."""
+        cache = self.__dict__.setdefault("_asset_cache", {})
+        if symbol not in cache:
+            try:
+                asset = client.get_asset(symbol)
+                if not getattr(asset, "shortable", False):
+                    cache[symbol] = (False, "not shortable")
+                elif not getattr(asset, "easy_to_borrow", False):
+                    cache[symbol] = (False, "not easy-to-borrow")
+                else:
+                    cache[symbol] = (True, "")
+            except Exception as e:
+                cache[symbol] = (False, f"asset lookup failed: {e}")
+        return cache[symbol]
+
+    def _shortable_universe(self, predictions_df, n_short):
+        """Set of short candidates (from the bottom of the ranking) that are
+        shortable + easy-to-borrow, or None when there are no broker
+        credentials (dry-run simulation; execution re-checks every short)."""
+        has_credentials = bool(config.ALPACA_API_KEY) and bool(config.ALPACA_SECRET_KEY)
+        if not has_credentials:
+            print("[Agent] No broker credentials: short borrowability not pre-checked "
+                  "(execution refuses any non-shortable / non-ETB short).")
+            return None
+        try:
+            from alpaca.trading.client import TradingClient
+            tc = TradingClient(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY,
+                               paper=config.ALPACA_PAPER_TRADING)
+        except Exception as e:
+            print(f"[WARNING] Could not create a broker client for ETB checks ({e}); no shorts.")
+            return set()
+        pool = (predictions_df.sort_values("pred_rank", ascending=True)["ticker"]
+                .head(max(4 * int(n_short), 1)).tolist())
+        ok = {t for t in pool if self._asset_borrowable(tc, t)[0]}
+        print(f"[Agent] Borrow check: {len(ok)}/{len(pool)} bottom-ranked names shortable + ETB.")
+        return ok
+
     def calculate_target_weights(self, predictions_df, is_bull, strategy="high_confidence"):
         """
         Computes optimal target portfolio weights from cross-sectional 30d
@@ -1154,6 +1159,14 @@ class BDATradingAgent:
           - regime_filtered : long/short tilt with raw_weight = pred_rank − 0.5,
                               shorts disabled in bull regimes via the HMM gate,
                               then clipped/scaled to configured exposure limits.
+          - long_only_v3    : broad long-only book (portfolio.long_only_book):
+                              V3_K names, strict V3_MAX_PER_SECTOR cap, inverse-vol
+                              capped at V3_MAX_WEIGHT, rest in cash.
+          - long_short_neutral : dollar-neutral long/short (portfolio.long_short_book):
+                              LS_N_LONG / LS_N_SHORT names, LS_GROSS gross,
+                              LS_MAX_WEIGHT per name, shortable + ETB shorts only,
+                              sector-neutral when LS_SECTOR_NEUTRAL.
+        Only regime_filtered uses ``is_bull``.
         """
         print(f"[Agent] Computing target allocations using '{strategy}' strategy "
               f"(pred_rank threshold = {config.CONFIDENCE_THRESHOLD})")
@@ -1212,6 +1225,37 @@ class BDATradingAgent:
                 w_each = config.TARGET_EXPOSURE / max(len(holdings), 1)
                 for _, row in holdings.iterrows():
                     target_weights[row["ticker"]] = w_each
+
+        elif strategy == "long_only_v3":
+            w, diag = long_only_book(
+                predictions_df, k=config.V3_K, max_per_sector=config.V3_MAX_PER_SECTOR,
+                max_weight=config.V3_MAX_WEIGHT, target_exposure=config.V3_TARGET_EXPOSURE,
+                vol_floor=getattr(config, "VOL_FLOOR", 1e-3))
+            target_weights.update(w)
+            self.last_book_diagnostics = diag
+            print(f"[Agent] long_only_v3: held={diag['n_held']}/{config.V3_K} "
+                  f"(<= {config.V3_MAX_PER_SECTOR}/sector, <= {config.V3_MAX_WEIGHT:.2%}/name) | "
+                  f"long={diag['long']:.3f} cash={diag['cash']:.3f} | "
+                  f"sectors={diag['sector_counts']}")
+            for note in diag["notes"]:
+                print(f"[Agent] long_only_v3 note: {note}")
+
+        elif strategy == "long_short_neutral":
+            shortable = self._shortable_universe(predictions_df, config.LS_N_SHORT)
+            w, diag = long_short_book(
+                predictions_df, n_long=config.LS_N_LONG, n_short=config.LS_N_SHORT,
+                gross=config.LS_GROSS, max_per_sector=config.LS_MAX_PER_SECTOR,
+                max_weight=config.LS_MAX_WEIGHT, shortable=shortable,
+                sector_neutral=config.LS_SECTOR_NEUTRAL,
+                vol_floor=getattr(config, "VOL_FLOOR", 1e-3))
+            target_weights.update(w)
+            self.last_book_diagnostics = diag
+            beta = "n/a" if diag["beta_net"] is None else f"{diag['beta_net']:+.3f}"
+            print(f"[Agent] long_short_neutral: longs={diag['n_long']} shorts={diag['n_short']} | "
+                  f"gross={diag['gross']:.3f} net={diag['net']:+.4f} beta_net={beta} | "
+                  f"sector_neutral={diag['sector_neutral']}")
+            for note in diag["notes"]:
+                print(f"[Agent] long_short_neutral note: {note}")
 
         elif strategy == "high_confidence":
             high_longs = predictions_df[
@@ -1362,6 +1406,13 @@ class BDATradingAgent:
             stop has been hit (manual-reset halt file under ./agent_logs/).
           * Per-trade structured log: every order writes a row to
             ./agent_logs/trades.csv with the full signal decomposition.
+          * Two phases: exposure-reducing orders (sells, covers, closes) first,
+            then wait up to FILL_WAIT_TIMEOUT_S for their fills, then buys and
+            new/increased shorts (shortable + easy-to-borrow only).
+          * Trades below max(MIN_ORDER_VALUE, MIN_TRADE_PCT x equity) are
+            skipped (closing a position to zero is exempt from the % rule).
+
+        Live result: {status, submitted, failed, failures, unfilled, skipped_small}.
         """
         print("\n" + "=" * 80)
         print("DIFFERENTIAL PORTFOLIO REBALANCING OPTIMIZER")
@@ -1431,7 +1482,7 @@ class BDATradingAgent:
                 naive_traded_volume += abs(target_val) + abs(curr_val)
                 differential_traded_volume += abs(delta_val)
                 
-                if abs(delta_val) >= config.MIN_ORDER_VALUE:
+                if passes_min_trade(delta_val, curr_val, target_val, simulated_equity):
                     if curr_val == 0.0 and target_val != 0.0:
                         side_str = "long" if target_val > 0 else "short"
                         action = "BUY (Long)" if target_val > 0 else "SELL (Short)"
@@ -1504,10 +1555,10 @@ class BDATradingAgent:
             print(f"[Broker] Connected to Alpaca. Endpoint: {config.ALPACA_URL}")
             print(f"[Broker] Net Liquidity / Account Equity: ${equity:,.2f}")
 
-            # Fetch active positions
+            # Fetch active positions (short positions carry a negative market_value)
             positions = client.get_all_positions()
             current_holdings = {pos.symbol: float(pos.market_value) for pos in positions}
-            
+
             print("[Broker] Current portfolio positions fetched:")
             for symbol, val in current_holdings.items():
                 print(f"  -> Active: {symbol:<5} | Market Value: ${val:>8,.2f} ({val/equity*100:.2f}%)")
@@ -1519,24 +1570,55 @@ class BDATradingAgent:
             # — e.g. a renamed/merged ticker such as SATS -> ECHO — leaving it
             # stranded off-book instead of being liquidated. Anything held but not
             # in target_weights resolves to target_w = 0.0 below (full liquidation).
-            trades_to_execute = []
+            #
+            # Each trade is split into legs by phase:
+            #   phase 1 (reduce exposure): sell part of a long, buy-to-cover part
+            #            of a short, close a position to zero (also the first half
+            #            of a long<->short flip);
+            #   phase 2 (add exposure):    buy / increase a long, open / increase
+            #            a short (shortable + easy-to-borrow only).
+            # Phase-1 orders are waited on (filled / terminal / timeout) before
+            # phase 2 is sent, so buys use the cash the sells freed.
+            phase1, phase2, skipped_small = [], [], []
             for ticker in sorted(set(config.TICKERS) | set(current_holdings.keys())):
                 curr_val = current_holdings.get(ticker, 0.0)
                 target_w = target_weights.get(ticker, 0.0)
                 target_val = target_w * equity
-                
                 delta_val = target_val - curr_val
-                if abs(delta_val) >= config.MIN_ORDER_VALUE:
-                    trades_to_execute.append({
-                        "ticker": ticker,
-                        "delta": delta_val,
-                        "target_w": target_w
-                    })
+                if not passes_min_trade(delta_val, curr_val, target_val, equity):
+                    if abs(delta_val) >= config.MIN_ORDER_VALUE:
+                        skipped_small.append(ticker)
+                    continue
+                flips = (curr_val > 0 > target_val) or (curr_val < 0 < target_val)
+                if target_val == 0.0 or flips:
+                    phase1.append({"ticker": ticker, "kind": "close", "delta": -curr_val,
+                                   "target_w": 0.0 if flips else target_w, "curr": curr_val})
+                    if flips:
+                        phase2.append({"ticker": ticker,
+                                       "kind": "short" if target_val < 0 else "buy",
+                                       "delta": target_val, "target_w": target_w, "curr": 0.0})
+                elif curr_val > 0 and delta_val < 0:
+                    phase1.append({"ticker": ticker, "kind": "sell", "delta": delta_val,
+                                   "target_w": target_w, "curr": curr_val})
+                elif curr_val < 0 and delta_val > 0:
+                    phase1.append({"ticker": ticker, "kind": "cover", "delta": delta_val,
+                                   "target_w": target_w, "curr": curr_val})
+                elif delta_val > 0:
+                    phase2.append({"ticker": ticker, "kind": "buy", "delta": delta_val,
+                                   "target_w": target_w, "curr": curr_val})
+                else:
+                    phase2.append({"ticker": ticker, "kind": "short", "delta": delta_val,
+                                   "target_w": target_w, "curr": curr_val})
+            # Largest exposure reductions first, then largest additions.
+            phase1.sort(key=lambda x: -abs(x["delta"]))
+            phase2.sort(key=lambda x: -abs(x["delta"]))
+            if skipped_small:
+                print(f"[Broker] Skipping {len(skipped_small)} trades below the minimum size "
+                      f"(max(${config.MIN_ORDER_VALUE:,.2f}, "
+                      f"{getattr(config, 'MIN_TRADE_PCT', 0.0):.2%} x equity)).")
 
-            # Sort so negative trades (Sells / covers) execute first
-            trades_to_execute.sort(key=lambda x: x["delta"])
-
-            print(f"\n[Broker] Dispatching {len(trades_to_execute)} optimized differential orders...")
+            print(f"\n[Broker] Dispatching {len(phase1)} exposure-reducing then "
+                  f"{len(phase2)} exposure-adding orders...")
 
             # One failing order (untradable symbol, rejected size, ...) must not
             # abort the rest of the rebalance: sells run first, so aborting
@@ -1553,78 +1635,75 @@ class BDATradingAgent:
                 return f"{BOT_ORDER_PREFIX}{_run_tag}-{tkr}-{_uuid.uuid4().hex[:6]}"[:120]
 
             def _try(fn, tkr):
+                """Run one broker call; returns (ok, result)."""
                 nonlocal n_ok
                 try:
-                    fn()
+                    res = fn()
                     n_ok += 1
-                    return True
+                    return True, res
                 except Exception as oe:
                     failures.append({"ticker": tkr, "error": str(oe)})
                     print(f"  -> [ORDER-FAILED] {tkr}: {oe}")
-                    return False
+                    return False, None
 
-            for trade in trades_to_execute:
-                ticker = trade["ticker"]
-                delta = trade["delta"]
-                target_w = trade["target_w"]
-
+            def _price(tkr):
                 # Latest price to size whole shares. Never fall back to a fake
                 # price: the old 1.0 fallback turned a $5k delta into 5,000
-                # shares. Without a real price we skip sizing (full
-                # liquidations don't need one -- they use close_position).
-                ticker_price = None
+                # shares. Full closes don't need one (close_position).
+                p = None
                 if prices_df is not None:
-                    ticker_rows = prices_df[prices_df["ticker"] == ticker]
-                    if not ticker_rows.empty:
-                        ticker_price = float(ticker_rows.sort_values("Date").iloc[-1]["company_close"])
-                if ticker_price is None or not (ticker_price > 0):
+                    rows = prices_df[prices_df["ticker"] == tkr]
+                    if not rows.empty:
+                        p = float(rows.sort_values("Date").iloc[-1]["company_close"])
+                if p is None or not (p > 0):
                     try:
                         from . import market_data
-                        _b, _ = market_data.fetch_daily_bars([ticker], lookback_days=10, verbose=False)
+                        _b, _ = market_data.fetch_daily_bars([tkr], lookback_days=10, verbose=False)
                         if not _b.empty:
-                            ticker_price = float(_b.sort_values("Date").iloc[-1]["company_close"])
+                            p = float(_b.sort_values("Date").iloc[-1]["company_close"])
                     except Exception:
-                        ticker_price = None
-                full_liquidation = (target_w == 0.0 and delta < 0)
-                if (ticker_price is None or not (ticker_price > 0)) and not full_liquidation:
+                        p = None
+                return p if (p is not None and p > 0) else None
+
+            def _execute(trade):
+                """Submit one leg; returns the broker order id to track (or None)."""
+                ticker, kind, delta, target_w = (trade["ticker"], trade["kind"],
+                                                 trade["delta"], trade["target_w"])
+                ticker_price = None if kind == "close" else _price(ticker)
+                if kind != "close" and ticker_price is None:
                     print(f"  -> [skip] No reliable price for {ticker}; not sizing an order.")
                     failures.append({"ticker": ticker, "error": "no price"})
-                    continue
-
-                if delta < 0:
-                    # Sell
-                    side = OrderSide.SELL
-                    side_str = "flat" if target_w == 0.0 else ("short" if target_w < 0 else "long")
-                    if target_w == 0.0:
-                        print(f"  -> [ORDER] Liquidating 100% of {ticker} (Value: ${abs(delta):,.2f})")
-                        _try(lambda t=ticker: client.close_position(t), ticker)
-                        action = "SELL (Liquidate)"
-                        qty_logged = 0
-                    else:
-                        qty = int(abs(delta) / ticker_price)
-                        action = "SELL"
-                        qty_logged = qty
-                        if qty > 0:
-                            print(f"  -> [ORDER] Selling {qty} shares of {ticker} to reduce exposure (Value: ${qty * ticker_price:,.2f}, price: ${ticker_price:.2f})")
-                            order = MarketOrderRequest(symbol=ticker, qty=qty, side=side, time_in_force=TimeInForce.DAY,
-                                                       client_order_id=_coid(ticker))
-                            _try(lambda o=order: client.submit_order(o), ticker)
-                        else:
-                            print(f"  -> [skip] Order value for {ticker} is too small for a whole share (Value: ${abs(delta):,.2f}).")
+                    return None
+                side_str = "flat" if target_w == 0.0 else ("short" if target_w < 0 else "long")
+                order_id, qty_logged = None, 0
+                if kind == "short":
+                    ok, reason = self._asset_borrowable(client, ticker)
+                    if not ok:
+                        print(f"  -> [skip] Refusing to short {ticker}: {reason}.")
+                        failures.append({"ticker": ticker, "error": f"short refused: {reason}"})
+                        return None
+                if kind == "close":
+                    what = "Covering" if trade["curr"] < 0 else "Liquidating"
+                    print(f"  -> [ORDER] {what} 100% of {ticker} (Value: ${abs(trade['curr']):,.2f})")
+                    ok, res = _try(lambda t=ticker: client.close_position(t), ticker)
+                    order_id = getattr(res, "id", None) if ok else None
+                    action = "BUY (Cover)" if trade["curr"] < 0 else "SELL (Liquidate)"
                 else:
-                    # Buy
-                    side = OrderSide.BUY
-                    side_str = "long" if target_w > 0 else ("short" if target_w < 0 else "flat")
-                    qty = int(delta / ticker_price)
-                    action = "BUY"
+                    qty = int(abs(delta) / ticker_price)
                     qty_logged = qty
+                    side = OrderSide.BUY if kind in ("buy", "cover") else OrderSide.SELL
+                    action = {"buy": "BUY", "cover": "BUY (Cover)", "sell": "SELL",
+                              "short": "SELL (Short)"}[kind]
                     if qty > 0:
-                        print(f"  -> [ORDER] Buying {qty} shares of {ticker} to establish/increase exposure (Value: ${qty * ticker_price:,.2f}, price: ${ticker_price:.2f})")
-                        order = MarketOrderRequest(symbol=ticker, qty=qty, side=side, time_in_force=TimeInForce.DAY,
-                                                       client_order_id=_coid(ticker))
-                        _try(lambda o=order: client.submit_order(o), ticker)
+                        print(f"  -> [ORDER] {action} {qty} shares of {ticker} "
+                              f"(Value: ${qty * ticker_price:,.2f}, price: ${ticker_price:.2f})")
+                        order = MarketOrderRequest(symbol=ticker, qty=qty, side=side,
+                                                   time_in_force=TimeInForce.DAY,
+                                                   client_order_id=_coid(ticker))
+                        ok, res = _try(lambda o=order: client.submit_order(o), ticker)
+                        order_id = getattr(res, "id", None) if ok else None
                     else:
-                        print(f"  -> [skip] Order value for {ticker} is too small for a whole share (Value: ${delta:,.2f}).")
+                        print(f"  -> [skip] Order value for {ticker} is too small for a whole share (Value: ${abs(delta):,.2f}).")
 
                 # Per-trade structured log (live side, after submit attempt)
                 try:
@@ -1632,21 +1711,78 @@ class BDATradingAgent:
                         ticker=ticker, action=action, target_w=target_w,
                         delta_pct=delta / max(equity, 1e-6),
                         qty=int(qty_logged),
-                        notional=abs(delta), ref_price=ticker_price,
+                        notional=abs(delta), ref_price=ticker_price or float("nan"),
                         dry_run=False, side=side_str,
                     ))
                 except Exception as e:
                     print(f"  -> [WARN] trade logger failed for {ticker}: {e}")
+                return order_id
 
-            print(f"[Broker] Rebalance finished: {n_ok} orders submitted, {len(failures)} failed.")
+            # ── Phase 1: reduce exposure ─────────────────────────────────
+            tracked = {}
+            for trade in phase1:
+                oid = _execute(trade)
+                if oid is not None:
+                    tracked[oid] = trade["ticker"]
+
+            # ── Wait for phase-1 fills before adding exposure ────────────
+            unfilled = self._wait_for_fills(client, tracked)
+
+            # ── Phase 2: add exposure ────────────────────────────────────
+            for trade in phase2:
+                _execute(trade)
+
+            print(f"[Broker] Rebalance finished: {n_ok} orders submitted, {len(failures)} failed, "
+                  f"{len(unfilled)} exposure-reducing orders unfilled at the wait deadline, "
+                  f"{len(skipped_small)} below minimum size.")
             print("=" * 80)
-            status = "executed" if n_ok > 0 or not trades_to_execute else "error"
+            n_trades = len(phase1) + len(phase2)
+            status = "executed" if n_ok > 0 or not n_trades else "error"
             return {"status": status, "submitted": n_ok, "failed": len(failures),
-                    "failures": failures}
+                    "failures": failures, "unfilled": unfilled,
+                    "skipped_small": skipped_small}
         except Exception as e:
             print(f"\n[ERROR] Alpaca Broker Execution failure: {e}")
             print("=" * 80)
             return {"status": "error", "error": str(e)}
+
+    def _wait_for_fills(self, client, tracked):
+        """Poll ``tracked`` (order_id -> ticker) until each order is filled or
+        terminal, or FILL_WAIT_TIMEOUT_S elapses. Returns the orders that did
+        not fill: [{ticker, order_id, status}]."""
+        if not tracked:
+            return []
+        interval = max(float(getattr(config, "FILL_POLL_INTERVAL_S", 2.0)), 0.0)
+        timeout = max(float(getattr(config, "FILL_WAIT_TIMEOUT_S", 60.0)), 0.0)
+        max_polls = int(timeout / interval) + 1 if interval > 0 else 1
+        pending = dict(tracked)
+        status = {oid: "unknown" for oid in tracked}
+        unfilled = []
+        print(f"[Broker] Waiting up to {timeout:.0f}s for {len(pending)} exposure-reducing "
+              f"orders to fill...")
+        for i in range(max_polls):
+            for oid in list(pending):
+                try:
+                    st = _order_status(client.get_order_by_id(oid))
+                except Exception as e:
+                    unfilled.append({"ticker": pending.pop(oid), "order_id": str(oid),
+                                     "status": f"poll failed: {e}"})
+                    continue
+                status[oid] = st
+                if st == _FILLED:
+                    pending.pop(oid)
+                elif st in _TERMINAL_UNFILLED:
+                    unfilled.append({"ticker": pending.pop(oid), "order_id": str(oid), "status": st})
+            if not pending:
+                break
+            if i < max_polls - 1:
+                time.sleep(interval)
+        for oid, tkr in pending.items():
+            unfilled.append({"ticker": tkr, "order_id": str(oid),
+                             "status": f"{status[oid]} (timeout)"})
+        for u in unfilled:
+            print(f"  -> [UNFILLED] {u['ticker']} order {u['order_id']}: {u['status']}")
+        return unfilled
 
     def record_attribution(self, *, weights_prev, weights_curr,
                             realised_returns, benchmark_return,
