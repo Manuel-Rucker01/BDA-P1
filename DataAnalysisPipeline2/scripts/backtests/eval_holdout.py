@@ -3,35 +3,26 @@
 Fair holdout evaluator for frozen model artefacts (best_model*.pkl).
 
 Every model is scored on the SAME holdout of the (refreshed) master_dataset:
-feature dates in [--start, --end] (default end = last labeled date), on the
-SAME ticker universe (intersection of all models' embedding tickers), using
-the TRAINING feature path:
+feature dates in [--start, --end] (default end = last labeled date).
 
-    load_observation_features -> attach_macro_features -> attach_news_features
-    -> build_feature_matrices
+* feature_version 2 artefacts (manifest feature_version=2) are scored with
+  LIVE-path semantics: features/core.compute_features on the full unfiltered
+  price panel, the eligible rows of each date (= core.decision_rows), core
+  robust per-date z on eligible+embedded names, rank soft-vote over mix_models
+  (kg_embeddings_classifier.build_v2_scored_frame, shared with training).
+* feature_version 1 artefacts are scored with their TRAINING path
+  (load_observation_features -> macro -> news -> build_feature_matrices, model's
+  own PCA/cs-z/scaler). This is training-consistent and overstates live
+  behaviour (audit 2026-11).
 
-Per model we then use the model's OWN tabular_cols / pca / scaler /
-company_embeddings / cs_z flag, predict with each estimator in its
-``mix_models`` and rank-soft-vote them per date (per-date pct rank of each
-member, mean, re-rank) -- the same combination the live bot uses.
-
-Window features (lags, rolling vol, RSI/MACD...) are computed on the full
-master_dataset BEFORE the holdout filter, so the first holdout dates have
-proper look-back. Cross-sectional features (PERCENT_RANK, sector means) are
-per-date and unaffected by the filter. News features (if a model uses them)
-come from ExploitationZone/news_features.parquet; missing keys -> 0 exactly as
-in training.
-
-Metrics (per model):
-  * IC        mean per-date Spearman(pred, realised 30-session return)
-  * IC t      naive t = mean/(sd/sqrt(n)); IC t_NW = Newey-West (lag 29) t,
-              because consecutive dates share 29/30 of their label window
-  * D10-D1    mean per-date top-minus-bottom decile spread of realised 30d ret
-  * top10/top20 mean realised 30d return of the top-k vs the universe mean
-  * monthly portfolio: non-overlapping, rebalanced every 21 sessions from the
-    holdout start, top-20 equal weight, held to the next rebalance (last one
-    held 21 sessions) using raw closes from TrustedZone.company_history.
-    No costs. Compared to the equal-weight universe over the same periods.
+Metrics are computed on the COMMON population (scored by every model, v2-
+eligible, embedded in all models), re-ranked per date:
+  * IC (mean per-date Spearman vs realised 30-session return), naive t and
+    Newey-West (lag 29) t, D10-D1 spread, top-10/20 excess vs universe mean
+  * monthly-rebalanced portfolios via common.select_top_k + inverse-vol:
+    PROD (5% gate, K=10, cap 25%), DIV20 (K=20, 4/sector, cap 10%),
+    DIV30 (K=30, 5/sector, cap 7%): cum return, Sharpe, max drawdown;
+    plus SPY and the equal-weight common universe.
 
 Usage:
   python eval_holdout.py --model production=ExploitationZone/best_model.pkl \
@@ -126,7 +117,7 @@ def per_date_pct_rank(values, dates):
     return pd.Series(values).groupby(pd.Series(dates)).rank(pct=True).values
 
 
-def score_model(M, hold, universe):
+def score_model_v1(M, hold, universe):
     """Return DataFrame[ticker, Date, ret, pred] for one model on the holdout."""
     sub = hold[hold["ticker"].isin(universe)].copy()
     emb = {t: M["company_embeddings"][t] for t in universe}
@@ -233,56 +224,130 @@ def cross_section_metrics(sc):
     }
 
 
-def load_closes(tickers, start):
-    con = duckdb.connect(TRUSTED_DB, read_only=True)
-    px = con.execute(
-        "SELECT Company AS ticker, CAST(CAST(Date AS TIMESTAMP) AS DATE) AS Date, Close "
-        "FROM company_history WHERE CAST(CAST(Date AS TIMESTAMP) AS DATE) >= ?",
-        [pd.Timestamp(start).date()]).df()
-    con.close()
-    px["Date"] = pd.to_datetime(px["Date"])
-    px = px[px["ticker"].isin(set(tickers))]
-    return px.pivot_table(index="Date", columns="ticker", values="Close").sort_index()
+def is_v2(M):
+    return int((M["manifest"] or {}).get("feature_version", 1)) >= 2
 
 
-def monthly_portfolio(sc, closes, hold_days=21, top_k=20):
-    """Non-overlapping top-k EW portfolio rebalanced every `hold_days` sessions
-    from the first holdout date. Exit = close `hold_days` sessions later (or
-    last available close of a name that stops trading)."""
-    cal = closes.index
-    hold_dates = sorted(sc["Date"].unique())
-    reb = [hold_dates[0]]
-    while True:
-        i = cal.get_loc(reb[-1]) + hold_days
-        if i >= len(cal) or cal[i] > hold_dates[-1]:
-            break
-        reb.append(cal[i])
-    rows = []
-    for d in reb:
-        i0 = cal.get_loc(d)
-        i1 = min(i0 + hold_days, len(cal) - 1)
-        d1 = cal[i1]
-        g = sc[sc["Date"] == d]
-        if g.empty:
-            continue
-        top = g.sort_values("pred", ascending=False)["ticker"].head(top_k).tolist()
-        seg = closes.iloc[i0:i1 + 1]
+def score_model_v2(M, panel, meta, start, end, news_df):
+    """LIVE-path semantics for a feature_version-2 artefact: core features on
+    the full panel, eligible+embedded rows of each date (= core.decision_rows),
+    robust per-date z on that population, rank soft-vote over mix_models."""
+    uses_news = any(c.startswith("news_") for c in M["tabular_cols"])
+    if uses_news and news_df is None:
+        raise ValueError(f"[{M['name']}] news model but no --news-v2 parquet")
+    feats, tab = K.build_v2_scored_frame(panel, meta, M["company_embeddings"], M["pca"],
+                                         M["pca_cols"], news_df if uses_news else None)
+    if list(tab) != list(M["tabular_cols"]):
+        raise ValueError(f"[{M['name']}] v2 tabular cols mismatch: {tab} vs {M['tabular_cols']}")
+    d = pd.to_datetime(feats["Date"])
+    sub = feats[(d >= pd.Timestamp(start)) & (d <= pd.Timestamp(end))].reset_index(drop=True)
+    X = sub[M["tabular_cols"] + M["pca_cols"]]
+    dates = sub["Date"].values
+    member_ranks = []
+    for m in M["mix_models"]:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            y = np.asarray(M["trained_models"][m].predict(X), dtype=float).reshape(-1)
+        member_ranks.append(per_date_pct_rank(y, dates))
+    pred = per_date_pct_rank(np.mean(member_ranks, axis=0), dates)
+    return pd.DataFrame({"ticker": sub["ticker"].values, "Date": pd.to_datetime(dates), "pred": pred})
 
-        def _ret(names):
-            p0 = seg.iloc[0][names]
-            p1 = seg[names].ffill().iloc[-1]
-            r = (p1 / p0 - 1.0).replace([np.inf, -np.inf], np.nan).dropna()
-            return float(r.mean()) if len(r) else float("nan"), len(r)
 
-        r_top, n_top = _ret(top)
-        r_uni, n_uni = _ret(g["ticker"].tolist())
-        rows.append({"rebalance": pd.Timestamp(d).date(), "exit": pd.Timestamp(d1).date(),
-                     "sessions": i1 - i0, "top20_ret_pct": 100 * r_top,
-                     "universe_ret_pct": 100 * r_uni, "n_top": n_top, "n_universe": n_uni})
-    per = pd.DataFrame(rows)
-    cum_top = float(np.prod(1 + per["top20_ret_pct"] / 100) - 1) * 100
-    cum_uni = float(np.prod(1 + per["universe_ret_pct"] / 100) - 1) * 100
-    return per, cum_top, cum_uni
+# Portfolio constructions (common.select_top_k + bot.inverse_volatility_weights)
+CONSTRUCTIONS = {
+    #          pct gate, K,  sector frac (count cap = round(K*frac)), per-name cap
+    "PROD":  dict(pct=5.0, k=10, sector=1.0, cap=0.25),
+    "DIV20": dict(pct=5.0, k=20, sector=0.2, cap=0.10),
+    "DIV30": dict(pct=5.0, k=30, sector=1.0 / 6.0, cap=0.07),
+}
+
+
+def monthly_rebalance_dates(hold_dates, calendar):
+    """Holdout start + first trading day of every later month inside the holdout;
+    the last book is held to the first trading day of the following month."""
+    hd = sorted(pd.to_datetime(hold_dates))
+    reb = [hd[0]]
+    for d in hd[1:]:
+        if (d.year, d.month) != (reb[-1].year, reb[-1].month):
+            reb.append(d)
+    exits = reb[1:]
+    last = reb[-1]
+    nxt = [c for c in calendar if (c.year, c.month) > (last.year, last.month)]
+    exits.append(nxt[0] if nxt else calendar[-1])
+    return reb, exits
+
+
+def period_path(closes, weights, d0, d1):
+    """Daily value path (start 1.0) of a buy-and-hold book over [d0, d1]; cash
+    (1 - sum w) earns 0; names that stop trading are carried at their last close."""
+    names = [t for t in weights if t in closes.columns]
+    seg = closes.loc[d0:d1, names].ffill()
+    p0 = seg.iloc[0]
+    ok = (p0.notna() & (p0 > 0)).values
+    w = np.array([weights[t] for t in names], dtype=float)[ok]
+    rel = seg.loc[:, ok].divide(p0[ok]) - 1.0
+    return 1.0 + (rel.fillna(0.0) * w).sum(axis=1)
+
+
+def path_stats(daily_values):
+    v = np.asarray(daily_values, dtype=float)
+    r = np.diff(v) / v[:-1]
+    sharpe = float(np.sqrt(252) * r.mean() / r.std(ddof=1)) if len(r) > 2 and r.std() > 0 else float("nan")
+    peak = np.maximum.accumulate(v)
+    dd = float(((v - peak) / peak).min() * 100)
+    return float((v[-1] / v[0] - 1) * 100), sharpe, dd
+
+
+def run_portfolios(sc, info, closes, reb, exits):
+    """sc: ticker, Date, pred on the common population. info: ticker, Date, Sector, vol."""
+    from common import select_top_k
+    from trading_agent.bot import inverse_volatility_weights
+    out = {}
+    for cname, cfg in CONSTRUCTIONS.items():
+        path, periods = [1.0], []
+        for d0, d1 in zip(reb, exits):
+            g = sc[sc["Date"] == d0].merge(info, on=["ticker", "Date"], how="left")
+            g = g.rename(columns={"pred": "pred_rank"})
+            sel = select_top_k(g, pct_threshold=cfg["pct"], top_k=cfg["k"],
+                               max_sector_frac=cfg["sector"], signal_col="pred_rank")
+            vols = sel["vol"].fillna(sel["vol"].median()).fillna(0.03).values
+            w = inverse_volatility_weights(sel["ticker"].tolist(), vols,
+                                           target_exposure=1.0, max_weight=cfg["cap"])
+            seg = period_path(closes, w, d0, d1)
+            path += list(path[-1] * seg.values[1:])
+            periods.append((d0, d1, float(seg.values[-1] - 1) * 100, len(w),
+                            int(sel["Sector"].nunique()), float(sum(w.values()))))
+        out[cname] = (path, periods)
+    return out
+
+
+def ew_and_spy(common_by_date, closes, reb, exits, spy):
+    ew, ew_per = [1.0], []
+    for d0, d1 in zip(reb, exits):
+        names = sorted(common_by_date[d0])
+        seg = period_path(closes, {t: 1.0 / len(names) for t in names}, d0, d1)
+        ew += list(ew[-1] * seg.values[1:])
+        ew_per.append(float(seg.values[-1] - 1) * 100)
+    res = {"EqualWeight(common universe)": (ew, ew_per)}
+    if spy is not None and len(spy):
+        s = spy.loc[reb[0]:exits[-1]]
+        per = [float(spy.asof(d1) / spy.asof(d0) - 1) * 100 for d0, d1 in zip(reb, exits)]
+        res["SPY"] = (list(s.values / s.values[0]), per)
+    return res
+
+
+def fetch_spy(start, end):
+    """SPY daily closes from Alpaca (market data only)."""
+    try:
+        import datetime as dt
+        from trading_agent import market_data
+        s = pd.Timestamp(start).to_pydatetime().replace(tzinfo=dt.timezone.utc)
+        e = (pd.Timestamp(end) + pd.Timedelta(days=1)).to_pydatetime().replace(tzinfo=dt.timezone.utc)
+        b = market_data._alpaca_daily_bars(["SPY"], s, e, verbose=False)
+        return b.assign(Date=pd.to_datetime(b["Date"])).set_index("Date")["company_close"].sort_index()
+    except Exception as ex:
+        print(f"[spy] unavailable: {ex}")
+        return None
 
 
 def main():
@@ -292,7 +357,8 @@ def main():
     ap.add_argument("--start", default="2026-07-15")
     ap.add_argument("--end", default=None, help="default: last labeled date")
     ap.add_argument("--out-name", default="holdout_eval")
-    ap.add_argument("--hold-days", type=int, default=21)
+    ap.add_argument("--news-v2", default=os.path.join(EXPLOITATION_DIR, "news_features_v2.parquet"),
+                    help="news parquet for feature_version-2 news models")
     args = ap.parse_args()
 
     models = []
@@ -302,92 +368,158 @@ def main():
             path = os.path.join(ROOT_DIR, path)
         models.append(load_model(path, name))
 
-    universe = sorted(set.intersection(*[set(M["company_embeddings"]) for M in models]))
+    from features import core
+    from trading_agent.bot import fetch_company_metadata
+    emb_common = set.intersection(*[set(M["company_embeddings"]) for M in models])
+
+    # v1 (legacy training path) frame + the labels used for every model.
     hold, last_labeled = build_holdout_frame(args.start, args.end)
-    universe = sorted(set(universe) & set(hold["ticker"]))
-    print(f"[universe] {len(universe)} tickers common to all models' embeddings and the holdout")
+    end = pd.Timestamp(args.end) if args.end else last_labeled
+    labels = hold[["ticker", "Date", "target_30d_return"]].rename(columns={"target_30d_return": "ret"})
 
-    closes = load_closes(universe, args.start)
-    print(f"[prices] closes {closes.index.min().date()} -> {closes.index.max().date()}")
+    # Raw v2 panel features: sizing vol, Sector, v2 eligibility, momentum ref.
+    panel = K.load_price_panel()
+    meta = fetch_company_metadata()[["ticker", "Sector"]]
+    raw = core.compute_features(panel, meta)
+    raw["Date"] = pd.to_datetime(raw["Date"])
+    rawh = raw[(raw["Date"] >= pd.Timestamp(args.start)) & (raw["Date"] <= end)]
+    info = rawh[["ticker", "Date", "Sector", "return_volatility_20d", "return_20d", "eligible"]] \
+        .rename(columns={"return_volatility_20d": "vol"})
+    news_v2 = pd.read_parquet(args.news_v2) if os.path.exists(args.news_v2) else None
 
-    rows, port_rows, scored = [], [], {}
+    scored = {}
     for M in models:
-        sc = score_model(M, hold, universe)
+        if is_v2(M):
+            print(f"[score] {M['name']}: feature_version 2 -> LIVE path (core features, decision rows, robust z)")
+            sc = score_model_v2(M, panel, meta, args.start, end, news_v2)
+        else:
+            print(f"[score] {M['name']}: feature_version 1 -> legacy TRAINING path (overstates live behaviour)")
+            uni = sorted(emb_common & set(hold["ticker"]))
+            sc = score_model_v1(M, hold, uni)[["ticker", "Date", "pred"]]
         scored[M["name"]] = sc
-        m = cross_section_metrics(sc)
-        per, cum_top, cum_uni = monthly_portfolio(sc, closes, args.hold_days)
-        per.insert(0, "model", M["name"])
-        port_rows.append(per)
-        m.update({"model": M["name"], "n_obs": len(sc),
-                  "train_dates": f"{M['manifest'].get('training_date_min')}..{M['manifest'].get('training_date_max')}",
-                  "monthly_n_periods": len(per),
-                  "monthly_top20_cum_pct": cum_top, "monthly_universe_cum_pct": cum_uni,
-                  "monthly_excess_cum_pct": cum_top - cum_uni})
-        rows.append(m)
-        print(f"  [{M['name']}] IC={m['ic_mean']:+.4f} t={m['ic_t_naive']:+.2f} "
-              f"t_NW={m['ic_t_nw29']:+.2f} D10-D1={m['d10_minus_d1_pct']:+.2f}% "
-              f"top20-exc={m['top20_excess_pct']:+.2f}% monthly cum {cum_top:+.2f}% vs {cum_uni:+.2f}%")
 
-    # Reference: pure 20d-momentum rank on the same universe/dates.
-    ref = hold[hold["ticker"].isin(universe)][["ticker", "Date", "target_30d_return", "rank_return_20d"]]
-    ref = ref.rename(columns={"target_30d_return": "ret"})
-    ref["pred"] = per_date_pct_rank(ref["rank_return_20d"].values, ref["Date"].values)
-    m = cross_section_metrics(ref)
-    per, cum_top, cum_uni = monthly_portfolio(ref, closes, args.hold_days)
-    per.insert(0, "model", "ref_momentum_20d")
-    port_rows.append(per)
-    m.update({"model": "ref_momentum_20d", "n_obs": len(ref), "train_dates": "-",
-              "monthly_n_periods": len(per), "monthly_top20_cum_pct": cum_top,
-              "monthly_universe_cum_pct": cum_uni, "monthly_excess_cum_pct": cum_top - cum_uni})
+    # Common population: scored by every model AND v2-eligible AND embedded in all.
+    keys = None
+    for sc in scored.values():
+        k = set(zip(sc["ticker"], sc["Date"]))
+        keys = k if keys is None else keys & k
+    el = info[info["eligible"]]
+    keys &= set(zip(el["ticker"], el["Date"]))
+    kdf = pd.DataFrame([k for k in keys if k[0] in emb_common], columns=["ticker", "Date"])
+    print(f"[universe] common (ticker,date) rows: {len(kdf):,}; "
+          f"{kdf['ticker'].nunique()} tickers, {kdf['Date'].nunique()} dates")
+
+    closes = panel.assign(Date=pd.to_datetime(panel["Date"])) \
+        .pivot_table(index="Date", columns="ticker", values="company_close").sort_index()
+    closes = closes.loc[pd.Timestamp(args.start):]
+    hold_dates = sorted(kdf["Date"].unique())
+    reb, exits = monthly_rebalance_dates(hold_dates, list(closes.index))
+    common_by_date = {d: set(kdf.loc[kdf["Date"] == d, "ticker"]) for d in reb}
+    spy = fetch_spy(args.start, closes.index[-1])
+
+    rows, per_rows = [], []
+    for M in models:
+        sc = scored[M["name"]].merge(kdf, on=["ticker", "Date"])
+        # Re-rank on the common population so every model ranks the same names.
+        sc["pred"] = per_date_pct_rank(sc["pred"].values, sc["Date"].values)
+        m = cross_section_metrics(sc.merge(labels, on=["ticker", "Date"]))
+        m.update({"model": M["name"], "feature_path": "v2 live" if is_v2(M) else "v1 training",
+                  "train_dates": f"{M['manifest'].get('training_date_min')}..{M['manifest'].get('training_date_max')}"})
+        for cname, (path, periods) in run_portfolios(sc, info, closes, reb, exits).items():
+            cum, sh, dd = path_stats(path)
+            m.update({f"{cname}_cum_pct": cum, f"{cname}_sharpe": sh, f"{cname}_maxdd_pct": dd,
+                      f"{cname}_ret_over_dd": cum / abs(dd) if dd < 0 else float("nan")})
+            for (d0, d1, r, n, nsec, gross) in periods:
+                per_rows.append({"model": M["name"], "construction": cname, "rebalance": d0.date(),
+                                 "exit": pd.Timestamp(d1).date(), "ret_pct": r, "n_names": n,
+                                 "n_sectors": nsec, "gross_exposure": gross})
+        rows.append(m)
+        print(f"  [{M['name']}] IC={m['ic_mean']:+.4f} t_NW={m['ic_t_nw29']:+.2f} "
+              f"D10-D1={m['d10_minus_d1_pct']:+.2f}% PROD={m['PROD_cum_pct']:+.2f}% "
+              f"DIV20={m['DIV20_cum_pct']:+.2f}% (dd {m['DIV20_maxdd_pct']:.1f}%) "
+              f"DIV30={m['DIV30_cum_pct']:+.2f}% (dd {m['DIV30_maxdd_pct']:.1f}%)")
+
+    # Reference: plain 20d momentum on the same population (signal quality only).
+    ref = kdf.merge(info[["ticker", "Date", "return_20d"]], on=["ticker", "Date"])
+    ref["pred"] = per_date_pct_rank(ref["return_20d"].values, ref["Date"].values)
+    m = cross_section_metrics(ref.merge(labels, on=["ticker", "Date"]))
+    m.update({"model": "ref_momentum_20d", "feature_path": "-", "train_dates": "-"})
     rows.append(m)
 
-    if len(models) >= 2:
-        a, b = models[0]["name"], models[1]["name"]
-        j = scored[a].merge(scored[b], on=["ticker", "Date"], suffixes=("_a", "_b"))
-        pred_corr = float(j.groupby("Date").apply(
-            lambda g: spearmanr(g["pred_a"], g["pred_b"]).correlation).mean())
-    else:
-        pred_corr = float("nan")
+    bench_rows = []
+    for bname, (path, per) in ew_and_spy(common_by_date, closes, reb, exits, spy).items():
+        cum, sh, dd = path_stats(path)
+        bench_rows.append({"benchmark": bname, "cum_pct": cum, "sharpe": sh, "maxdd_pct": dd,
+                           "periods_pct": ", ".join(f"{x:+.2f}" for x in per)})
+    bench_df = pd.DataFrame(bench_rows)
+
+    pred_corr = {}
+    names = [M["name"] for M in models]
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            a = scored[names[i]].merge(kdf, on=["ticker", "Date"])
+            b = scored[names[j]].merge(kdf, on=["ticker", "Date"])
+            jn = a.merge(b, on=["ticker", "Date"], suffixes=("_a", "_b"))
+            pred_corr[f"{names[i]} vs {names[j]}"] = float(np.mean(
+                [spearmanr(g["pred_a"], g["pred_b"]).correlation for _, g in jn.groupby("Date")]))
 
     res = pd.DataFrame(rows)
-    cols = ["model", "train_dates", "n_dates", "n_obs", "ic_mean", "ic_sd", "ic_t_naive", "ic_t_nw29",
-            "ic_pos_frac", "d10_minus_d1_pct", "top10_ret_pct", "top20_ret_pct", "universe_ret_pct",
-            "top10_excess_pct", "top20_excess_pct", "monthly_n_periods", "monthly_top20_cum_pct",
-            "monthly_universe_cum_pct", "monthly_excess_cum_pct"]
-    res = res[cols]
-    ports = pd.concat(port_rows, ignore_index=True)
+    ic_cols = ["model", "feature_path", "train_dates", "n_dates", "ic_mean", "ic_sd", "ic_t_naive",
+               "ic_t_nw29", "ic_pos_frac", "d10_minus_d1_pct", "top10_excess_pct", "top20_excess_pct"]
+    port_cols = ["model"] + [f"{c}_{s}" for c in CONSTRUCTIONS
+                             for s in ("cum_pct", "sharpe", "maxdd_pct", "ret_over_dd")]
+    per = pd.DataFrame(per_rows)
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    csv_path = os.path.join(RESULTS_DIR, f"{args.out_name}.csv")
-    port_csv = os.path.join(RESULTS_DIR, f"{args.out_name}_monthly.csv")
     md_path = os.path.join(RESULTS_DIR, f"{args.out_name}.md")
-    res.to_csv(csv_path, index=False)
-    ports.to_csv(port_csv, index=False)
-
-    hd = sorted(hold["Date"].unique())
+    res.to_csv(os.path.join(RESULTS_DIR, f"{args.out_name}.csv"), index=False)
+    per.to_csv(os.path.join(RESULTS_DIR, f"{args.out_name}_periods.csv"), index=False)
+    bench_df.to_csv(os.path.join(RESULTS_DIR, f"{args.out_name}_benchmarks.csv"), index=False)
+    n_sess = len(closes.loc[reb[0]:exits[-1]])
     with open(md_path, "w") as f:
         f.write(f"# Holdout evaluation: {args.out_name}\n\n")
-        f.write(f"- Holdout feature dates: {pd.Timestamp(hd[0]).date()} -> {pd.Timestamp(hd[-1]).date()} "
-                f"({len(hd)} dates; last labeled date in master = {last_labeled.date()})\n")
-        f.write(f"- Universe: {len(universe)} tickers (intersection of all models' embeddings present in the holdout)\n")
-        f.write("- Features: training path (load_observation_features -> macro -> news -> build_feature_matrices), "
-                "each model's own tabular_cols / PCA / cs-z / scaler, per-date rank soft-vote over mix_models\n")
-        f.write("- Realised return = master_dataset.target_30d_return (30 sessions, %, winsorised [-100, 200])\n")
-        f.write("- IC t_NW: Newey-West t with lag 29 (labels of consecutive dates overlap 29/30)\n")
-        f.write(f"- Monthly portfolio: top-20 EW, rebalanced every {args.hold_days} sessions from holdout start, "
-                "no costs, raw closes from TrustedZone.company_history\n")
-        f.write(f"- Mean per-date Spearman between the first two models' predictions: {pred_corr:.3f}\n\n")
-        f.write("## Summary\n\n")
-        f.write(to_md(res, ".4f"))
-        f.write("\n\n## Monthly portfolio periods\n\n")
-        f.write(to_md(ports, ".2f"))
-        f.write("\n\n## Models\n\n")
+        f.write(f"- Holdout feature dates: {pd.Timestamp(hold_dates[0]).date()} -> "
+                f"{pd.Timestamp(hold_dates[-1]).date()} ({len(hold_dates)} dates; last labeled date in "
+                f"master = {last_labeled.date()}); prices through {closes.index[-1].date()}.\n")
+        f.write(f"- Common population: {len(kdf):,} (ticker, date) rows, {kdf['ticker'].nunique()} tickers = "
+                "scored by every model AND v2-eligible (price >= $1, >= 80 bars, bar on the date) AND embedded "
+                "in every model. Each model builds/z-scores features on its own population as it would live; "
+                "predictions are then re-ranked per date on the common population.\n")
+        f.write("- **feature_version 2** models: LIVE-path semantics (core.compute_features on the full "
+                "unfiltered panel, eligible rows of each date = core.decision_rows, core robust per-date z on "
+                "eligible+embedded, rank soft-vote). **feature_version 1** models: their TRAINING feature path "
+                "(master_dataset SQL features, legacy cs-z). Per the 2026-11 audit that path is "
+                "training-consistent and therefore OVERSTATES v1 live behaviour.\n")
+        f.write("- IC / deciles use master_dataset.target_30d_return (30 sessions, %). IC t_NW = Newey-West t, "
+                "lag 29 (consecutive labels overlap 29/30).\n")
+        f.write(f"- Portfolios: monthly rebalance on {', '.join(str(d.date()) for d in reb)}; exits "
+                f"{', '.join(str(pd.Timestamp(d).date()) for d in exits)}. `common.select_top_k` (top-5% gate) "
+                "+ `bot.inverse_volatility_weights` on 20d return vol. PROD: K=10, no sector cap, 25%/name. "
+                "DIV20: K=20, max 4/sector, 10%/name. DIV30: K=30, max 5/sector, 7%/name. Daily mark-to-market "
+                "on adjusted closes, no costs, cash earns 0; Sharpe from daily returns x sqrt(252). Only "
+                f"{len(reb)} rebalances / {n_sess} sessions: indicative, not significant.\n\n")
+        f.write("## Signal quality (common population)\n\n")
+        f.write(to_md(res[ic_cols], ".4f"))
+        f.write("\n\n## Monthly portfolios (cum %, Sharpe, max drawdown %, cum/|maxDD|)\n\n")
+        f.write(to_md(res[res["model"] != "ref_momentum_20d"][port_cols], ".3f"))
+        f.write("\n\n## Benchmarks (same rebalance grid)\n\n")
+        f.write(to_md(bench_df, ".3f"))
+        f.write("\n\n## Per-period returns\n\n")
+        f.write(to_md(per, ".2f"))
+        f.write("\n\n## Mean per-date Spearman between model predictions (common population)\n\n")
+        for k, v in pred_corr.items():
+            f.write(f"- {k}: {v:.3f}\n")
+        f.write("\n## Models\n\n")
         for M in models:
-            f.write(f"- **{M['name']}**: `{os.path.relpath(M['path'], ROOT_DIR)}`; mix={M['mix_models']}; "
-                    f"cs_z={M['cs_z']}; tabular_cols={len(M['tabular_cols'])}; "
-                    f"train dates {M['manifest'].get('training_date_min')}..{M['manifest'].get('training_date_max')}\n")
-    print(res.to_string(index=False))
-    print(f"\n[out] {md_path}\n[out] {csv_path}\n[out] {port_csv}")
+            mf = M["manifest"] or {}
+            f.write(f"- **{M['name']}**: `{os.path.relpath(M['path'], ROOT_DIR)}`; feature_version="
+                    f"{mf.get('feature_version', 1)}; mix={M['mix_models']}; tabular_cols={len(M['tabular_cols'])}; "
+                    f"train dates {mf.get('training_date_min')}..{mf.get('training_date_max')}; "
+                    f"news_backend={mf.get('news_backend')}\n")
+    print(res[ic_cols].to_string(index=False))
+    print(res[port_cols].to_string(index=False))
+    print(bench_df.to_string(index=False))
+    print(f"\n[out] {md_path}")
 
 
 if __name__ == "__main__":
