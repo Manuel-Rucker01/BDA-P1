@@ -19,3 +19,4 @@ DataAnalysisPipeline2/trading_agent/.env
 DataAnalysisPipeline2/dashboard/active_account.json
 DataAnalysisPipeline2/trading_agent/agent_logs/accounts/
 DataAnalysisPipeline2/results/_posttrain_price_cache.parquet
+DataAnalysisPipeline2/results/_*_cache.parquet
