@@ -1,0 +1,74 @@
+# Quarterly retrain reminder (WS5 of docs/IMPROVEMENT_PLAN_v3.md).
+#
+# Opens an issue "Quarterly retrain due — YYYY-Qn" on the first weekday of
+# January, April, July and October with the retrain checklist and the latest
+# monitoring summary (ops/monitoring.md). No training runs in CI: it needs the
+# local 10-year data store and hours of CPU -- run `make retrain` locally.
+name: Quarterly retrain reminder
+
+on:
+  schedule:
+    # Days 1-3 of Jan/Apr/Jul/Oct (day-of-week left as * so cron does not OR the
+    # two fields); the first step keeps only the first weekday of the month.
+    - cron: "0 13 1-3 1,4,7,10 *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: First weekday of the quarter?
+        id: gate
+        run: |
+          python3 - >> "$GITHUB_OUTPUT" <<'EOF'
+          import datetime as dt
+          t = dt.datetime.now(dt.timezone.utc).date()
+          first = next(t.replace(day=d) for d in range(1, 8) if t.replace(day=d).weekday() < 5)
+          print("due=%s" % str(t == first).lower())
+          print("quarter=%d-Q%d" % (t.year, (t.month - 1) // 3 + 1))
+          EOF
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.due == 'true' || github.event_name == 'workflow_dispatch'
+        with:
+          lfs: false
+          fetch-depth: 1
+
+      - name: Open "Quarterly retrain due" issue (once per quarter)
+        if: steps.gate.outputs.due == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          QUARTER: ${{ steps.gate.outputs.quarter }}
+        run: |
+          TITLE="Quarterly retrain due — $QUARTER"
+          if gh issue list --repo "$GITHUB_REPOSITORY" --state all --limit 100 --search "\"$TITLE\" in:title" \
+               --json title -q '.[].title' | grep -Fxq "$TITLE"; then
+            echo "issue '$TITLE' already exists"; exit 0
+          fi
+          {
+            echo "Quarterly retrain of the production model (plan: \`docs/IMPROVEMENT_PLAN_v3.md\`, WS3/WS5)."
+            echo
+            echo "## Checklist"
+            echo "- [ ] Review the latest monitoring report below (rolling IC, drift, book vs equal-weight)."
+            echo "- [ ] Incremental data refresh: Alpaca SIP daily bars (active + inactive universe) and SEC fundamentals, with the point-in-time / quality checks passing."
+            echo "- [ ] Train the candidate locally: \`make retrain\` (\`python -m DataAnalysisPipeline2.v3.retrain\`) — walk-forward, purged with embargo, final refit on all data."
+            echo "- [ ] Candidate manifest includes \`feature_version\`, \`feature_columns\` and \`feature_profile\` (\`monitoring.build_feature_profile\` on the z-scored training X) so live drift (PSI) can be monitored."
+            echo "- [ ] Promotion gate vs the production model: out-of-sample walk-forward with costs, bootstrap and Deflated Sharpe, drawdown not worse; IC/IR by year and regime; vs SPY and equal-weight."
+            echo "- [ ] If it passes: open a PR with the candidate artefact (LFS) and its evaluation report; dry-run (\`make propose\`) before merging."
+            echo "- [ ] If it fails: keep production, record the result and the reason here."
+            echo "- [ ] After deploying: confirm the next rebalance records predictions under \`ops/predictions/\` with the new \`model_id\`."
+            echo
+            echo "## Latest monitoring summary"
+            echo
+            if [ -f ops/monitoring.md ]; then
+              head -c 60000 ops/monitoring.md
+            else
+              echo "_No \`ops/monitoring.md\` yet — no live rebalance has been recorded._"
+            fi
+          } > issue.md
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file issue.md

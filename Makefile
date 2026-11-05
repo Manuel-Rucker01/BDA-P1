@@ -10,12 +10,15 @@ TOPK     ?= 10
 DASH     := DataAnalysisPipeline2.dashboard.app
 AGENT    := DataAnalysisPipeline2.trading_agent.run
 SCHED    := DataAnalysisPipeline2.trading_agent.scheduled_rebalance
+MON      := DataAnalysisPipeline2.trading_agent.monitoring
+RETRAIN  := DataAnalysisPipeline2.v3.retrain
+RETRAIN_ARGS ?=
 BT       := DataAnalysisPipeline2/scripts/backtests
 HALT     := DataAnalysisPipeline2/trading_agent/agent_logs/accounts/$(ACCOUNT)/.agent_halted
 
 .DEFAULT_GOAL := help
 .PHONY: help install run-ui ui propose run-live account rebalance-check rebalance-start \
-        rebalance backtest backtest-full test clean reset-halt
+        rebalance monitor retrain backtest backtest-full test clean reset-halt
 
 help: ## Show this help
 	@echo "BDA Quant — available commands:"
@@ -53,6 +56,19 @@ rebalance-start: ## One-time START: rebalance ACCOUNT now even off-schedule (all
 
 rebalance: ## What the scheduler runs: rebalance ACCOUNT only if due and safe
 	$(PY) -m $(SCHED) --account $(ACCOUNT) --execute --notify
+
+monitor: ## Refresh ops/monitoring.{csv,md} for ACCOUNT (realised IC, drift, alerts; read-only)
+	ACTIVE_ACCOUNT=$(ACCOUNT) $(PY) -m $(MON) --account $(ACCOUNT)
+
+retrain: ## Quarterly retrain via the v3 pipeline CLI (refresh -> train -> gate); pass RETRAIN_ARGS=...
+	@if $(PY) -c "import importlib.util as u, sys; sys.exit(0 if u.find_spec('DataAnalysisPipeline2.v3') and u.find_spec('$(RETRAIN)') else 1)" 2>/dev/null; then \
+		$(PY) -m $(RETRAIN) $(RETRAIN_ARGS); \
+	else \
+		echo "retrain: '$(RETRAIN)' is not available yet."; \
+		echo "  The v3 training pipeline (WS3 of docs/IMPROVEMENT_PLAN_v3.md) provides it; until it lands,"; \
+		echo "  retrain manually with the v2 notebooks/scripts and follow the 'Quarterly retrain due' issue checklist."; \
+		exit 1; \
+	fi
 
 backtest: ## Fast canonical OOS backtest (clean post-training window only)
 	cd $(BT) && BACKTEST_POST_ONLY=1 $(PY) canonical_oos.py

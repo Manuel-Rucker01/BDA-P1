@@ -9,6 +9,13 @@
 # most once per month and only if: paper endpoint, account ACTIVE, market open,
 # first 3 trading days of the month, no bot orders yet this month, and drawdown
 # within BDA_DRAWDOWN_LIMIT_PCT. Halts and errors fail the job -> GitHub emails you.
+#
+# Monitoring (WS5): every LIVE execution records its scored universe to
+# ops/predictions/monthly/, then the runner refreshes ops/monitoring.{csv,md}
+# (realised IC, decile spread, book vs SPY / equal-weight, feature drift). Mode
+# "monitor" refreshes the report on demand (read-only). All of it is committed,
+# since the runner has no persistent disk. If an alert rule fires, an issue
+# "Model monitoring alert: monthly YYYY-MM" is opened (at most one per month).
 name: Monthly rebalance (paper)
 
 on:
@@ -20,13 +27,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "check = read-only preflight | execute = rebalance if due | start = rebalance now, off-schedule"
+        description: "check = read-only preflight | execute = rebalance if due | start = rebalance now, off-schedule | monitor = read-only preflight + refresh ops/monitoring"
         type: choice
-        options: [check, execute, start]
+        options: [check, execute, start, monitor]
         default: check
 
 permissions:
-  contents: write   # appends ops/rebalance_log.md (also keeps the schedule alive on a public repo)
+  contents: write   # appends ops/rebalance_log.md + monitoring files (also keeps the schedule alive on a public repo)
+  issues: write     # opens a monitoring-alert issue (deduplicated per month)
 
 concurrency:
   group: bda-rebalance
@@ -34,7 +42,7 @@ concurrency:
 
 jobs:
   rebalance:
-    if: vars.BDA_TRADING_ENABLED == 'true' || inputs.mode == 'check'
+    if: vars.BDA_TRADING_ENABLED == 'true' || inputs.mode == 'check' || inputs.mode == 'monitor'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -69,7 +77,8 @@ jobs:
         run: |
           MODE="${{ inputs.mode || 'execute' }}"
           FORCE=""; [ "$MODE" = "start" ] && FORCE="--force-due"
-          python -m DataAnalysisPipeline2.trading_agent.scheduled_rebalance --account monthly $FORCE | tee pre.log
+          MON=""; [ "$MODE" = "monitor" ] && MON="--monitor"
+          python -m DataAnalysisPipeline2.trading_agent.scheduled_rebalance --account monthly $FORCE $MON | tee pre.log
           DECISION=$(sed -n 's/^SCHEDULER_JSON: //p' pre.log | python -c 'import sys,json; print(json.load(sys.stdin)["decision"])')
           echo "decision=$DECISION" >> "$GITHUB_OUTPUT"
           echo "mode=$MODE" >> "$GITHUB_OUTPUT"
@@ -77,29 +86,31 @@ jobs:
 
       - name: Model LFS id
         id: oid
-        if: steps.pre.outputs.decision == 'trade' && steps.pre.outputs.mode != 'check'
+        if: steps.pre.outputs.decision == 'trade' && steps.pre.outputs.mode != 'check' && steps.pre.outputs.mode != 'monitor'
         run: echo "oid=$(git lfs ls-files -l | awk '/best_model.pkl/{print $1}')" >> "$GITHUB_OUTPUT"
 
       - name: Restore model from cache
         id: cache
-        if: steps.pre.outputs.decision == 'trade' && steps.pre.outputs.mode != 'check'
+        if: steps.pre.outputs.decision == 'trade' && steps.pre.outputs.mode != 'check' && steps.pre.outputs.mode != 'monitor'
         uses: actions/cache@v4
         with:
           path: ExploitationZone/best_model.pkl
           key: bda-model-${{ steps.oid.outputs.oid }}
 
       - name: Fetch model (cache miss)
-        if: steps.pre.outputs.decision == 'trade' && steps.pre.outputs.mode != 'check' && steps.cache.outputs.cache-hit != 'true'
+        if: steps.pre.outputs.decision == 'trade' && steps.pre.outputs.mode != 'check' && steps.pre.outputs.mode != 'monitor' && steps.cache.outputs.cache-hit != 'true'
         run: git lfs pull --include="ExploitationZone/best_model.pkl"
 
       - name: Rebalance
-        if: steps.pre.outputs.decision == 'trade' && steps.pre.outputs.mode != 'check'
+        # --execute implies --monitor after an actual rebalance (records predictions,
+        # refreshes ops/monitoring.*); monitoring never changes the exit code here.
+        if: steps.pre.outputs.decision == 'trade' && steps.pre.outputs.mode != 'check' && steps.pre.outputs.mode != 'monitor'
         run: |
           python -m DataAnalysisPipeline2.trading_agent.scheduled_rebalance \
             --account monthly --execute --notify ${{ steps.pre.outputs.force }} | tee run.log
 
-      - name: Append to ops/rebalance_log.md
-        # Every scheduled/execute/start run (incl. halts and errors); not manual read-only checks.
+      - name: Append to ops/rebalance_log.md (+ monitoring files)
+        # Every scheduled/execute/start/monitor run (incl. halts and errors); not manual read-only checks.
         if: always() && steps.pre.outcome != 'skipped' && inputs.mode != 'check'
         run: |
           mkdir -p ops
@@ -109,5 +120,39 @@ jobs:
           git config user.name "bda-rebalance-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add ops/rebalance_log.md
+          for f in ops/predictions ops/monitoring.csv ops/monitoring.md; do
+            if [ -e "$f" ]; then git add "$f"; fi
+          done
           git commit -m "ops: rebalance log $(date -u +%F)" || exit 0
           git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && git push || echo "log push failed (non-fatal)"
+
+      - name: Open issue on monitoring alerts
+        # Deduplicated by title: at most one alert issue per account and month.
+        if: always() && steps.pre.outcome != 'skipped' && inputs.mode != 'check'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          M=$(cat run.log pre.log 2>/dev/null | sed -n 's/^MONITOR_JSON: //p' | tail -1)
+          [ -n "$M" ] || { echo "no monitoring output this run"; exit 0; }
+          echo "$M" > monitor.json
+          N=$(python -c 'import json; print(len(json.load(open("monitor.json")).get("alerts") or []))')
+          [ "$N" -gt 0 ] || { echo "monitoring: no alerts"; exit 0; }
+          TITLE="Model monitoring alert: monthly $(date -u +%Y-%m)"
+          if gh issue list --repo "$GITHUB_REPOSITORY" --state all --limit 100 --search "\"$TITLE\" in:title" \
+               --json title -q '.[].title' | grep -Fxq "$TITLE"; then
+            echo "issue '$TITLE' already exists -- not opening another"; exit 0
+          fi
+          python - > issue.md <<'EOF'
+          import json, os
+          m = json.load(open("monitor.json"))
+          url = "%s/%s/blob/%s/ops/monitoring.md" % (os.environ["GITHUB_SERVER_URL"],
+                                                    os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_REF_NAME"])
+          print("The live-model monitoring raised alerts for account `%s`.\n" % m.get("account"))
+          for a in m.get("alerts", []):
+              print("- **%s**: %s" % (a["rule"], a["message"]))
+          print("\nRolling IC (closed periods): 3-period `%s`, 6-period `%s`."
+                % (m.get("rolling_ic_3"), m.get("rolling_ic_6")))
+          print("\nFull report: [ops/monitoring.md](%s). Review it, then consider an early retrain "
+                "(`make retrain`, see the quarterly retrain checklist) and the WS3 promotion gate." % url)
+          EOF
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file issue.md
