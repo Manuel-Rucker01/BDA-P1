@@ -95,6 +95,8 @@ def main():
     ap.add_argument("--append", action="store_true",
                     help="merge into the existing parquet instead of overwriting it; "
                          "rows for (ticker, Date) keys rebuilt in this run replace old ones")
+    ap.add_argument("--out", default=OUT_PARQUET,
+                    help="feature parquet to write (default ExploitationZone/news_features.parquet)")
     ap.add_argument("--raw-out", default=RAW_PARQUET,
                     help="where to write the raw scored (article,ticker) rows")
     args = ap.parse_args()
@@ -116,8 +118,9 @@ def main():
         raw.to_parquet(args.raw_out, index=False)
 
     feats = build_asof_features(raw, grid)
-    if args.append and os.path.exists(OUT_PARQUET):
-        old = pd.read_parquet(OUT_PARQUET)
+    out_path = args.out
+    if args.append and os.path.exists(out_path):
+        old = pd.read_parquet(out_path)
         old["Date"] = pd.to_datetime(old["Date"]).dt.tz_localize(None)
         # Drop every old row whose (ticker, Date) lies in the rebuilt grid, so a
         # grid key that now has *no* news does not keep a stale old value.
@@ -128,10 +131,10 @@ def main():
               f"({old['Date'].min()}..{old['Date'].max()})")
         feats = (pd.concat([old, feats], ignore_index=True)
                    .sort_values(["ticker", "Date"]).reset_index(drop=True))
-    feats.to_parquet(OUT_PARQUET, index=False)
+    feats.to_parquet(out_path, index=False)
     cov = feats["ticker"].nunique() if not feats.empty else 0
     print(f"[news-features] wrote {len(feats)} (ticker,Date) feature rows "
-          f"for {cov}/{len(tickers)} tickers -> {OUT_PARQUET}")
+          f"for {cov}/{len(tickers)} tickers -> {out_path}")
     if not feats.empty:
         print(feats[["news_sent_mean_7d", "news_count_7d", "news_sent_momentum",
                      "news_sent_std_7d"]].describe().round(4).to_string())
