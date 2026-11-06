@@ -54,13 +54,15 @@ jobs:
       BDA_CADENCE: monthly
       BDA_BREAKER_ACK_DATE: ${{ vars.BDA_BREAKER_ACK_DATE }}
       # Portfolio construction; override any of these with repository variables.
-      # Default: broad sector-capped long-only book (STRICT50 in
-      # results/holdout_eval_phase3.md): 50 names, <= 7 per sector, <= 4% each.
+      # Default: sector-capped long-only book, 30 names, <= 5 per sector, <= 6% each.
+      # Chosen on the 2019-2026 walk-forward (results/v3_walkforward_report.md):
+      # K=30 Sharpe 0.69 / IR vs EW 0.23 vs K=50 0.58 / 0.02, and it spans ~10
+      # sectors (the old top-K book held 2-3).
       # Set vars.BDA_STRATEGY=top_k to go back to the concentrated top-K book.
       BDA_STRATEGY: ${{ vars.BDA_STRATEGY || 'long_only_v3' }}
-      BDA_V3_K: ${{ vars.BDA_V3_K || '50' }}
-      BDA_V3_MAX_PER_SECTOR: ${{ vars.BDA_V3_MAX_PER_SECTOR || '7' }}
-      BDA_V3_MAX_WEIGHT: ${{ vars.BDA_V3_MAX_WEIGHT || '0.04' }}
+      BDA_V3_K: ${{ vars.BDA_V3_K || '30' }}
+      BDA_V3_MAX_PER_SECTOR: ${{ vars.BDA_V3_MAX_PER_SECTOR || '5' }}
+      BDA_V3_MAX_WEIGHT: ${{ vars.BDA_V3_MAX_WEIGHT || '0.06' }}
       BDA_TOP_K_HOLDINGS: ${{ vars.BDA_TOP_K_HOLDINGS || '20' }}
       BDA_MAX_SECTOR_WEIGHT: ${{ vars.BDA_MAX_SECTOR_WEIGHT || '0.2' }}
       BDA_MAX_POSITION_WEIGHT: ${{ vars.BDA_MAX_POSITION_WEIGHT || '0.10' }}
