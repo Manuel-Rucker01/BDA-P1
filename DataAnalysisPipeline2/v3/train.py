@@ -189,11 +189,11 @@ def train_window_dates(dates, calendar, test_start: str, embargo=EMBARGO_SESSION
 
 
 def fit_ensemble(frame: pd.DataFrame, feats: list, target: str, calendar, models=MODEL_NAMES,
-                 refit: bool = True, log=print) -> tuple[dict, dict]:
+                 refit: bool = True, log=print, embargo: int = EMBARGO_SESSIONS) -> tuple[dict, dict]:
     """Fit the ensemble on ``frame`` (rows of the training window). Returns
     (models, info) with per-model early-stopped tree counts and date ranges."""
     f = frame[frame[target].notna()]
-    fit_d, val_d = split_fit_val(f["Date"].unique(), calendar)
+    fit_d, val_d = split_fit_val(f["Date"].unique(), calendar, embargo=embargo)
     fm, vm = f["Date"].isin(set(fit_d)).to_numpy(), f["Date"].isin(set(val_d)).to_numpy()
     X = f[feats].astype(np.float32).reset_index(drop=True)
     y = f[target].to_numpy(dtype=np.float32)
@@ -230,19 +230,23 @@ def predict_ensemble(models: dict, frame: pd.DataFrame, feats: list) -> np.ndarr
 
 
 def walk_forward(frame: pd.DataFrame, feats: list, target: str, calendar, years=TEST_YEARS,
-                 models=MODEL_NAMES, log=print) -> tuple[pd.DataFrame, list]:
+                 models=MODEL_NAMES, log=print, embargo: int = EMBARGO_SESSIONS,
+                 fit_fn=None) -> tuple[pd.DataFrame, list]:
     """Out-of-sample predictions for every weekly date of each test year."""
     preds, folds = [], []
     for y in years:
         start = f"{y}-01-01"
-        tr_dates = train_window_dates(frame["Date"].unique(), calendar, start)
+        tr_dates = train_window_dates(frame["Date"].unique(), calendar, start, embargo=embargo)
         te = frame[(frame["Date"] >= start) & (frame["Date"] <= f"{y}-12-31")]
         if te.empty or not tr_dates:
             continue
         tr = frame[frame["Date"].isin(set(tr_dates))]
         log(f"  fold {y}: train {tr_dates[0]}..{tr_dates[-1]} ({len(tr):,} rows), "
             f"test {te['Date'].min()}..{te['Date'].max()} ({len(te):,} rows)")
-        ms, info = fit_ensemble(tr, feats, target, calendar, models=models, log=log)
+        if fit_fn is None:
+            ms, info = fit_ensemble(tr, feats, target, calendar, models=models, log=log, embargo=embargo)
+        else:
+            ms, info = fit_fn(tr, feats, target, calendar, log=log)
         p = predict_ensemble(ms, te, feats)
         preds.append(pd.DataFrame({"ticker": te["ticker"].to_numpy(), "Date": te["Date"].to_numpy(),
                                    "pred": p, "fold": y}))
@@ -286,7 +290,12 @@ def r4_all_columns() -> list:
     return list(ds.FEATURE_COLUMNS) + fund_columns() + [c for b in ("sue", "resmom", "lvq") for c in BLOCK_COLUMNS[b]]
 
 
+R6_EDGAR_NAMES = {"mh", "stack", "sn05_fund", "sn21_fund", "sn63_fund"}
+
+
 def variant_dataset(name: str) -> str:
+    if name in R6_EDGAR_NAMES:
+        return ds.EDGAR_DATASET
     if name in _r4_variants():
         from .signals import R4_DATASET
         return R4_DATASET

@@ -51,7 +51,7 @@ def test_walk_forward_never_sees_test_dates(monkeypatch):
         def predict(self, X):
             return np.asarray(X)[:, 0]
 
-    def fake_fit(frame, feats, target, calendar, models=None, refit=True, log=print):
+    def fake_fit(frame, feats, target, calendar, models=None, refit=True, log=print, embargo=None):
         seen.append(sorted(frame["Date"].unique()))
         return {"m": Dummy()}, {"best_iter": {}}
 
