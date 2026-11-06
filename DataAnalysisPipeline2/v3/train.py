@@ -348,4 +348,5 @@ if __name__ == "__main__":
         w.to_parquet(weekly_path(a.dataset), index=False)
         print(f"weekly frame: {len(w):,} rows, {w['Date'].nunique()} dates")
     else:
-        run_variant(a.variant)
+        from .gate import R4_MODELS
+        run_variant(a.variant, models=R4_MODELS.get(a.variant, MODEL_NAMES))

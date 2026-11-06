@@ -236,3 +236,11 @@ def choose_construction_r4(perf: dict) -> str:
     ok = {k: v for k, v in perf.items() if k in R4_CONSTRUCTIONS and v["max_dd"] >= MAX_DD_FLOOR}
     pool = ok or {k: v for k, v in perf.items() if k in R4_CONSTRUCTIONS}
     return max(pool, key=lambda k: pool[k]["sharpe"])
+
+# Round 4 amendment (committed while dataset_r4 was still being built, before
+# any round-4 model was trained or evaluated): an LGBM-only check of the
+# all-blocks recipe, as one more candidate. Trial count updated accordingly.
+R4_VARIANTS["sn30_all_lgbm"] = ("target_sn_30", ("resmom", "sue", "lvq"))
+R4_MODELS = {"sn30_all_lgbm": ("lgbm",)}
+R4_CANDIDATES = R4_CANDIDATES + ("sn30_all_lgbm",)
+N_TRIALS_R4 = N_TRIALS_R3 + len(R4_VARIANTS) * len(R4_CONSTRUCTIONS)   # 43 + 12 = 55
