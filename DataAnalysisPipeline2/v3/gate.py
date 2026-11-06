@@ -513,3 +513,26 @@ def choose_config_r8(perf: dict) -> str:
     ok = {k: v for k, v in perf.items() if k in R8_SIGNALS and v["max_dd"] >= MAX_DD_FLOOR}
     pool = ok or {k: v for k, v in perf.items() if k in R8_SIGNALS}
     return max(pool, key=lambda k: pool[k]["ir_spy"])
+
+# Round 8 correction (registered after the first round-8 pass revealed a
+# survivorship leak in the insider block, BEFORE re-running): names without a
+# CIK mapping (mostly future delisters) had exactly zero insider activity, so
+# the block identified "no EDGAR record" with AUC 0.849 (core+fund 0.700 ->
+# +insider 0.901). The first-pass insider configs (sn30_ins, sn30_altall,
+# stack_r8) are therefore INVALID as evidence; they stay counted as trials but
+# are not eligible for selection. Correction: for eligible rows without a CIK,
+# the whole insider vector is copied from a same-date donor with a CIK among its
+# 5 nearest neighbours on (log dollar volume, 20d vol, 20d and 50d return) --
+# the round-2 fundamentals hot-deck -- and the three configs are re-run
+# ("_hd" suffix): +3 trials.
+R8_INVALID = ("sn30_ins", "sn30_altall", "stack_r8")
+R8_CORRECTED = ("sn30_ins_hd", "sn30_altall_hd", "stack_r8_hd")
+R8_VARIANTS.update({"sn30_ins_hd": ("insider",), "sn30_altall_hd": ("insider", "si")})
+N_TRIALS_R8 = N_TRIALS_R7 + len(R8_SIGNALS) + len(R8_CORRECTED)      # 85 + 4 + 3 = 92
+R8_ELIGIBLE = ("sn30_si",) + R8_CORRECTED
+
+
+def choose_config_r8(perf: dict) -> str:   # noqa: F811 -- the correction redefines the eligible set
+    ok = {k: v for k, v in perf.items() if k in R8_ELIGIBLE and v["max_dd"] >= MAX_DD_FLOOR}
+    pool = ok or {k: v for k, v in perf.items() if k in R8_ELIGIBLE}
+    return max(pool, key=lambda k: pool[k]["ir_spy"])

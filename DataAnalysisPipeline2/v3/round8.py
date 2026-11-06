@@ -32,13 +32,48 @@ def frame_path() -> str:
     return tr.weekly_path(R8_DATASET)
 
 
+HD_COLS = [f"{c}_hd" for c in ad.INSIDER_COLUMNS]
+HD_MATCH = ["log_dollar_volume_20d", "ret_vol_20d", "return_20d", "return_50d"]
+
+
+def insider_hotdeck(w: pd.DataFrame, k: int = 5) -> pd.DataFrame:
+    """Round-8 correction: rows without a CIK get the full insider vector of a
+    same-date donor with a CIK among its k nearest neighbours on HD_MATCH
+    (deterministic hash pick). Returns the corrected insider block (raw units)."""
+    vals = w[ad.INSIDER_COLUMNS].to_numpy(dtype=float).copy()
+    has = w["cik"].notna().to_numpy()
+    M = w[HD_MATCH].to_numpy(dtype=float)
+    dates = w["Date"].to_numpy().astype(str)
+    tick = w["ticker"].to_numpy().astype(str)
+    order = np.argsort(dates, kind="mergesort")
+    ud, starts = np.unique(dates[order], return_index=True)
+    bounds = list(starts) + [len(order)]
+    for i, d in enumerate(ud):
+        idx = order[bounds[i]:bounds[i + 1]]
+        if not np.isfinite(vals[idx, 0]).any():          # after the insider data end: stays missing
+            continue
+        donors, rec = idx[has[idx]], idx[~has[idx]]
+        if len(donors) == 0 or len(rec) == 0:
+            continue
+        Xd, Xr = np.nan_to_num(M[donors]), np.nan_to_num(M[rec])
+        d2 = (Xr ** 2).sum(1)[:, None] + (Xd ** 2).sum(1)[None, :] - 2.0 * Xr @ Xd.T
+        kk = min(k, len(donors))
+        nn = np.argpartition(d2, kk - 1, axis=1)[:, :kk]
+        nn = np.take_along_axis(nn, np.argsort(np.take_along_axis(d2, nn, axis=1), axis=1, kind="stable"), axis=1)
+        h = ds._stable_u64([f"{tick[r]}|{d}" for r in rec])
+        vals[rec] = vals[donors[nn[np.arange(len(rec)), (h % np.uint64(kk)).astype(np.int64)]]]
+    return pd.DataFrame(vals, columns=HD_COLS, index=w.index)
+
+
 def build_frame(log=print) -> pd.DataFrame:
     """weekly_mh (eligible rows, z-scored core + fundamentals, labels) + the
     round-8 blocks z-scored per date over the same rows."""
     w = pd.read_parquet(r6.mh_path())
-    alt = pd.read_parquet(os.path.join(ds.v3_dir(), "alt_weekly.parquet"), columns=["ticker", "Date"] + ALT_COLS)
+    alt = pd.read_parquet(os.path.join(ds.v3_dir(), "alt_weekly.parquet"),
+                          columns=["ticker", "Date", "cik"] + ALT_COLS)
     w = w.merge(alt, on=["ticker", "Date"], how="left")
-    w[ALT_COLS] = core.cross_sectional_zscore(w, ALT_COLS)
+    w[HD_COLS] = insider_hotdeck(w)
+    w[ALT_COLS + HD_COLS] = core.cross_sectional_zscore(w, ALT_COLS + HD_COLS)
     w.to_parquet(frame_path(), index=False)
     log(f"[r8] frame: {len(w):,} rows; SI coverage before z {alt['si_ratio'].notna().mean():.1%}")
     return w
@@ -46,13 +81,17 @@ def build_frame(log=print) -> pd.DataFrame:
 
 def feats_for(name: str) -> list:
     blocks = gate.R8_VARIANTS[name]
-    return list(ds.FEATURE_COLUMNS) + tr.fund_columns() + [c for b in blocks for c in ad.BLOCKS[b]]
+    hd = name.endswith("_hd")
+    cols = [c for b in blocks for c in ad.BLOCKS[b]]
+    if hd:
+        cols = [f"{c}_hd" if c in ad.INSIDER_COLUMNS else c for c in cols]
+    return list(ds.FEATURE_COLUMNS) + tr.fund_columns() + cols
 
 
-def run_wf(log=print) -> None:
+def run_wf(log=print, names=None) -> None:
     w = pd.read_parquet(frame_path())
     cal = ds.calendar_from_dataset()
-    for name in gate.R8_VARIANTS:
+    for name in names or [v for v in gate.R8_VARIANTS if not v.endswith("_hd")]:
         t0 = time.time()
         preds, folds = tr.walk_forward(w, feats_for(name), "target_sn_30", cal, log=log)
         preds.to_parquet(os.path.join(ds.v3_dir("wf"), f"{name}.parquet"), index=False)
@@ -67,10 +106,12 @@ def signal_ic(preds: pd.DataFrame, lab: pd.DataFrame) -> dict:
             "by_year": s.groupby(s.index.str[:4]).mean().round(4).to_dict()}
 
 
-def run_stack(log=print) -> dict:
+def run_stack(log=print, corrected: bool = False) -> dict:
     """Round-6 stack + the best round-8 variant (highest walk-forward mean IC) as a sixth input."""
     lab = pd.read_parquet(r6.mh_path(), columns=["ticker", "Date", "fwd_ret_30", "target_sn_30"])
-    ics = {v: signal_ic(ex.load_preds(v), lab)["mean_ic"] for v in gate.R8_VARIANTS}
+    pool = ("sn30_ins_hd", "sn30_si", "sn30_altall_hd") if corrected else ("sn30_ins", "sn30_si", "sn30_altall")
+    name = "stack_r8_hd" if corrected else gate.R8_STACK
+    ics = {v: signal_ic(ex.load_preds(v), lab)["mean_ic"] for v in pool}
     best = max(ics, key=ics.get)
     inputs = list(r6.STACK_INPUTS) + [best]
     cal = ds.calendar_from_dataset()
@@ -97,10 +138,9 @@ def run_stack(log=print) -> dict:
             score = r.predict(te[inputs].to_numpy())
             coefs[y] = dict(zip(inputs, map(float, r.coef_)))
         out.append(te[["ticker", "Date"]].assign(pred=score, fold=y))
-    pd.concat(out, ignore_index=True).to_parquet(os.path.join(ds.v3_dir("wf"), f"{gate.R8_STACK}.parquet"),
-                                                 index=False)
+    pd.concat(out, ignore_index=True).to_parquet(os.path.join(ds.v3_dir("wf"), f"{name}.parquet"), index=False)
     info = {"variant_ics": ics, "best": best, "inputs": inputs, "coefs": coefs}
-    json.dump(info, open(ex.eval_dir("r8_stack.json"), "w"), indent=1)
+    json.dump(info, open(ex.eval_dir(f"r8_{name}.json"), "w"), indent=1)
     log(f"[r8] stack_r8 inputs {inputs}; variant ICs {ics}")
     return info
 
@@ -153,13 +193,14 @@ def prep_with(preds: pd.DataFrame, base: dict) -> dict:
     return prep
 
 
-def run_books(log=print) -> dict:
+def run_books(log=print, signals=None) -> dict:
     base = r5.load_prep()
     spy = ex.spy_returns()
     ew = pd.read_parquet(ex.eval_dir("ew_universe_daily.parquet"))["ret"]
     cw = r5._load_run("cw_all_100m")[0]
-    res = {"configs": {}, "trials": {}}
-    for sig in gate.R8_SIGNALS:
+    p = ex.eval_dir("results_r8.json")
+    res = json.load(open(p)) if (signals and os.path.exists(p)) else {"configs": {}, "trials": {}}
+    for sig in signals or gate.R8_SIGNALS:
         t0 = time.time()
         out = r5.run_config("mv_abs_all", gate.R5_PRIMARY_AUM, prep_with(ex.load_preds(sig), base), log=log)
         m = r5.metrics(out["ret"], out["log"], spy, ew, cw)
@@ -184,7 +225,7 @@ def apply_gate(log=print) -> dict:
     choice = gate.choose_config_r8(perf)
     lab = pd.read_parquet(r6.mh_path(), columns=["ticker", "Date", "fwd_ret_30", "Sector"])
     sigs = {}
-    for v in gate.R8_SIGNALS + ("sn30_fund", "stack"):
+    for v in gate.R8_SIGNALS + gate.R8_CORRECTED + ("sn30_fund", "stack"):
         p = ex.load_preds(v)
         pdx = ev.per_date_signal(p.merge(lab, on=["ticker", "Date"]), "pred", "fwd_ret_30")
         s = ev.signal_summary(pdx, nw_lags=gate.NW_LAGS)
@@ -219,6 +260,9 @@ def apply_gate(log=print) -> dict:
 if __name__ == "__main__":
     import sys
     steps = {"frame": build_frame, "wf": run_wf, "stack": run_stack, "ics": feature_ics, "books": run_books,
-             "gate": apply_gate}
+             "gate": apply_gate,
+             "wf_hd": lambda: run_wf(names=["sn30_ins_hd", "sn30_altall_hd"]),
+             "stack_hd": lambda: run_stack(corrected=True),
+             "books_hd": lambda: run_books(signals=list(gate.R8_CORRECTED))}
     for a in sys.argv[1:]:
         steps[a]()

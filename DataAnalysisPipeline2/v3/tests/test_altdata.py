@@ -96,3 +96,23 @@ def test_si_features_pit_and_symbol_reuse_guard():
     assert np.isclose(f.iloc[1]["si_ratio"], 0.05) and np.isclose(f.iloc[1]["si_chg"], 0.25)
     assert np.isclose(f.iloc[2]["si_ratio"], 0.08) and f.iloc[2]["si_dtc"] == 3.0   # 01-30 settle avail 02-11
     assert f.iloc[3].isna().all()                                    # settled before this listing began
+
+
+def test_insider_hotdeck_copies_mapped_donor_and_keeps_missing():
+    from DataAnalysisPipeline2.v3 import round8 as r8
+    rng = np.random.default_rng(0)
+    n = 12
+    w = pd.DataFrame({"ticker": [f"T{i}" for i in range(n)] * 2, "Date": ["2025-01-03"] * n + ["2026-05-01"] * n,
+                      "cik": ([1.0] * 8 + [np.nan] * 4) * 2})
+    for c in r8.HD_MATCH:
+        w[c] = rng.normal(size=2 * n)
+    for c in ad.INSIDER_COLUMNS:
+        w[c] = np.r_[rng.integers(0, 5, 8), np.zeros(4), np.full(n, np.nan)].astype(float)
+    hd = r8.insider_hotdeck(w)
+    first = w["Date"] == "2025-01-03"
+    rec = first & w["cik"].isna()
+    donors = w.loc[first & w["cik"].notna(), ad.INSIDER_COLUMNS].to_numpy()
+    for v in hd.loc[rec].to_numpy():                       # every recipient carries a donor's full vector
+        assert any(np.allclose(v, d) for d in donors)
+    assert np.allclose(hd.loc[first & w["cik"].notna()].to_numpy(), donors)   # mapped rows untouched
+    assert hd.loc[~first].isna().all().all()                # after the data end: still missing
