@@ -767,9 +767,158 @@ survivorship-free store (same folds/books): only that can say whether v2's recen
 It needs the v2 training pipeline, which is not in this branch."""
 
 
+# =========================================================================== #
+# Round 6: signal side (multi-horizon, stacking, v2-recipe walk-forward)
+# =========================================================================== #
+R6_MARK = "\n## Round 6 — multi-horizon, stacking and the v2-recipe walk-forward"
+
+
+def _gt(rows):
+    return md_table(pd.DataFrame([{"#": x["id"], "criterion": x["criterion"],
+                                   "value": (_f(x["value"], 4) if isinstance(x["value"], float) else x["value"]),
+                                   "threshold": x["threshold"], "result": "PASS" if x["pass"] else "FAIL"}
+                                  for x in rows]), index=False)
+
+
+def write_r6() -> None:
+    r6 = json.load(open(ex.eval_dir("results_r6.json")))
+    g = json.load(open(ex.eval_dir("gate_r6.json")))
+    pc = json.load(open(ex.eval_dir("r6_population_check.json")))
+    W = pd.read_csv(ex.eval_dir("r6_mh_weights.csv"))
+    coefs = json.load(open(ex.eval_dir("r6_stack_coefs.json")))
+    r3j = json.load(open(ex.eval_dir("results_r3.json")))
+    r2 = json.load(open(ex.eval_dir("results_r2.json")))
+    L = [R6_MARK + "\n"]
+    L.append(f"Pre-registered in `v3/gate.py` (round 6 + amendment) before any round-6 evaluation; trials counted "
+             f"on top of Round 5 (N_TRIALS_R5 = {getattr(gate, 'N_TRIALS_R5', 'n/a')}) → **N = {g['n_trials']}**, "
+             "with Round 5's per-trial Sharpe ratios included in the DSR dispersion. Code: `v3/round6.py` "
+             "(tests `v3/tests/test_round6.py`), `v3/estimates.py` (tests `v3/tests/test_estimates.py`).\n")
+    L.append("### Verdict (round 6)\n")
+    L.append(f"**FAIL — not promoted.** Neither new candidate clears +{gate.SWITCH_MIN_IC_GAIN} IC over `sn30_fund` "
+             f"(multi-horizon +{r6['signal']['mh']['fwd_ret_30']['all']['mean_ic'] - r6['signal']['sn30_fund']['fwd_ret_30']['all']['mean_ic']:.4f}, "
+             f"stacking +{r6['signal']['stack']['fwd_ret_30']['all']['mean_ic'] - r6['signal']['sn30_fund']['fwd_ret_30']['all']['mean_ic']:.4f}), "
+             f"so the incumbent `{g['variant']}` / `{g['construction']}` is re-gated with N = {g['n_trials']} and the "
+             "conditional `mv_abs_all` run was not triggered.\n")
+    L.append(_gt(g["gate"]) + "\n")
+
+    L.append("### Signal tables (weekly OOS 2019–2026, v3-eligible universe unless noted)\n")
+    rows = []
+    for v in ("sn30_fund", "sn05_fund", "sn21_fund", "sn63_fund", "mh", "stack"):
+        s = r6["signal"][v]
+        a = s["fwd_ret_30"]["all"]
+        t = r6["top1000"][v]["all"]
+        rows.append({"signal": v, "IC 30d": _f(a["mean_ic"], 4), "NW t": _f(a["nw_t"]),
+                     "IC 21d": _f(s["fwd_ret_21"]["all"]["mean_ic"], 4), "SN-IC": _f(a["sector_neutral_ic"], 4),
+                     "decile spread": _pct(a["decile_spread"], 2),
+                     "yrs>0": f"{sum(1 for y in gate.A_YEARS if s['fwd_ret_30'].get(y, {}).get('mean_ic', -1) > 0)}/8",
+                     "top-1000 IC": _f(t["mean_ic"], 4), "top-1000 t": _f(t["nw_t"])})
+    t = r6["top1000"][gate.R6_LC_VARIANT]["all"]
+    rows.append({"signal": "lc_sn30_fund (top-1000 specialist)", "IC 30d": "", "NW t": "", "IC 21d": "", "SN-IC": "",
+                 "decile spread": "", "yrs>0": "", "top-1000 IC": _f(t["mean_ic"], 4), "top-1000 t": _f(t["nw_t"])})
+    L.append(md_table(pd.DataFrame(rows), index=False) + "\n")
+    py = pd.DataFrame({v: {y: _f(r6["signal"][v]["fwd_ret_30"][y]["mean_ic"], 3) for y in gate.A_YEARS
+                           if y in r6["signal"][v]["fwd_ret_30"]}
+                       for v in ("sn30_fund", "sn05_fund", "sn21_fund", "sn63_fund", "mh", "stack")})
+    L.append("Per-year IC (30d):\n\n" + md_table(py) + "\n")
+    dc = pd.DataFrame({v: {f"{h}d": _f(x, 4) for h, x in r6["decay"][v].items()} for v in r6["decay"]}).T
+    L.append("IC decay curve (IC of each signal vs the h-session forward return, v3-eligible rows):\n\n"
+             + md_table(dc) + "\n")
+    L.append(f"Multi-horizon composite: mean PIT weights {W.drop(columns='Date').mean().round(3).to_dict()} "
+             "(trailing-IC weights shrunk 50% to equal; equal until 26 completed IC dates). Stacking ridge "
+             "coefficients per test year: " + "; ".join(
+                 f"{y}: " + ", ".join(f"{k} {v:+.3f}" for k, v in c.items()) for y, c in coefs.items()) + ".\n")
+    L.append("All signals peak at long horizons (IC still rising at 63 sessions) — the model's information is "
+             "slow (value/quality/low-vol-like), so short-horizon models add nothing and the composite collapses "
+             "onto the 30/63-day models. Inside the top-1000 by market cap no v3 signal is significant "
+             "(t ≤ 1.8), and a specialist trained only on large caps is no better (0.016).\n")
+
+    L.append("### The decisive test: the v2 production recipe, 2019–2026\n")
+    L.append("v2 features (`features/core.py`, v2 eligibility: adjusted close ≥ $1, ≥ 80 bars, legacy sectors), "
+             "robust per-date z, SoftVote of RandomForest/CatBoost/XGBoost/LightGBM with the production "
+             "hyperparameters, raw 30-session rank target, same yearly folds/embargo; `v2rec_kg` = the ~1.4k "
+             "names/date with a production KG embedding + 16 KG PCs (the production setup), `v2rec_full` = all "
+             "~5.3k v2-eligible names/date, no KG. Deviations: weekly training dates, per-fold early stopping.\n")
+    rows = []
+    for v in ("v2rec_kg", "v2rec_full"):
+        s = r6["signal"][v]["fwd_ret_30"]
+        p = pc[v]
+        rows.append({"model": v, "IC own universe": _f(s["all"]["mean_ic"], 4), "NW t": _f(s["all"]["nw_t"]),
+                     "yrs>0": f"{sum(1 for y in gate.A_YEARS if s.get(y, {}).get('mean_ic', -1) > 0)}/8",
+                     "IC on v3-eligible rows": _f(p["v3_eligible"], 4),
+                     "IC on rows NOT v3-eligible": _f(p["outside"], 4), "share not v3-eligible": _pct(p["share_outside"], 0),
+                     "top-1000 IC (t)": f"{_f(r6['top1000'][v]['all']['mean_ic'], 4)} ({_f(r6['top1000'][v]['all']['nw_t'])})"})
+    rows.append({"model": "v3 sn30_fund (reference)", "IC own universe": _f(r6["signal"]["sn30_fund"]["fwd_ret_30"]["all"]["mean_ic"], 4),
+                 "NW t": _f(r6["signal"]["sn30_fund"]["fwd_ret_30"]["all"]["nw_t"]), "yrs>0": "7/8",
+                 "IC on v3-eligible rows": _f(r6["signal"]["sn30_fund"]["fwd_ret_30"]["all"]["mean_ic"], 4),
+                 "IC on rows NOT v3-eligible": "–", "share not v3-eligible": "0%",
+                 "top-1000 IC (t)": f"{_f(r6['top1000']['sn30_fund']['all']['mean_ic'], 4)} ({_f(r6['top1000']['sn30_fund']['all']['nw_t'])})"})
+    L.append(md_table(pd.DataFrame(rows), index=False) + "\n")
+    py = pd.DataFrame({
+        "v2rec_kg (own)": {y: _f(r6["signal"]["v2rec_kg"]["fwd_ret_30"][y]["mean_ic"], 3) for y in gate.A_YEARS},
+        "v2rec_kg (v3-elig.)": {y: _f(pc["v2rec_kg"]["v3_eligible_by_year"].get(y, float("nan")), 3) for y in gate.A_YEARS},
+        "v2rec_full (own)": {y: _f(r6["signal"]["v2rec_full"]["fwd_ret_30"][y]["mean_ic"], 3) for y in gate.A_YEARS},
+        "v2rec_full (v3-elig.)": {y: _f(pc["v2rec_full"]["v3_eligible_by_year"].get(y, float("nan")), 3) for y in gate.A_YEARS},
+        "v3 sn30_fund": {y: _f(r6["signal"]["sn30_fund"]["fwd_ret_30"][y]["mean_ic"], 3) for y in gate.A_YEARS}})
+    L.append("Per-year IC:\n\n" + md_table(py) + "\n")
+    L.append(f"On the same KG names, v3 `sn30_fund` scores {pc['sn30_fund_on_kg_names']:.4f} vs "
+             f"{pc['v2rec_kg']['v3_eligible']:.4f} for `v2rec_kg` (part of that gap may be the static KG's "
+             "look-ahead).\n")
+    brows = []
+    for k, m in [(k, b["all"]) for k, b in r6["books"].items()] + \
+            [("sn30_fund/lo30 (round 2)", r2["variants"]["sn30_fund"]["perf"]["lo30"]["all"]),
+             ("sn30_fund/flo50_k50 (round 3)", r3j["configs"]["sn30_fund/flo50_k50"]["all"]),
+             ("EW universe", r2["benchmarks"]["ew_universe"]["all"]), ("SPY", r2["benchmarks"]["spy"]["all"])]:
+        brows.append({"book": k, **_book_cols(m)})
+    L.append("Books (Feb 2019 → 2026-11-04, 10 bps/side; `lo30` = K=30, ≤5/sector (EDGAR), ≤6%, on each "
+             "model's own universe — for v2 that includes $1–3 and illiquid names):\n\n"
+             + md_table(pd.DataFrame(brows), index=False) + "\n")
+    for v, x in g["v2"].items():
+        L.append(f"Gate rows for `{v}/lo30` (information; c = IC of the 2026 fold, trained only through 2025-10, "
+                 f"on the gate-c window, own universe):\n\n" + _gt(x["rows"]) + "\n")
+    L.append("**v2 verdict.** The v2 recipe *does* have a durable edge on survivorship-free data: IC > 0 in 8/8 "
+             "years on its own universe and 7–8/8 on tradable names. But ~60% of its headline IC (0.10–0.14) "
+             "comes from the ~40% of rows that are below $3 or under $2M ADV (IC 0.14–0.18 there — mostly "
+             "identifying collapsing micro-caps, which a long book cannot monetise). On tradable (v3-eligible) "
+             "names it ranks about as well as v3 (0.064–0.073 vs 0.065), and it is the only signal with a "
+             "significant large-cap IC (top-1000: 0.028, t 2.7 for `v2rec_full`). Its K=30 books are no better "
+             "than v3's on risk (max DD −35…−37%, Sharpe 0.57–0.60, IR vs SPY −0.34…−0.46) and fail b2/b3 too.\n")
+    L.append("### Analyst estimates\n")
+    L.append("`v3/estimates.py`: `EstimatesProvider` interface, `FMPEstimates` (FMP `analyst-estimates`, quarterly; "
+             "reads `FMP_API_KEY` from env or `trading_agent/.env`; **disabled without a key** — returns empty "
+             "frames, no network), `SnapshotStore` (append-only daily snapshots — vendors only serve the *current* "
+             "consensus, so PIT history accrues from the first snapshot) and `estimate_features` (next-quarter "
+             "consensus EPS, 1/3-month revisions of the same fiscal period, dispersion, analyst count; only "
+             "snapshots with asof ≤ Date). Not used in any model: no key, no history.\n")
+    L.append("### Recommendation (round 6)\n")
+    L.append(RECOMMENDATION_R6)
+    text = open(REPORT).read()
+    if R6_MARK in text:
+        text = text[:text.index(R6_MARK)]
+    open(REPORT, "w").write(text.rstrip() + "\n" + "\n".join(L) + "\n")
+
+
+RECOMMENDATION_R6 = """* **Nothing is promoted in round 6** (pre-registered gate: DSR fails for every candidate; N = 77).
+* **Signal for the optimizer:** the v2 recipe trained on the full survivorship-free universe
+  (`v2rec_full`: RF + GBDT SoftVote, raw 30-session target, trained on all v2-eligible names, *scored only
+  on the names the optimizer can trade*) is the best ranking we have on tradable names (IC 0.073 vs 0.065)
+  and the only one with a significant large-cap IC (0.028, t 2.7) — the place a TE-constrained book needs
+  skill. It should be the next pre-registered candidate through Round 5's `mv_abs_all` (with the IC
+  estimated on the traded universe, per Round 5's finding). Stacking (+0.004) is a cheap secondary option.
+  Multi-horizon blending and a large-cap specialist add nothing.
+* **Production today:** keep `v2final_nonews`. This round answers the open question in its favour as a
+  *signal*: the v2 recipe's edge is durable 2019–2026 and not a one-regime artefact. It does not show that
+  any long-only book from it beats SPY — keep the broad `long_only_v3` K=30 book, monitoring and quarterly
+  retrains.
+* **Data, not models, is the binding constraint:** every model peaks at long horizons and has ~no large-cap
+  skill; analyst revisions (adapter ready, needs a key + months of snapshots) and better large-cap
+  information are the most promising additions."""
+
+
 if __name__ == "__main__":
     import sys
-    if "--r4" in sys.argv:
+    if "--r6" in sys.argv:
+        write_r6()
+    elif "--r4" in sys.argv:
         build_r4()
     elif "--r3" in sys.argv:
         build_r3()

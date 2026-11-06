@@ -648,3 +648,152 @@ Next steps (each would be a new pre-registered round with N counted):
 * A small/mid-cap mandate benchmarked to a CW small/mid-cap index, where the IC lives.
 * Per-universe IC and an eigenfactor risk adjustment in the optimizer.
 * Quoted-spread data instead of Corwin-Schultz for large caps.
+
+## Round 6 — multi-horizon, stacking and the v2-recipe walk-forward
+
+Pre-registered in `v3/gate.py` (round 6 + amendment) before any round-6 evaluation; trials counted on top of Round 5 (N_TRIALS_R5 = 71) → **N = 77**, with Round 5's per-trial Sharpe ratios included in the DSR dispersion. Code: `v3/round6.py` (tests `v3/tests/test_round6.py`), `v3/estimates.py` (tests `v3/tests/test_estimates.py`).
+
+### Verdict (round 6)
+
+**FAIL — not promoted.** Neither new candidate clears +0.005 IC over `sn30_fund` (multi-horizon +0.0003, stacking +0.0041), so the incumbent `sn30_fund` / `flo50_k50` is re-gated with N = 77 and the conditional `mv_abs_all` run was not triggered.
+
+| # | criterion | value | threshold | result |
+|---|---|---|---|---|
+| a1 | mean weekly IC > 0 | 0.0653 | > 0 | PASS |
+| a2 | Newey-West t of IC | 4.8123 | > 2.0 | PASS |
+| a3 | years with IC > 0 | 7 | >= 6 of 8 | PASS |
+| b1 | Sharpe(chosen) vs Sharpe(EW universe) | 0.5809 | > 0.477 | PASS |
+| b2 | max drawdown | -0.3445 | >= -0.35 | PASS |
+| b3 | Deflated Sharpe prob (N=77) | 0.5188 | >= 0.9 | FAIL |
+| c1 | holdout IC 2026-07-15..2026-09-23 | 0.1426 | >= 0.12 | PASS |
+
+### Signal tables (weekly OOS 2019–2026, v3-eligible universe unless noted)
+
+| signal | IC 30d | NW t | IC 21d | SN-IC | decile spread | yrs>0 | top-1000 IC | top-1000 t |
+|---|---|---|---|---|---|---|---|---|
+| sn30_fund | 0.0653 | 4.81 | 0.0582 | 0.0616 | 1.91% | 7/8 | 0.0134 | 1.02 |
+| sn05_fund | 0.0626 | 5.66 | 0.0574 | 0.0582 | 1.86% | 8/8 | 0.0186 | 1.79 |
+| sn21_fund | 0.0637 | 5.02 | 0.0567 | 0.0602 | 1.93% | 7/8 | 0.0145 | 1.13 |
+| sn63_fund | 0.0636 | 4.33 | 0.0559 | 0.0600 | 1.69% | 7/8 | 0.0084 | 0.57 |
+| mh | 0.0656 | 4.80 | 0.0586 | 0.0623 | 1.88% | 7/8 | 0.0150 | 1.12 |
+| stack | 0.0694 | 5.20 | 0.0613 | 0.0656 | 2.19% | 7/8 | 0.0211 | 1.83 |
+| lc_sn30_fund (top-1000 specialist) |  |  |  |  |  |  | 0.0158 | 1.25 |
+
+Per-year IC (30d):
+
+| index | sn30_fund | sn05_fund | sn21_fund | sn63_fund | mh | stack |
+|---|---|---|---|---|---|---|
+| 2019 | 0.067 | 0.079 | 0.071 | 0.060 | 0.072 | 0.072 |
+| 2020 | -0.013 | 0.009 | -0.009 | -0.019 | -0.011 | -0.017 |
+| 2021 | 0.121 | 0.098 | 0.109 | 0.116 | 0.116 | 0.135 |
+| 2022 | 0.072 | 0.050 | 0.067 | 0.074 | 0.070 | 0.076 |
+| 2023 | 0.095 | 0.082 | 0.092 | 0.094 | 0.094 | 0.095 |
+| 2024 | 0.080 | 0.075 | 0.077 | 0.084 | 0.082 | 0.079 |
+| 2025 | 0.025 | 0.035 | 0.027 | 0.026 | 0.027 | 0.037 |
+| 2026 | 0.082 | 0.078 | 0.081 | 0.080 | 0.081 | 0.084 |
+
+IC decay curve (IC of each signal vs the h-session forward return, v3-eligible rows):
+
+| index | 1d | 5d | 10d | 21d | 42d | 63d |
+|---|---|---|---|---|---|---|
+| sn30_fund | 0.0238 | 0.0438 | 0.0500 | 0.0582 | 0.0725 | 0.0840 |
+| sn05_fund | 0.0241 | 0.0444 | 0.0498 | 0.0574 | 0.0648 | 0.0703 |
+| sn21_fund | 0.0225 | 0.0414 | 0.0477 | 0.0567 | 0.0713 | 0.0823 |
+| sn63_fund | 0.0208 | 0.0403 | 0.0464 | 0.0559 | 0.0697 | 0.0797 |
+| mh | 0.0234 | 0.0438 | 0.0500 | 0.0586 | 0.0717 | 0.0815 |
+| stack | 0.0234 | 0.0436 | 0.0507 | 0.0613 | 0.0772 | 0.0885 |
+| lc_sn30_fund | 0.0051 | 0.0168 | 0.0182 | 0.0134 | 0.0213 | 0.0254 |
+| v2rec_kg | 0.0227 | 0.0428 | 0.0505 | 0.0599 | 0.0686 | 0.0797 |
+| v2rec_full | 0.0260 | 0.0441 | 0.0509 | 0.0620 | 0.0804 | 0.0913 |
+
+Multi-horizon composite: mean PIT weights {'w5': 0.226, 'w21': 0.238, 'w30': 0.254, 'w63': 0.281} (trailing-IC weights shrunk 50% to equal; equal until 26 completed IC dates). Stacking ridge coefficients per test year: 2019: base +0.200, sn30_fund +0.200, sn30_sue +0.200, sn30_resmom +0.200, sn30_lvq +0.200; 2020: base +0.043, sn30_fund +0.028, sn30_sue +0.027, sn30_resmom -0.066, sn30_lvq +0.062; 2021: base +0.033, sn30_fund +0.018, sn30_sue +0.031, sn30_resmom -0.049, sn30_lvq +0.026; 2022: base +0.030, sn30_fund +0.004, sn30_sue +0.025, sn30_resmom -0.041, sn30_lvq +0.048; 2023: base +0.037, sn30_fund -0.016, sn30_sue +0.049, sn30_resmom -0.029, sn30_lvq +0.040; 2024: base +0.034, sn30_fund -0.015, sn30_sue +0.048, sn30_resmom -0.029, sn30_lvq +0.046; 2025: base +0.036, sn30_fund -0.004, sn30_sue +0.040, sn30_resmom -0.027, sn30_lvq +0.040; 2026: base +0.038, sn30_fund -0.002, sn30_sue +0.041, sn30_resmom -0.031, sn30_lvq +0.035.
+
+All signals peak at long horizons (IC still rising at 63 sessions) — the model's information is slow (value/quality/low-vol-like), so short-horizon models add nothing and the composite collapses onto the 30/63-day models. Inside the top-1000 by market cap no v3 signal is significant (t ≤ 1.8), and a specialist trained only on large caps is no better (0.016).
+
+### The decisive test: the v2 production recipe, 2019–2026
+
+v2 features (`features/core.py`, v2 eligibility: adjusted close ≥ $1, ≥ 80 bars, legacy sectors), robust per-date z, SoftVote of RandomForest/CatBoost/XGBoost/LightGBM with the production hyperparameters, raw 30-session rank target, same yearly folds/embargo; `v2rec_kg` = the ~1.4k names/date with a production KG embedding + 16 KG PCs (the production setup), `v2rec_full` = all ~5.3k v2-eligible names/date, no KG. Deviations: weekly training dates, per-fold early stopping.
+
+| model | IC own universe | NW t | yrs>0 | IC on v3-eligible rows | IC on rows NOT v3-eligible | share not v3-eligible | top-1000 IC (t) |
+|---|---|---|---|---|---|---|---|
+| v2rec_kg | 0.1049 | 7.92 | 8/8 | 0.0643 | 0.1377 | 40% | 0.0240 (1.63) |
+| v2rec_full | 0.1439 | 9.46 | 8/8 | 0.0725 | 0.1767 | 43% | 0.0278 (2.74) |
+| v3 sn30_fund (reference) | 0.0653 | 4.81 | 7/8 | 0.0653 | – | 0% | 0.0134 (1.02) |
+
+Per-year IC:
+
+| index | v2rec_kg (own) | v2rec_kg (v3-elig.) | v2rec_full (own) | v2rec_full (v3-elig.) | v3 sn30_fund |
+|---|---|---|---|---|---|
+| 2019 | 0.123 | 0.078 | 0.137 | 0.087 | 0.067 |
+| 2020 | 0.020 | 0.015 | 0.009 | -0.013 | -0.013 |
+| 2021 | 0.118 | 0.109 | 0.179 | 0.162 | 0.121 |
+| 2022 | 0.101 | 0.058 | 0.128 | 0.067 | 0.072 |
+| 2023 | 0.142 | 0.104 | 0.184 | 0.083 | 0.095 |
+| 2024 | 0.128 | 0.077 | 0.179 | 0.085 | 0.080 |
+| 2025 | 0.088 | 0.020 | 0.148 | 0.036 | 0.025 |
+| 2026 | 0.128 | 0.048 | 0.206 | 0.076 | 0.082 |
+
+On the same KG names, v3 `sn30_fund` scores 0.0517 vs 0.0643 for `v2rec_kg` (part of that gap may be the static KG's look-ahead).
+
+Books (Feb 2019 → 2026-11-04, 10 bps/side; `lo30` = K=30, ≤5/sector (EDGAR), ≤6%, on each model's own universe — for v2 that includes $1–3 and illiquid names):
+
+| book | CAGR | vol | Sharpe | maxDD | maxDD ex Feb–Apr 2020 | IR vs SPY | IR vs EW | turnover/reb |
+|---|---|---|---|---|---|---|---|---|
+| mh/flo50_k50 | 8.7% | 18.9% | 0.54 | -32.9% | -30.7% | -0.71 | -0.08 | 65% |
+| mh/flo50_k30 | 8.9% | 19.2% | 0.54 | -31.6% | -31.0% | -0.63 | -0.06 | 71% |
+| stack/flo50_k50 | 9.4% | 19.1% | 0.57 | -36.2% | -25.3% | -0.64 | -0.03 | 71% |
+| stack/flo50_k30 | 8.6% | 19.7% | 0.52 | -36.7% | -31.0% | -0.67 | -0.08 | 78% |
+| v2rec_kg/lo30 | 11.0% | 22.9% | 0.57 | -37.1% | -29.6% | -0.34 | 0.17 | 60% |
+| v2rec_full/lo30 | 10.5% | 20.0% | 0.60 | -35.1% | -33.6% | -0.46 | 0.06 | 82% |
+| sn30_fund/lo30 (round 2) | 8.4% | 19.2% | 0.52 | -34.4% |  | -0.66 | -0.09 | 65% |
+| sn30_fund/flo50_k50 (round 3) | 9.4% | 18.4% | 0.58 | -34.4% | -29.1% | -0.63 | -0.04 | 60% |
+| EW universe | 8.8% | 23.5% | 0.48 | -42.0% |  | -0.50 |  |  |
+| SPY | 16.1% | 18.9% | 0.89 | -33.8% |  |  | 0.50 |  |
+
+Gate rows for `v2rec_kg/lo30` (information; c = IC of the 2026 fold, trained only through 2025-10, on the gate-c window, own universe):
+
+| # | criterion | value | threshold | result |
+|---|---|---|---|---|
+| a1 | mean weekly IC > 0 | 0.1049 | > 0 | PASS |
+| a2 | Newey-West t of IC | 7.9169 | > 2.0 | PASS |
+| a3 | years with IC > 0 | 8 | >= 6 of 8 | PASS |
+| b1 | Sharpe(chosen) vs Sharpe(EW universe) | 0.5723 | > 0.477 | PASS |
+| b2 | max drawdown | -0.3712 | >= -0.35 | FAIL |
+| b3 | Deflated Sharpe prob (N=77) | 0.5094 | >= 0.9 | FAIL |
+| c1 | holdout IC 2026-07-15..2026-09-23 | 0.1980 | >= 0.12 | PASS |
+
+Gate rows for `v2rec_full/lo30` (information; c = IC of the 2026 fold, trained only through 2025-10, on the gate-c window, own universe):
+
+| # | criterion | value | threshold | result |
+|---|---|---|---|---|
+| a1 | mean weekly IC > 0 | 0.1439 | > 0 | PASS |
+| a2 | Newey-West t of IC | 9.4643 | > 2.0 | PASS |
+| a3 | years with IC > 0 | 8 | >= 6 of 8 | PASS |
+| b1 | Sharpe(chosen) vs Sharpe(EW universe) | 0.5989 | > 0.477 | PASS |
+| b2 | max drawdown | -0.3508 | >= -0.35 | FAIL |
+| b3 | Deflated Sharpe prob (N=77) | 0.5388 | >= 0.9 | FAIL |
+| c1 | holdout IC 2026-07-15..2026-09-23 | 0.2329 | >= 0.12 | PASS |
+
+**v2 verdict.** The v2 recipe *does* have a durable edge on survivorship-free data: IC > 0 in 8/8 years on its own universe and 7–8/8 on tradable names. But ~60% of its headline IC (0.10–0.14) comes from the ~40% of rows that are below $3 or under $2M ADV (IC 0.14–0.18 there — mostly identifying collapsing micro-caps, which a long book cannot monetise). On tradable (v3-eligible) names it ranks about as well as v3 (0.064–0.073 vs 0.065), and it is the only signal with a significant large-cap IC (top-1000: 0.028, t 2.7 for `v2rec_full`). Its K=30 books are no better than v3's on risk (max DD −35…−37%, Sharpe 0.57–0.60, IR vs SPY −0.34…−0.46) and fail b2/b3 too.
+
+### Analyst estimates
+
+`v3/estimates.py`: `EstimatesProvider` interface, `FMPEstimates` (FMP `analyst-estimates`, quarterly; reads `FMP_API_KEY` from env or `trading_agent/.env`; **disabled without a key** — returns empty frames, no network), `SnapshotStore` (append-only daily snapshots — vendors only serve the *current* consensus, so PIT history accrues from the first snapshot) and `estimate_features` (next-quarter consensus EPS, 1/3-month revisions of the same fiscal period, dispersion, analyst count; only snapshots with asof ≤ Date). Not used in any model: no key, no history.
+
+### Recommendation (round 6)
+
+* **Nothing is promoted in round 6** (pre-registered gate: DSR fails for every candidate; N = 77).
+* **Signal for the optimizer:** the v2 recipe trained on the full survivorship-free universe
+  (`v2rec_full`: RF + GBDT SoftVote, raw 30-session target, trained on all v2-eligible names, *scored only
+  on the names the optimizer can trade*) is the best ranking we have on tradable names (IC 0.073 vs 0.065)
+  and the only one with a significant large-cap IC (0.028, t 2.7) — the place a TE-constrained book needs
+  skill. It should be the next pre-registered candidate through Round 5's `mv_abs_all` (with the IC
+  estimated on the traded universe, per Round 5's finding). Stacking (+0.004) is a cheap secondary option.
+  Multi-horizon blending and a large-cap specialist add nothing.
+* **Production today:** keep `v2final_nonews`. This round answers the open question in its favour as a
+  *signal*: the v2 recipe's edge is durable 2019–2026 and not a one-regime artefact. It does not show that
+  any long-only book from it beats SPY — keep the broad `long_only_v3` K=30 book, monitoring and quarterly
+  retrains.
+* **Data, not models, is the binding constraint:** every model peaks at long horizons and has ~no large-cap
+  skill; analyst revisions (adapter ready, needs a key + months of snapshots) and better large-cap
+  information are the most promising additions.

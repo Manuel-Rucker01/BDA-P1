@@ -323,6 +323,58 @@ def run_v2(universe: str, log=print) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Large caps: top-N by market cap (amendment)
+# --------------------------------------------------------------------------- #
+def topn_path() -> str:
+    return os.path.join(ds.v3_dir(), "weekly_top1000.parquet")
+
+
+def build_topn(n: int = gate.R6_TOP_N) -> pd.DataFrame:
+    """Per weekly date: the v3-eligible names in the top-n by EDGAR market cap
+    (raw close x shares as filed; hot-deck value where unmapped)."""
+    w = pd.read_parquet(tr.weekly_path(ds.EDGAR_DATASET), columns=["ticker", "Date"])
+    dates = sorted(w["Date"].unique())
+    raw = pd.concat([ds.load_daily(years=[y], dates=[d for d in dates if d[:4] == str(y)],
+                                   out_dir=ds.v3_dir(ds.EDGAR_DATASET), columns=["ticker", "Date", "log_mcap"])
+                     for y in sorted({int(d[:4]) for d in dates})], ignore_index=True)
+    m = w.merge(raw, on=["ticker", "Date"], how="left")
+    m["rk"] = m.groupby("Date")["log_mcap"].rank(ascending=False, method="first")
+    top = m[m["rk"] <= n][["ticker", "Date"]]
+    top.to_parquet(topn_path(), index=False)
+    return top
+
+
+def run_lc(log=print) -> None:
+    """Large-cap specialist: sn30_fund recipe trained / z-scored / ranked within the top-1000."""
+    top = build_topn()
+    w = pd.read_parquet(mh_path()).merge(top, on=["ticker", "Date"], how="inner").reset_index(drop=True)
+    feats = list(ds.FEATURE_COLUMNS) + tr.fund_columns()
+    w[feats] = core.cross_sectional_zscore(w, feats)
+    y = w["fwd_ret_30"]
+    ok = y.notna()
+    dm = y - w.groupby(["Date", "Sector"])["fwd_ret_30"].transform("mean")
+    w["target_lc"] = np.nan
+    w.loc[ok, "target_lc"] = dm[ok].groupby(w.loc[ok, "Date"]).rank(pct=True)
+    cal = ds.calendar_from_dataset()
+    t0 = time.time()
+    preds, folds = tr.walk_forward(w, feats, "target_lc", cal, log=log)
+    preds.to_parquet(_wf_dir(f"{gate.R6_LC_VARIANT}.parquet"), index=False)
+    json.dump({"variant": gate.R6_LC_VARIANT, "folds": folds, "seconds": round(time.time() - t0)},
+              open(_wf_dir(f"{gate.R6_LC_VARIANT}.json"), "w"), indent=1, default=str)
+    log(f"[r6] {gate.R6_LC_VARIANT} done in {time.time() - t0:.0f}s")
+
+
+def ic_within(p: pd.DataFrame, lab: pd.DataFrame, top: pd.DataFrame, col: str = "fwd_ret_30") -> dict:
+    """Mean weekly IC (and NW t) of ``p`` re-ranked within the top-N set, overall and per year."""
+    q = p.merge(top, on=["ticker", "Date"], how="inner")
+    s = per_date_ic(q, lab, col).dropna()
+    out = {"all": {"mean_ic": float(s.mean()), "nw_t": ev.newey_west_t(s, gate.NW_LAGS), "n_dates": int(len(s))}}
+    for y, g in s.groupby(s.index.str[:4]):
+        out[y] = {"mean_ic": float(g.mean())}
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # Evaluation
 # --------------------------------------------------------------------------- #
 def decay_curve(p: pd.DataFrame, lab: pd.DataFrame) -> dict:
@@ -339,12 +391,19 @@ def evaluate(log=print) -> dict:
     cal = ds.calendar_from_dataset()
     res = {"signal": {}, "decay": {}, "books": {}, "trials": {}}
     sig_vars = ["sn30_fund", "sn05_fund", "sn21_fund", "sn63_fund", "mh", "stack"]
+    top = pd.read_parquet(topn_path())
+    res["top1000"] = {}
     for v in sig_vars:
         p = ex.load_preds(v)
         s = ex.signal_tables(p, wk.assign(sector_source="", company_close=np.nan, return_volatility_20d=np.nan))
         res["signal"][v] = {k: t.to_dict(orient="index") for k, t in s.items()}
         res["decay"][v] = decay_curve(p, lab)
-        log(f"  {v}: IC30 {s['fwd_ret_30'].loc['all', 'mean_ic']:.4f} decay {res['decay'][v]}")
+        res["top1000"][v] = ic_within(p, lab, top)
+        log(f"  {v}: IC30 {s['fwd_ret_30'].loc['all', 'mean_ic']:.4f} top1000 {res['top1000'][v]['all']['mean_ic']:.4f}"
+            f" decay {res['decay'][v]}")
+    p = ex.load_preds(gate.R6_LC_VARIANT)
+    res["top1000"][gate.R6_LC_VARIANT] = ic_within(p, lab, top)
+    res["decay"][gate.R6_LC_VARIANT] = decay_curve(p, lab)
     # v2 recipe signal on its own universes (labels: v2 frame's fwd_ret_30; decay from mh labels where available)
     for u in ("kg", "full"):
         v = f"v2rec_{u}"
@@ -358,6 +417,7 @@ def evaluate(log=print) -> dict:
             out[labc] = ev.signal_summary(pdx, nw_lags=gate.NW_LAGS).to_dict(orient="index")
         res["signal"][v] = out
         res["decay"][v] = decay_curve(p, lab)    # decay on the rows that are also v3-eligible
+        res["top1000"][v] = ic_within(p, lab, top)
         log(f"  {v}: IC30 {out['fwd_ret_30']['all']['mean_ic']:.4f}")
     # books
     w_edgar = pd.read_parquet(tr.weekly_path(ds.EDGAR_DATASET), columns=["ticker", "Date"])
@@ -402,6 +462,97 @@ def evaluate(log=print) -> dict:
     return res
 
 
+# --------------------------------------------------------------------------- #
+# Gate (round 6)
+# --------------------------------------------------------------------------- #
+def all_trials() -> dict:
+    r2 = json.load(open(ex.eval_dir("results_r2.json")))
+    r3j = json.load(open(ex.eval_dir("results_r3.json")))
+    r4 = json.load(open(ex.eval_dir("results_r4.json")))
+    trials = dict(r2["trials"])
+    trials.update({f"r3:{k}": v for k, v in r3j["trials"].items()})
+    trials.update(r4["trials"])
+    p5 = ex.eval_dir("results_r5.json")
+    if hasattr(gate, "N_TRIALS_R5") and os.path.exists(p5):
+        trials.update({f"r5:{k}": v for k, v in json.load(open(p5))["trials"].items()})
+    trials.update(json.load(open(ex.eval_dir("results_r6.json")))["trials"])
+    return trials
+
+
+def _gate_rows(sig_all, years_ic, perf, ew_sh, ret, trials, hold_ic):
+    dsr = ev.deflated_sharpe(ret.to_numpy(), list(trials.values()), n_trials=gate.n_trials_r6())
+    rows = gate.evaluate_gate(sig_all, years_ic, perf, ew_sh, dsr["dsr"], hold_ic)
+    rows[5]["criterion"] = f"Deflated Sharpe prob (N={gate.n_trials_r6()})"
+    return rows, dsr
+
+
+def apply_gate(log=print) -> dict:
+    r2 = json.load(open(ex.eval_dir("results_r2.json")))
+    r3j = json.load(open(ex.eval_dir("results_r3.json")))
+    r6 = json.load(open(ex.eval_dir("results_r6.json")))
+    trials = all_trials()
+    assert len(trials) == gate.n_trials_r6(), f"expected {gate.n_trials_r6()} trials, got {len(trials)}"
+    ew_sh = r2["benchmarks"]["ew_universe"]["all"]["sharpe"]
+    sig = {v: {"mean_ic": r6["signal"][v]["fwd_ret_30"]["all"]["mean_ic"],
+               "nw_t": r6["signal"][v]["fwd_ret_30"]["all"]["nw_t"]} for v in ("sn30_fund",) + gate.R6_CANDIDATES}
+    variant = gate.choose_variant_r6(sig)
+    if variant == gate.R6_INCUMBENT:
+        perf = {c: r3j["configs"][f"{variant}/{c}"]["all"] for c in gate.R6_BOOKS}
+        path = lambda c: ex.eval_dir(f"r3_{variant}_{c}_daily.parquet")
+    else:
+        perf = {c: r6["books"][f"{variant}/{c}"]["all"] for c in gate.R6_BOOKS}
+        path = lambda c: ex.eval_dir(f"r6_{variant}_{c}_daily.parquet")
+    c = gate.choose_construction_r4(perf)
+    s30 = r6["signal"][variant]["fwd_ret_30"]
+    years_ic = {y: s30[y]["mean_ic"] for y in gate.A_YEARS if y in s30}
+    hold = json.load(open(ex.eval_dir(f"holdout_{variant}.json")))["mean_ic"] \
+        if os.path.exists(ex.eval_dir(f"holdout_{variant}.json")) else float("nan")
+    rows, dsr = _gate_rows(sig[variant], years_ic, perf[c], ew_sh, pd.read_parquet(path(c))["ret"], trials, hold)
+    # the decisive test: same gate rows for the v2 recipe (information; holdout proxy = weekly OOS IC of the
+    # 2026 fold -- trained only through 2025-10 -- on the gate-c window)
+    v2rows = {}
+    for u in ("kg", "full"):
+        v = f"v2rec_{u}"
+        s = r6["signal"][v]["fwd_ret_30"]
+        p = ex.load_preds(v)
+        f2 = pd.read_parquet(v2_path(u), columns=["ticker", "Date", "fwd_ret_30"])
+        hw = per_date_ic(p[(p["Date"] >= gate.C_START) & (p["Date"] <= gate.C_END)], f2, "fwd_ret_30").mean()
+        key = f"{v}/{gate.R6_V2_BOOK}"
+        rr, dd = _gate_rows({"mean_ic": s["all"]["mean_ic"], "nw_t": s["all"]["nw_t"]},
+                            {y: s[y]["mean_ic"] for y in gate.A_YEARS if y in s}, r6["books"][key]["all"], ew_sh,
+                            pd.read_parquet(ex.eval_dir(f"r6_{key.replace('/', '_')}_daily.parquet"))["ret"],
+                            trials, float(hw))
+        v2rows[v] = {"rows": rr, "dsr": dd, "holdout_proxy": float(hw)}
+    out = {"variant": variant, "construction": c, "gate": rows, "passed": all(x["pass"] for x in rows),
+           "dsr": dsr, "v2": v2rows, "n_trials": gate.n_trials_r6()}
+    json.dump(out, open(ex.eval_dir("gate_r6.json"), "w"), indent=1, default=float)
+    log(f"[r6 gate] variant={variant} construction={c} passed={out['passed']} DSR={dsr['dsr']:.3f} "
+        f"N={gate.n_trials_r6()}")
+    return out
+
+
+def population_check() -> dict:
+    """v2-recipe IC on its own universe vs on the v3-eligible rows vs outside them."""
+    lab = pd.read_parquet(mh_path(), columns=["ticker", "Date", "fwd_ret_30"])
+    out = {}
+    for u in ("kg", "full"):
+        v = f"v2rec_{u}"
+        p = ex.load_preds(v)
+        f2 = pd.read_parquet(v2_path(u), columns=["ticker", "Date", "fwd_ret_30"])
+        m = p.merge(lab[["ticker", "Date"]], on=["ticker", "Date"], how="left", indicator=True)
+        outside = m[m["_merge"] == "left_only"][["ticker", "Date", "pred"]]
+        s_v3 = per_date_ic(p, lab, "fwd_ret_30")
+        out[v] = {"own": float(per_date_ic(p, f2, "fwd_ret_30").mean()), "v3_eligible": float(s_v3.mean()),
+                  "outside": float(per_date_ic(outside, f2, "fwd_ret_30").mean()),
+                  "share_outside": float(len(outside) / len(p)),
+                  "v3_eligible_by_year": s_v3.groupby(s_v3.index.str[:4]).mean().round(4).to_dict()}
+    kg = set(tr.kg_embedding_frame(tr.default_kg_path())["ticker"])
+    p = ex.load_preds("sn30_fund")
+    out["sn30_fund_on_kg_names"] = float(per_date_ic(p[p["ticker"].isin(kg)], lab, "fwd_ret_30").mean())
+    json.dump(out, open(ex.eval_dir("r6_population_check.json"), "w"), indent=1)
+    return out
+
+
 if __name__ == "__main__":
     import sys
     cmd = sys.argv[1]
@@ -417,5 +568,10 @@ if __name__ == "__main__":
     elif cmd == "v2wf":
         for u in sys.argv[2:] or ("kg", "full"):
             run_v2(u)
+    elif cmd == "lc":
+        run_lc()
     elif cmd == "evaluate":
         evaluate()
+    elif cmd == "gate":
+        population_check()
+        apply_gate()
