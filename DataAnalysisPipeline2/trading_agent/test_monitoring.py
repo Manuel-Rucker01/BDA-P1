@@ -366,3 +366,28 @@ def test_run_hook_never_raises(monkeypatch, tmp_path):
                                   last_predictions_df=None, last_feature_matrix=None)
     out = run._record_for_monitoring(agent, None, {}, pd.DataFrame({"Date": []}))
     assert "predictions_file" not in out
+
+
+def test_feature_profile_null_calibration_suppresses_single_date_artefacts():
+    """A per-date constant feature (like sector_return_5d after z-scoring) has a
+    huge single-date PSI with no drift; the calibrated null level absorbs it,
+    while a genuinely shifted feature is still flagged."""
+    import numpy as np
+    import pandas as pd
+    from DataAnalysisPipeline2.trading_agent import monitoring as mon
+    rng = np.random.default_rng(0)
+    n_d, n = 60, 300
+    dates = np.repeat(np.arange(n_d), n)
+    sector = rng.integers(0, 10, n_d * n)
+    day_sector = rng.normal(size=(n_d, 10))
+    train = pd.DataFrame({"sec": day_sector[dates, sector], "x": rng.normal(size=n_d * n)})
+    prof = mon.build_feature_profile(train, dates=dates)
+    assert prof["features"]["sec"]["psi_null_q"] > 0.25
+    live_sector = rng.integers(0, 10, n)
+    live = pd.DataFrame({"sec": rng.normal(size=10)[live_sector], "x": rng.normal(loc=1.5, size=n)})
+    d = mon.feature_drift(live, prof)
+    assert d["psi"]["sec"] > 0.25            # raw PSI would have flagged it
+    assert "sec" not in d["high"] and "x" in d["high"]
+    alerts = mon.evaluate_alerts([], d, max_drift_features=1)
+    assert any(a["rule"] == "drift" for a in alerts)
+    assert "sec" not in [a for a in alerts if a["rule"] == "drift"][0]["message"]

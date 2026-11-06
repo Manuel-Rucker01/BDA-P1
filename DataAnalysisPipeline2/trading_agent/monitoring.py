@@ -167,7 +167,9 @@ def _bin_fractions(values: np.ndarray, edges: list[float]) -> np.ndarray:
     return counts / max(counts.sum(), 1.0)
 
 
-def build_feature_profile(train_X: pd.DataFrame, n_bins: int = 10) -> dict:
+def build_feature_profile(train_X: pd.DataFrame, n_bins: int = 10, dates=None,
+                          null_quantile: float = 0.95, max_null_dates: int = 120,
+                          seed: int = 0) -> dict:
     """Training-distribution profile for PSI, to be stored in the model manifest
     under ``feature_profile``. Build it on the SAME transformed matrix the model
     is fed (for feature_version>=2: the cross-sectionally z-scored X).
@@ -184,7 +186,32 @@ def build_feature_profile(train_X: pd.DataFrame, n_bins: int = 10) -> dict:
         edges = sorted({round(float(q), 8) for q in qs})
         fr = _bin_fractions(s, edges)
         feats[str(col)] = {"edges": edges, "fractions": [round(float(x), 8) for x in fr]}
-    return {"version": 1, "n_bins": int(n_bins), "n_rows": int(len(train_X)), "features": feats}
+    out = {"version": 1, "n_bins": int(n_bins), "n_rows": int(len(train_X)), "features": feats}
+    if dates is not None:
+        # Live drift is measured on ONE decision date, while the reference is
+        # pooled over hundreds. Features that are constant within a sector or
+        # driven by the day's market move (sector_return_5d, stoch_20d) show
+        # a large single-date PSI even with no drift at all. Calibrate: PSI of
+        # individual TRAINING dates vs the pooled profile; its upper quantile
+        # becomes that feature's null level (feature_drift uses
+        # max(threshold, null)).
+        d = pd.Series(np.asarray(dates)).reset_index(drop=True)
+        uniq = np.array(sorted(d.unique()))
+        rng = np.random.default_rng(seed)
+        pick = uniq if len(uniq) <= max_null_dates else rng.choice(uniq, max_null_dates, replace=False)
+        X = train_X.reset_index(drop=True)
+        for col, spec in feats.items():
+            vals = pd.to_numeric(X[col], errors="coerce").to_numpy(dtype=float)
+            ps = []
+            for day in pick:
+                v = vals[(d == day).to_numpy()]
+                v = v[np.isfinite(v)]
+                if v.size:
+                    ps.append(psi(spec["fractions"], _bin_fractions(v, spec["edges"])))
+            if ps:
+                spec["psi_null_q"] = round(float(np.quantile(ps, null_quantile)), 6)
+        out.update({"null_quantile": float(null_quantile), "n_null_dates": int(len(pick))})
+    return out
 
 
 def psi(expected: np.ndarray, actual: np.ndarray, eps: float = 1e-4) -> float:
@@ -221,9 +248,15 @@ def feature_drift(live_X: pd.DataFrame | None, train_profile: dict | None,
             missing.append(name)
             continue
         out[name] = round(psi(spec["fractions"], _bin_fractions(v, spec["edges"])), 6)
-    high = sorted([k for k, x in out.items() if x > threshold], key=lambda k: -out[k])
-    return {"available": True, "psi": out, "high": high, "n_high": len(high),
-            "threshold": threshold, "missing": sorted(missing), "n_live_rows": int(len(live_X))}
+    # per-feature threshold: the global one, raised to the feature's calibrated
+    # single-date null level when the profile carries one
+    thr = {k: max(threshold, float(prof["features"][k].get("psi_null_q", 0.0))) for k in out}
+    high = sorted([k for k, x in out.items() if x > thr[k]], key=lambda k: -out[k])
+    res = {"available": True, "psi": out, "high": high, "n_high": len(high),
+           "threshold": threshold, "missing": sorted(missing), "n_live_rows": int(len(live_X))}
+    if any("psi_null_q" in prof["features"][k] for k in out):
+        res["thresholds"] = {k: round(v, 6) for k, v in thr.items()}
+    return res
 
 
 # --------------------------------------------------------------------------- #
@@ -345,7 +378,9 @@ def evaluate_alerts(periods: list[dict], drift: dict | None = None, *,
                        f"rolling {ic_window}-period mean IC is {np.mean(ics):+.3f} (< 0): "
                        + ", ".join(f"{x:+.3f}" for x in ics)})
     if drift and drift.get("available"):
-        high = [k for k, v in (drift.get("psi") or {}).items() if _finite(v) and float(v) > psi_threshold]
+        thr = drift.get("thresholds") or {}
+        high = [k for k, v in (drift.get("psi") or {}).items()
+                if _finite(v) and float(v) > max(psi_threshold, float(thr.get(k, 0.0)))]
         if len(high) >= max_drift_features:
             top = sorted(high, key=lambda k: -float(drift["psi"][k]))[:8]
             alerts.append({"rule": "drift", "message":
