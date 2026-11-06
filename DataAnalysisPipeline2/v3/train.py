@@ -53,7 +53,8 @@ KEEP_RAW = ["ticker", "Date", "Sector", "sector_source", "company_close", "retur
             "target_sn_21", "target_sn_30"]
 
 
-def build_weekly_frame(out_dir: str | None = None, start: str = ds.DECISION_START, log=print) -> pd.DataFrame:
+def build_weekly_frame(out_dir: str | None = None, start: str = ds.DECISION_START, log=print,
+                       feats: list | None = None, extra_raw: tuple = ()) -> pd.DataFrame:
     """Eligible rows on weekly decision dates with z-scored features (float32).
     Cached to ``<data>/v3model/weekly.parquet``."""
     cal = ds.calendar_from_dataset(out_dir)
@@ -61,23 +62,31 @@ def build_weekly_frame(out_dir: str | None = None, start: str = ds.DECISION_STAR
     frames = []
     for y in sorted({d[:4] for d in dates}):
         dd = [d for d in dates if d[:4] == y]
+        feats_ = list(feats or ds.FEATURE_COLUMNS)
+        keep = KEEP_RAW + list(extra_raw)
         df = ds.load_daily(years=[y], dates=dd, out_dir=out_dir,
-                           columns=KEEP_RAW + ["eligible"] + ds.FEATURE_COLUMNS)
+                           columns=keep + ["eligible"] + feats_)
         df = df[df["eligible"]].drop(columns=["eligible"]).reset_index(drop=True)
-        Z = ds.zscore(df)
-        df = pd.concat([df[KEEP_RAW], Z], axis=1)
+        Z = ds.zscore(df, feats_)
+        df = pd.concat([df[keep], Z], axis=1)
         frames.append(df)
         log(f"[weekly] {y}: {len(dd)} dates, {len(df):,} rows")
     out = pd.concat(frames, ignore_index=True)
     return out
 
 
-def weekly_path() -> str:
-    return os.path.join(ds.v3_dir(), "weekly.parquet")
+def weekly_path(dataset: str = "dataset") -> str:
+    name = "weekly.parquet" if dataset == "dataset" else f"weekly_{dataset}.parquet"
+    return os.path.join(ds.v3_dir(), name)
 
 
-def load_weekly() -> pd.DataFrame:
-    return pd.read_parquet(weekly_path())
+def load_weekly(dataset: str = "dataset") -> pd.DataFrame:
+    return pd.read_parquet(weekly_path(dataset))
+
+
+def fund_columns() -> list:
+    from . import fundamentals as fu
+    return list(fu.FEATURE_COLUMNS)
 
 
 # --------------------------------------------------------------------------- #
@@ -250,12 +259,21 @@ VARIANTS = {
     "sn30": ("target_sn_30", "all", False),
     "common_nokg": ("target_raw_30", "common", False),
     "common_kg": ("target_raw_30", "common", True),
+    # round 2 (EDGAR): sectors = EDGAR SIC/FF12 (+ return-correlation proxy where unmapped)
+    "base_sec": ("target_raw_30", "all", False),
+    "base_fund": ("target_raw_30", "all", False),
+    "sn30_fund": ("target_sn_30", "all", False),
 }
+EDGAR_VARIANTS = {"base_sec": False, "base_fund": True, "sn30_fund": True}   # name -> uses fundamentals
+
+
+def variant_dataset(name: str) -> str:
+    return ds.EDGAR_DATASET if name in EDGAR_VARIANTS else "dataset"
 
 
 def variant_frame(name: str, frame: pd.DataFrame, kg_model_path: str | None = None):
     target, univ, use_kg = VARIANTS[name]
-    feats = list(ds.FEATURE_COLUMNS)
+    feats = list(ds.FEATURE_COLUMNS) + (fund_columns() if EDGAR_VARIANTS.get(name) else [])
     if univ == "common":
         kg = kg_embedding_frame(kg_model_path or default_kg_path())
         f, kcols = add_kg_features(frame, kg)
@@ -271,7 +289,7 @@ def default_kg_path() -> str:
 
 
 def run_variant(name: str, models=MODEL_NAMES, log=print) -> pd.DataFrame:
-    frame = load_weekly()
+    frame = load_weekly(variant_dataset(name))
     cal = ds.calendar_from_dataset()
     f, feats, target = variant_frame(name, frame)
     del frame
@@ -293,10 +311,15 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["weekly", "wf"])
     ap.add_argument("--variant", default="base")
+    ap.add_argument("--dataset", default="dataset")
     a = ap.parse_args()
     if a.cmd == "weekly":
-        w = build_weekly_frame()
-        w.to_parquet(weekly_path(), index=False)
+        if a.dataset == "dataset":
+            w = build_weekly_frame()
+        else:
+            w = build_weekly_frame(ds.v3_dir(a.dataset), feats=ds.FEATURE_COLUMNS + fund_columns(),
+                                   extra_raw=("fund_imputed",))
+        w.to_parquet(weekly_path(a.dataset), index=False)
         print(f"weekly frame: {len(w):,} rows, {w['Date'].nunique()} dates")
     else:
         run_variant(a.variant)

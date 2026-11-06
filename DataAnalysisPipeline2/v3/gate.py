@@ -85,3 +85,26 @@ def evaluate_gate(sig_all: dict, years_ic: dict, perf: dict, ew_sharpe: float, d
         ("c1", f"holdout IC {C_START}..{C_END}", holdout_ic, f">= {C_MIN_IC}", holdout_ic >= C_MIN_IC),
     ]
     return [{"id": i, "criterion": c, "value": v, "threshold": t, "pass": bool(p)} for i, c, v, t, p in rows]
+
+
+# --------------------------------------------------------------------------- #
+# Round 2 (EDGAR sectors + fundamentals) -- pre-registered 2026-11-06 BEFORE any
+# round-2 result was computed. Thresholds above are unchanged and reused.
+# --------------------------------------------------------------------------- #
+# Recipe selection: primary = base_fund (30-session raw target, core +
+# fundamentals, EDGAR sectors). sn30_fund or base_sec replaces it only under
+# the same rule as round 1 (mean IC >= primary + SWITCH_MIN_IC_GAIN and a
+# higher NW t; if both qualify the higher mean IC wins).
+PRIMARY_VARIANT_R2 = "base_fund"
+CANDIDATE_VARIANTS_R2 = ("base_fund", "sn30_fund", "base_sec")
+# Deflated Sharpe: every variant x construction backtested in rounds 1 and 2.
+N_TRIALS_R2 = N_TRIALS + len(CANDIDATE_VARIANTS_R2) * len(CONSTRUCTIONS)
+# Information only (not a gate criterion): drawdown with Feb-Apr 2020 removed.
+COVID_WINDOW = ("2020-02-01", "2020-04-30")
+
+
+def choose_variant_r2(signal: dict) -> str:
+    b = signal[PRIMARY_VARIANT_R2]
+    ok = [(v, signal[v]) for v in CANDIDATE_VARIANTS_R2 if v != PRIMARY_VARIANT_R2 and v in signal
+          and signal[v]["mean_ic"] >= b["mean_ic"] + SWITCH_MIN_IC_GAIN and signal[v]["nw_t"] > b["nw_t"]]
+    return max(ok, key=lambda x: x[1]["mean_ic"])[0] if ok else PRIMARY_VARIANT_R2

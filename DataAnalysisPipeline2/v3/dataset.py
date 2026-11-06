@@ -268,25 +268,95 @@ def stage_a(panel: pd.DataFrame, calendar=None, labels: bool = True) -> pd.DataF
     return out
 
 
+def _base_symbol(t: str) -> str:
+    return str(t).split("~")[0]
+
+
+def _stable_u64(keys) -> np.ndarray:
+    """Deterministic 64-bit hash per string (same offline and live)."""
+    import hashlib
+    return np.array([int.from_bytes(hashlib.blake2b(str(k).encode(), digest_size=8).digest(), "little")
+                     for k in keys], dtype=np.uint64)
+
+
 class FundamentalsBlock:
-    """Optional PIT fundamentals feature block (WS2; off until EDGAR data exists).
+    """PIT fundamentals feature block (WS2 EDGAR data).
 
-    Wraps ``fundamentals.fundamental_features`` (backward as-of join on the
-    filing-availability date; market cap = raw close x shares as filed). Adds
-    ``fundamentals.FEATURE_COLUMNS`` and, where EDGAR provides one, a sector
-    that overrides the metadata/proxy sector (``sector_source = 'edgar'``).
-    Pass instances via ``blocks=`` to ``build_dataset`` / ``compute_v3_features``
-    and train with ``feature_columns(blocks)``."""
+    * Values: ``fundamentals.fundamental_features`` -- a backward as-of join on
+      ``asof_date`` = the next business day after the EDGAR *filing* date (never
+      the period end); market cap = raw close x shares as filed. Segment ids
+      ``SYM~k`` are resolved through their base symbol and the CIK map's
+      validity windows.
+    * **Missingness is made uninformative (hot-deck).** The ticker->CIK map
+      comes mostly from the SEC's *current* ticker list, so in early years a
+      name without fundamentals is very likely a stock that later delisted
+      (look-ahead). Every row without any EDGAR record (``fund_staleness_days``
+      NaN) therefore receives the full fundamentals vector of a donor drawn
+      deterministically (hash of ticker+date) from the rows of the SAME date
+      that have one (eligible rows only when ``donor_col`` is given). The model
+      cannot tell imputed rows from real ones; ``fund_imputed`` records it (not a
+      feature). Partially missing fields of mapped names stay NaN.
+    * The block returns no sector (sectors come from ``edgar_sector_map``)."""
 
-    def __init__(self, fund_asof: pd.DataFrame, cik_map: pd.DataFrame, sectors: pd.DataFrame | None = None):
+    def __init__(self, fund_asof: pd.DataFrame, cik_map: pd.DataFrame, sectors: pd.DataFrame | None = None,
+                 donor_col: str | None = "eligible", impute: bool = True):
         from . import fundamentals as fu
         self.fu, self.fund_asof, self.cik_map, self.sectors = fu, fund_asof, cik_map, sectors
         self.columns = list(fu.FEATURE_COLUMNS)
+        self.donor_col, self.impute = donor_col, impute
 
-    def __call__(self, df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series | None]:
-        px = df[["ticker", "Date"]].assign(_close=df["close_raw"].fillna(df["company_close"]))
-        f = self.fu.fundamental_features(px, self.fund_asof, self.cik_map, self.sectors, close_col="_close")
-        return f[self.columns], f["sector"]
+    @classmethod
+    def from_store(cls, fund_dir: str | None = None, **kw) -> "FundamentalsBlock":
+        fund_dir = fund_dir or data_dir("fundamentals")
+        rd = lambda n: pd.read_parquet(os.path.join(fund_dir, f"{n}.parquet"))
+        return cls(rd("fundamentals_asof"), rd("cik_map"), None, **kw)
+
+    def raw(self, df: pd.DataFrame) -> pd.DataFrame:
+        px = pd.DataFrame({"ticker": df["ticker"].map(_base_symbol).to_numpy(), "Date": df["Date"].to_numpy(),
+                           "_close": df["close_raw"].fillna(df["company_close"]).to_numpy()}, index=df.index)
+        return self.fu.fundamental_features(px, self.fund_asof, self.cik_map, None, close_col="_close")
+
+    def __call__(self, df: pd.DataFrame) -> tuple[pd.DataFrame, None]:
+        f = self.raw(df)[self.columns].astype(float)
+        has = f["fund_staleness_days"].notna().to_numpy()
+        imputed = np.zeros(len(f), dtype=bool)
+        if self.impute:
+            vals = f.to_numpy()
+            dates = df["Date"].to_numpy().astype(str)
+            tick = df["ticker"].to_numpy().astype(str)
+            donor_ok = has & (df[self.donor_col].fillna(False).to_numpy(dtype=bool) if self.donor_col else True)
+            order = np.lexsort((tick, dates))
+            ds_, starts = np.unique(dates[order], return_index=True)
+            bounds = list(starts) + [len(order)]
+            for i in range(len(ds_)):
+                idx = order[bounds[i]:bounds[i + 1]]
+                donors = idx[donor_ok[idx]]
+                rec = idx[~has[idx]]
+                if len(donors) == 0 or len(rec) == 0:
+                    continue
+                h = _stable_u64([f"{tick[r]}|{ds_[i]}" for r in rec])
+                pick = donors[(h % np.uint64(len(donors))).astype(np.int64)]
+                vals[rec] = vals[pick]
+                imputed[rec] = True
+            f = pd.DataFrame(vals, columns=self.columns, index=df.index)
+        f["fund_imputed"] = imputed
+        return f, None
+
+
+def edgar_sector_map(tickers, as_of, cik_map: pd.DataFrame, sectors: pd.DataFrame) -> pd.DataFrame:
+    """ticker -> EDGAR SIC-based Fama-French-12 sector (``sector_name``),
+    resolving each ticker (segment ids via their base symbol) to its CIK as of
+    ``as_of`` (scalar or per-ticker dates, e.g. the ticker's last bar). Returns
+    a ``meta``-style frame [ticker, Sector] for names with a sector."""
+    from . import fundamentals as fu
+    t = pd.Series(list(tickers), dtype=object)
+    d = pd.to_datetime(pd.Series(as_of if np.ndim(as_of) else [as_of] * len(t))).astype("datetime64[ns]")
+    keys = pd.DataFrame({"tkey": t.map(_base_symbol).map(fu.norm_ticker).to_numpy(), "Date": d.to_numpy()})
+    cik = fu.resolve_cik(keys, cik_map)
+    sec = sectors.drop_duplicates("cik").set_index("cik")["sector_name"]
+    out = pd.DataFrame({"ticker": t.to_numpy(), "Sector": cik.map(lambda c: sec.get(int(c)) if pd.notna(c) else None)})
+    bad = out["Sector"].isna() | out["Sector"].astype(str).str.strip().str.lower().isin({"", "none", "nan"})
+    return out[~bad].reset_index(drop=True)
 
 
 def feature_columns(blocks=()) -> list[str]:
@@ -303,7 +373,8 @@ def stage_b(df: pd.DataFrame, known: pd.Series, assignments: pd.DataFrame,
     for block in blocks:
         feats, sec = block(df)
         for c in feats.columns:
-            df[c] = pd.to_numeric(feats[c], errors="coerce").to_numpy(dtype=float)
+            df[c] = (feats[c].to_numpy(dtype=bool) if feats[c].dtype == bool
+                     else pd.to_numeric(feats[c], errors="coerce").to_numpy(dtype=float))
         if sec is not None:
             sec = pd.Series(np.asarray(sec, dtype=object), index=df.index)
             ok = sec.notna() & (sec.astype(str).str.len() > 0)
@@ -452,5 +523,31 @@ def calendar_from_dataset(out_dir: str | None = None) -> np.ndarray:
     return session_calendar(pd.concat([pd.read_parquet(f, columns=["Date"])["Date"] for f in files]))
 
 
+EDGAR_DATASET = "dataset_edgar"
+
+
+def edgar_meta_for_prices(prices: pd.DataFrame, fund_dir: str | None = None) -> pd.DataFrame:
+    """EDGAR sector per ticker id, resolved at the ticker's last bar."""
+    fund_dir = fund_dir or data_dir("fundamentals")
+    last = prices.groupby("ticker", observed=True)["Date"].max()
+    return edgar_sector_map(last.index.astype(str), last.to_numpy(),
+                            pd.read_parquet(os.path.join(fund_dir, "cik_map.parquet")),
+                            pd.read_parquet(os.path.join(fund_dir, "sectors.parquet")))
+
+
+def build_edgar_dataset(log=print) -> dict:
+    """The v3 dataset with EDGAR FF12 sectors (proxy sectors only where EDGAR
+    has none, referenced to the EDGAR sectors) and the fundamentals block, under
+    ``<data>/v3model/dataset_edgar``."""
+    from .prices import load_prices
+    prices = load_prices(columns=["company_close", "company_volume"], with_raw=True)
+    prices = prices[["ticker", "Date", "company_close", "company_volume", "close_raw"]]
+    meta = edgar_meta_for_prices(prices)
+    log(f"[dataset] EDGAR sectors for {len(meta):,} of {prices['ticker'].nunique():,} ticker ids")
+    return build_dataset(prices=prices, meta=meta, out_dir=v3_dir(EDGAR_DATASET),
+                         blocks=[FundamentalsBlock.from_store()], log=log)
+
+
 if __name__ == "__main__":
-    build_dataset()
+    import sys
+    build_edgar_dataset() if "--edgar" in sys.argv else build_dataset()

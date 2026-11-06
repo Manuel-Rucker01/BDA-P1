@@ -165,23 +165,54 @@ def test_core_population_argument():
     pd.testing.assert_series_equal(alt["rank_return_5d"], alt2["rank_return_5d"])
 
 
-# ------------------------------------------------- optional feature blocks
-def test_fundamentals_block_is_pit_and_overrides_sector():
+# ------------------------------------------------- fundamentals block / EDGAR sectors
+def _edgar_fixture():
+    asof = pd.DataFrame([{"cik": c, "asof_date": d, "last_filed": f, "revenue_ttm": 1e9 * c,
+                          "revenue_ttm_prev": 8e8, "net_income_ttm": 1e8 * c, "net_income_ttm_prev": 5e7,
+                          "gross_profit_ttm": 4e8, "cfo_ttm": 1.2e8, "assets": 2e9, "liabilities": 1e9,
+                          "equity": 1e9, "shares": 1e8, "wdil_yoy": 0.01}
+                         for c, d, f in [(1, "2024-06-03", "2024-05-31"), (2, "2024-03-01", "2024-02-29")]])
+    cik_map = pd.DataFrame({"ticker": ["S0_0", "S1_0"], "cik": [1, 2]})
+    sectors = pd.DataFrame({"cik": [1, 2], "ff12": [6, 11], "sector_name": ["Business Equipment", "Finance"]})
+    return asof, cik_map, sectors
+
+
+def test_fundamentals_block_pit_on_filing_date():
     panel, meta = make_panel(n_per_sector=3, n_sessions=200)
-    asof = pd.DataFrame([{"cik": 1, "asof_date": "2024-06-03", "last_filed": "2024-05-31",
-                          "revenue_ttm": 1e9, "revenue_ttm_prev": 8e8, "net_income_ttm": 1e8,
-                          "net_income_ttm_prev": 5e7, "gross_profit_ttm": 4e8, "cfo_ttm": 1.2e8,
-                          "assets": 2e9, "liabilities": 1e9, "equity": 1e9, "shares": 1e8, "wdil_yoy": 0.01}])
-    cik_map = pd.DataFrame({"ticker": ["S0_0"], "cik": [1]})
-    sectors = pd.DataFrame({"cik": [1], "ff12": [6], "sector_name": ["Business Equipment"]})
-    block = ds.FundamentalsBlock(asof, cik_map, sectors)
+    asof, cik_map, _ = _edgar_fixture()
+    block = ds.FundamentalsBlock(asof, cik_map, impute=False)
     f = ds.compute_v3_features(panel, meta, blocks=[block])
     s = f[f["ticker"] == "S0_0"].set_index("Date")
-    assert s.loc[s.index < "2024-06-03", "ep"].isna().all()          # nothing before availability
+    assert s.loc[s.index < "2024-06-03", "ep"].isna().all()          # filed 05-31, usable from 06-03
     after = s[s.index >= "2024-06-03"]
-    assert after["ep"].notna().all() and (after["sector_source"] == "edgar").all()
-    assert (after["Sector"] == "Business Equipment").all()
     raw = panel[(panel["ticker"] == "S0_0") & (panel["Date"] == after.index[0])]["close_raw"].iloc[0]
     assert np.isclose(after["ep"].iloc[0], 1e8 / (raw * 1e8))         # E/P on the raw close
+    assert f.loc[f["ticker"] == "S2_0", "ep"].isna().all()             # unmapped, no imputation
     assert ds.feature_columns([block])[-len(block.columns):] == block.columns
-    assert f.loc[f["ticker"] == "S1_0", "ep"].isna().all()             # unmapped -> NaN
+
+
+def test_hot_deck_makes_missingness_uninformative():
+    panel, meta = make_panel(n_per_sector=3, n_sessions=200)
+    asof, cik_map, _ = _edgar_fixture()
+    block = ds.FundamentalsBlock(asof, cik_map)
+    f = ds.compute_v3_features(panel, meta, blocks=[block])
+    x = f[f["Date"] == f["Date"].max()].set_index("ticker")
+    real = ["S0_0", "S1_0"]
+    assert not x.loc[real, "fund_imputed"].any()
+    el = x[x["eligible"]]
+    imp = el[~el.index.isin(real)]
+    assert len(imp) and imp["fund_imputed"].all()
+    donors = x.loc[real, block.columns]
+    for _, row in imp[block.columns].iterrows():   # complete vectors copied from same-date donors
+        assert any(np.allclose(row.to_numpy(float), donors.loc[k].to_numpy(float), equal_nan=True) for k in real)
+    assert f.loc[f["Date"] < "2024-03-01", "ep"].isna().all()         # no donor yet -> stays NaN
+    f2 = ds.compute_v3_features(panel, meta, blocks=[block])
+    pd.testing.assert_frame_equal(f[block.columns], f2[block.columns])   # deterministic
+
+
+def test_edgar_sector_map_resolves_segments_and_drops_none():
+    _, cik_map, sectors = _edgar_fixture()
+    m = ds.edgar_sector_map(["S0_0", "S1_0~1", "S2_0"], "2024-06-03", cik_map, sectors)
+    assert dict(zip(m["ticker"], m["Sector"])) == {"S0_0": "Business Equipment", "S1_0~1": "Finance"}
+
+
