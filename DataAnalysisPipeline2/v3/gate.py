@@ -244,3 +244,66 @@ R4_VARIANTS["sn30_all_lgbm"] = ("target_sn_30", ("resmom", "sue", "lvq"))
 R4_MODELS = {"sn30_all_lgbm": ("lgbm",)}
 R4_CANDIDATES = R4_CANDIDATES + ("sn30_all_lgbm",)
 N_TRIALS_R4 = N_TRIALS_R3 + len(R4_VARIANTS) * len(R4_CONSTRUCTIONS)   # 43 + 12 = 55
+
+
+# --------------------------------------------------------------------------- #
+# Round 6 (signal side: multi-horizon, stacking, v2-recipe walk-forward) --
+# pre-registered 2026-11-06 BEFORE any round-6 label, model or backtest was
+# computed. Round 5 (risk model / optimizer) is being run in parallel by another
+# agent; its trials are added via N_TRIALS_R5 when present (re-checked at
+# evaluation time by n_trials_r6()). Thresholds unchanged.
+# --------------------------------------------------------------------------- #
+# 1. Multi-horizon ensemble ("mh"): sn30_fund-style models (core + EDGAR
+#    fundamentals, EDGAR sectors, same hyperparameters and folds) trained on
+#    sector-neutral rank targets at 5, 21 and 63 sessions (+ the existing 30).
+#    Embargo per horizon: max(40, H + 10) sessions (63 -> 73). Composite at
+#    weekly date t = sum_h w_h(t) * per-date rank(pred_h), with
+#    w_h = 0.5 * w_ic_h + 0.5 * 1/4, w_ic_h proportional to max(0, mean IC of
+#    pred_h vs its own H-session raw forward return) over the trailing 104
+#    weekly OOS dates whose labels were complete by t (date <= t - H sessions);
+#    equal weights while fewer than 26 such dates exist or all ICs <= 0.
+# 2. Stacking ("stack"): for test year Y, a ridge (alpha = 1, intercept) of the
+#    30-session sector-neutral rank target on the per-date ranks of the OOS
+#    predictions of base, sn30_fund, sn30_sue, sn30_resmom, sn30_lvq on weekly
+#    dates t with pos(t) < pos(start(Y)) - 40 (labels complete, prior years only);
+#    equal weights for 2019 (no prior OOS year).
+# 3. v2-recipe walk-forward ("v2rec_kg", "v2rec_full"): features/core.py v2
+#    features with the v2 eligibility (adjusted close >= $1, >= 80 bars) and the
+#    legacy-metadata sectors, robust per-date z-score, + the production
+#    artefact's 16 KG PCs (kg universe = names with an embedding; full = all
+#    v2-eligible, no KG); SoftVote (per-date rank average) of RandomForest
+#    (100 trees, depth 14, min leaf 5), CatBoost (depth 4, lr 0.02), XGBoost and
+#    LightGBM (depth 4, lr 0.02, subsample/colsample 0.8, LGBM 15 leaves), boosted
+#    models early-stopped (50 rounds, max 1000) on the last 10% of training dates
+#    with a 40-session embargo, then refit with the early-stopped count;
+#    30-session raw rank target over the v2 population; weekly decision dates
+#    and the same yearly folds (2019-2026). Deviation from production: weekly
+#    instead of daily training dates (compute), early-stopped count per fold
+#    instead of "median of the last 3 CV folds".
+# Evaluation: IC vs 30-session raw return on each candidate's own universe;
+# decay curve at 1/5/10/21/42/63 sessions; books with EDGAR sectors for caps.
+R6_CANDIDATES = ("mh", "stack")
+R6_INCUMBENT = "sn30_fund"
+R6_HORIZONS = (5, 21, 30, 63)
+R6_BOOKS = ("flo50_k50", "flo50_k30")             # round-3 definitions, for mh and stack
+R6_V2_BOOK = "lo30"                                # K=30, <=5/sector, <=6%, 0.98 -- for v2rec_kg / v2rec_full
+R6_V2_VARIANTS = ("v2rec_kg", "v2rec_full")
+R6_NEW_TRIALS = len(R6_CANDIDATES) * len(R6_BOOKS) + len(R6_V2_VARIANTS)   # 4 + 2 = 6
+# Selection: the R6 candidate with the higher walk-forward mean IC if it beats
+# sn30_fund by >= SWITCH_MIN_IC_GAIN with a higher NW t, else the incumbent;
+# construction = choose_construction_r4 over R6_BOOKS. The v2-recipe rows are
+# the "decisive test" (information + counted trials), gate rows reported for
+# v2rec_kg on its lo30 book.
+
+
+def n_trials_r6() -> int:
+    """All trials so far: rounds 1-4 (55), Round 5 when registered, + round 6."""
+    prior = globals().get("N_TRIALS_R5", N_TRIALS_R4)
+    return int(prior) + R6_NEW_TRIALS
+
+
+def choose_variant_r6(signal: dict) -> str:
+    inc = signal[R6_INCUMBENT]
+    ok = [(v, signal[v]) for v in R6_CANDIDATES if v in signal
+          and signal[v]["mean_ic"] >= inc["mean_ic"] + SWITCH_MIN_IC_GAIN and signal[v]["nw_t"] > inc["nw_t"]]
+    return max(ok, key=lambda x: x[1]["mean_ic"])[0] if ok else R6_INCUMBENT
