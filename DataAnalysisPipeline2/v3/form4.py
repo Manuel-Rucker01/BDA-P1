@@ -191,7 +191,11 @@ def ingest_day(date, client: SECClient, issuer_ciks: set | None, workers: int = 
     out = os.path.join(cache_dir(), f"{d}.parquet")
     if os.path.exists(out):
         return -1
-    idx = daily_index(d, client)
+    try:
+        idx = daily_index(d, client)
+    except RuntimeError as e:             # persistent error: not cached, retried on the next refresh
+        log(f"[form4] {d}: index unavailable ({e}); will retry next refresh")
+        return -3
     if idx is None:                       # weekend / holiday / not yet published
         return -2
     sel = select_filings(idx, issuer_ciks)
@@ -218,7 +222,9 @@ def refresh(start: str | None = None, end: str | None = None, issuer_filter: boo
     end = end or (dt.date.today() - dt.timedelta(days=1)).isoformat()
     client = SECClient()
     ciks = universe_issuer_ciks() if issuer_filter else None
-    days = pd.bdate_range(start, end)
+    from .fundamentals import nyse_holidays
+    hol = set(pd.to_datetime(nyse_holidays()))
+    days = [d for d in pd.bdate_range(start, end) if d not in hol]
     n_rows = 0
     for d in days:
         n = ingest_day(d, client, ciks, log=log)

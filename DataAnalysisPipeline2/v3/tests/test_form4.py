@@ -132,3 +132,10 @@ def test_live_features_equal_offline_frame():
     d = "2025-06-27"
     live, off = altlive.offline_vs_live(d)
     pd.testing.assert_frame_equal(live, off, check_exact=False, rtol=1e-5, atol=1e-5)
+
+
+def test_ingest_day_survives_unavailable_index(monkeypatch, tmp_path):
+    monkeypatch.setattr(f4, "cache_dir", lambda: str(tmp_path))
+    c = f4.SECClient(session=_S([403] * 5), limiter=f4.Limiter(1e6), sleep=lambda s: None, retries=5)
+    assert f4.ingest_day("2026-05-25", c, None, log=lambda *a: None) == -3
+    assert not list(tmp_path.iterdir())                            # nothing cached -> retried later
