@@ -267,13 +267,37 @@ VARIANTS = {
 EDGAR_VARIANTS = {"base_sec": False, "base_fund": True, "sn30_fund": True}   # name -> uses fundamentals
 
 
+def _r4_variants() -> dict:
+    from .gate import R4_VARIANTS
+    return R4_VARIANTS
+
+
+for _n, (_t, _b) in _r4_variants().items():
+    VARIANTS[_n] = (_t, "all", False)
+
+
+def r4_feature_columns(name: str) -> list:
+    from .signals import BLOCK_COLUMNS
+    return list(ds.FEATURE_COLUMNS) + fund_columns() + [c for b in _r4_variants()[name][1] for c in BLOCK_COLUMNS[b]]
+
+
+def r4_all_columns() -> list:
+    from .signals import BLOCK_COLUMNS
+    return list(ds.FEATURE_COLUMNS) + fund_columns() + [c for b in ("sue", "resmom", "lvq") for c in BLOCK_COLUMNS[b]]
+
+
 def variant_dataset(name: str) -> str:
+    if name in _r4_variants():
+        from .signals import R4_DATASET
+        return R4_DATASET
     return ds.EDGAR_DATASET if name in EDGAR_VARIANTS else "dataset"
 
 
 def variant_frame(name: str, frame: pd.DataFrame, kg_model_path: str | None = None):
     target, univ, use_kg = VARIANTS[name]
     feats = list(ds.FEATURE_COLUMNS) + (fund_columns() if EDGAR_VARIANTS.get(name) else [])
+    if name in _r4_variants():
+        feats = r4_feature_columns(name)
     if univ == "common":
         kg = kg_embedding_frame(kg_model_path or default_kg_path())
         f, kcols = add_kg_features(frame, kg)
@@ -316,6 +340,8 @@ if __name__ == "__main__":
     if a.cmd == "weekly":
         if a.dataset == "dataset":
             w = build_weekly_frame()
+        elif a.dataset == "dataset_r4":
+            w = build_weekly_frame(ds.v3_dir(a.dataset), feats=r4_all_columns(), extra_raw=("fund_imputed",))
         else:
             w = build_weekly_frame(ds.v3_dir(a.dataset), feats=ds.FEATURE_COLUMNS + fund_columns(),
                                    extra_raw=("fund_imputed",))
