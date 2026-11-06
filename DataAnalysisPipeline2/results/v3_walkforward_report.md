@@ -352,3 +352,119 @@ Round-2 reference (`sn30_fund`, no floor): long-only K=50 Sharpe 0.56, CAGR 9.0%
 ### Recommendation (round 3)
 
 **Do not promote, and stop iterating on constructions for this signal.** None of 9 pre-registered constructions turns the ranking into a long-only book whose Sharpe is distinguishable from the best of 43 trials (DSR 0.44), and every long-only book has negative IR versus both SPY and the EW universe. The ranking IC is real (≈0.065, t≈5) but its long-side payoff after costs is roughly the EW universe with less volatility — a low-vol/quality tilt — not alpha over cheap beta. No construction-only change is worth wiring into `portfolio.py`/`bot.py`; the floor is harmless and guarantees liquidity, so if a book is ever wired for v3, use the p50/$25M floor. (Whether the floors help the production v2 ranking cannot be tested here — its 2019–2026 OOS predictions do not exist; on the v3 `base` ranking they do not.) Keep v2final in production. Further work should target the signal (e.g. longer-horizon fundamentals factors, residual-momentum, earnings-revision features) rather than the book.
+
+## Round 4 — new signal features
+
+New PIT feature blocks on top of the round-2 recipe (core + EDGAR fundamentals + EDGAR sectors), same walk-forward folds, embargo and hyperparameters. Blocks, variants, books, selection rule and trial count (N = 55) were committed in `v3/gate.py` before any round-4 model was trained (the LGBM-only candidate was added by a second commit while the dataset was still building, before any training). Code: `v3/signals.py` (tests `v3/tests/test_signals.py`), `v3/round4.py`.
+
+* **resmom** — rolling 504-bar OLS (min 252) of daily returns on market + EDGAR-sector EW returns; residual 12-1 and 6-1 momentum and 1-month residual reversal scaled by residual vol; industry (sector) 12-1 momentum.
+* **sue** — no analyst estimates exist, so the surprise is EDGAR-only: d = TTM NI(E_k) − TTM NI(E_{k−1}) for consecutive quarters (= the latest quarter's YoY change), SUE = d / std(last 8 d); ΔSUE; days since the latest report; fundamental momentum (Δ gross margin, Δ ROA, Δ accruals, asset growth). Known from each filing's availability date; joined through the same CIK map and hot-deck imputed jointly with the round-2 fundamentals.
+* **lvq** — market beta, idiosyncratic vol, and a low-vol/quality composite rank (−beta, −idio vol, GP/A).
+* **Leak probe (rerun)**: AUC predicting `fund_imputed` — core 0.675, EDGAR blocks 0.650, core+EDGAR 0.703 (+0.028, same as round 2).
+
+Coverage among eligible rows (any value incl. imputed; `sue_real` = from the name's own filings):
+
+| year | sue | d_gross_margin | asset_growth | resmom_12_1 | ind_mom_12_1 | beta_mkt | lvq_composite | sue_real |
+|---|---|---|---|---|---|---|---|---|
+| 2,017 | 89% | 50% | 96% | 52% | 100% | 52% | 80% | 52% |
+| 2,018 | 84% | 48% | 91% | 97% | 100% | 97% | 98% | 53% |
+| 2,019 | 82% | 54% | 89% | 97% | 100% | 97% | 98% | 57% |
+| 2,020 | 82% | 55% | 89% | 97% | 100% | 97% | 98% | 59% |
+| 2,021 | 78% | 52% | 87% | 93% | 100% | 93% | 95% | 57% |
+| 2,022 | 78% | 53% | 88% | 96% | 100% | 96% | 97% | 61% |
+| 2,023 | 82% | 55% | 90% | 99% | 100% | 99% | 99% | 68% |
+| 2,024 | 84% | 54% | 90% | 99% | 100% | 99% | 99% | 73% |
+| 2,025 | 83% | 54% | 89% | 98% | 100% | 98% | 99% | 75% |
+| 2,026 | 82% | 52% | 88% | 98% | 100% | 98% | 98% | 78% |
+
+### Verdict (round 4)
+
+**FAIL — not promoted**. Selected recipe `sn30_fund`, construction `flo50_k50` (floor mcap≥p50 & ADV≥$25M, long-only K=50).
+
+| # | criterion | value | threshold | result |
+|---|---|---|---|---|
+| a1 | mean weekly IC > 0 | 0.0653 | > 0 | PASS |
+| a2 | Newey-West t of IC | 4.8123 | > 2.0 | PASS |
+| a3 | years with IC > 0 | 7 | >= 6 of 8 | PASS |
+| b1 | Sharpe(chosen) vs Sharpe(EW universe) | 0.5809 | > 0.477 | PASS |
+| b2 | max drawdown | -0.3445 | >= -0.35 | PASS |
+| b3 | Deflated Sharpe prob (N=55) | 0.4912 | >= 0.9 | FAIL |
+| c1 | holdout IC 2026-07-15..2026-09-23 | 0.1426 | >= 0.12 | PASS |
+
+Sharpe 0.58 [-0.03, 1.31], Sharpe − EW 0.10 [-0.31, 0.52], IR vs EW -0.04 [-0.75, 0.68]; DSR 0.491 vs SR* 0.59 (N = 55).
+
+### Signal by block (weekly OOS, vs 30-session return)
+
+| variant | target | IC | Δ IC vs sn30_fund | NW t | SN-IC | decile spread | yrs IC>0 | holdout IC |
+|---|---|---|---|---|---|---|---|---|
+| sn30_fund | target_sn_30 | 0.0653 | – | 4.81 | 0.0616 | 1.91% | 7/8 | 0.1426 |
+| sn30_resmom | target_sn_30 | 0.0617 | -0.0036 | 4.62 | 0.0598 | 1.66% | 7/8 | 0.1466 |
+| sn30_sue | target_sn_30 | 0.0658 | 0.0005 | 4.86 | 0.0618 | 1.97% | 7/8 | 0.1382 |
+| sn30_lvq | target_sn_30 | 0.0672 | 0.0019 | 5.16 | 0.0625 | 1.95% | 7/8 | 0.1372 |
+| sn30_all | target_sn_30 | 0.0661 | 0.0008 | 5.21 | 0.0612 | 1.79% | 7/8 | 0.1409 |
+| base_all | target_raw_30 | 0.0606 | -0.0047 | 5.57 | 0.0555 | 1.72% | 7/8 |  |
+| sn30_all_lgbm | target_sn_30 | 0.0660 | 0.0007 | 5.40 | 0.0607 | 1.77% | 7/8 | 0.1408 |
+
+Per-year IC:
+
+| index | sn30_fund | sn30_resmom | sn30_sue | sn30_lvq | sn30_all | base_all | sn30_all_lgbm |
+|---|---|---|---|---|---|---|---|
+| 2019 | 0.0667 | 0.0597 | 0.0678 | 0.0682 | 0.0676 | 0.0566 | 0.0687 |
+| 2020 | -0.0134 | -0.0227 | -0.0131 | -0.0261 | -0.0303 | -0.0022 | -0.0280 |
+| 2021 | 0.1207 | 0.1175 | 0.1220 | 0.1397 | 0.1362 | 0.0743 | 0.1280 |
+| 2022 | 0.0722 | 0.0704 | 0.0758 | 0.0719 | 0.0696 | 0.0774 | 0.0715 |
+| 2023 | 0.0951 | 0.0945 | 0.0951 | 0.0974 | 0.0996 | 0.0906 | 0.0989 |
+| 2024 | 0.0801 | 0.0748 | 0.0778 | 0.0661 | 0.0655 | 0.0701 | 0.0662 |
+| 2025 | 0.0251 | 0.0241 | 0.0250 | 0.0382 | 0.0378 | 0.0386 | 0.0383 |
+| 2026 | 0.0817 | 0.0827 | 0.0822 | 0.0904 | 0.0914 | 0.0882 | 0.0937 |
+
+### Books (floor p50/$25M; Feb 2019 → 2026-11-04, 10 bps/side)
+
+| preds | book | CAGR | vol | Sharpe | maxDD | maxDD ex Feb–Apr 2020 | IR vs SPY | IR vs EW | turnover/reb |
+|---|---|---|---|---|---|---|---|---|---|
+| sn30_fund | flo50_k50 | 9.4% | 18.4% | 0.58 | -34.4% | -29.1% | -0.63 | -0.04 | 60% |
+| sn30_fund | flo50_k30 | 8.8% | 19.2% | 0.53 | -34.9% | -28.9% | -0.62 | -0.07 | 65% |
+| sn30_resmom | flo50_k50 | 9.2% | 19.0% | 0.56 | -36.2% | -29.8% | -0.62 | -0.05 | 59% |
+| sn30_resmom | flo50_k30 | 7.8% | 19.7% | 0.48 | -37.4% | -32.3% | -0.67 | -0.12 | 62% |
+| sn30_sue | flo50_k50 | 8.8% | 18.4% | 0.55 | -32.3% | -29.7% | -0.70 | -0.08 | 59% |
+| sn30_sue | flo50_k30 | 8.6% | 18.9% | 0.53 | -33.2% | -33.2% | -0.66 | -0.08 | 63% |
+| sn30_lvq | flo50_k50 | 7.5% | 19.7% | 0.46 | -37.3% | -31.4% | -0.80 | -0.17 | 60% |
+| sn30_lvq | flo50_k30 | 6.9% | 20.3% | 0.43 | -36.7% | -34.2% | -0.78 | -0.20 | 63% |
+| sn30_all | flo50_k50 | 8.0% | 19.8% | 0.49 | -37.0% | -33.3% | -0.74 | -0.13 | 60% |
+| sn30_all | flo50_k30 | 7.4% | 20.5% | 0.45 | -36.4% | -36.4% | -0.71 | -0.15 | 63% |
+| base_all | flo50_k50 | 9.6% | 21.6% | 0.53 | -36.9% | -36.9% | -0.50 | 0.03 | 62% |
+| base_all | flo50_k30 | 11.6% | 22.7% | 0.60 | -39.2% | -39.2% | -0.27 | 0.20 | 66% |
+| sn30_all_lgbm | flo50_k50 | 8.5% | 19.9% | 0.51 | -38.2% | -33.7% | -0.70 | -0.09 | 61% |
+| sn30_all_lgbm | flo50_k30 | 7.8% | 20.8% | 0.47 | -37.6% | -37.6% | -0.66 | -0.12 | 65% |
+| - | EW universe | 8.8% | 23.5% | 0.48 | -42.0% |  | -0.50 |  |  |
+| - | SPY | 16.1% | 18.9% | 0.89 | -33.8% |  |  | 0.50 |  |
+
+### Recommendation (round 4)
+
+**No new block clears the pre-registered bar, so the recipe stays `sn30_fund` and the gate fails
+again on Deflated Sharpe alone (0.49 vs 0.90, N = 55).** Residual momentum, EDGAR SUE / fundamental
+momentum and the low-vol/quality block each move the walk-forward IC by −0.004…+0.002 (bar: +0.005); combining
+them (`sn30_all`, ensemble or LGBM-only) gives +0.001. The trees already extract what these blocks add from
+the 32 price/volume features + the 14 fundamentals: e.g. the explicit low-vol/quality composite raises IC
+slightly but *lowers* book Sharpe (0.46 vs 0.58), i.e. the model already holds that tilt. Residual momentum
+gives the best recent holdout (0.147) but the worst walk-forward IC (0.062) — not a robust gain.
+
+**Which model should trade (initial paper buy): keep the current production `v2final_nonews`; do not
+deploy a v3 artefact.** Evidence:
+* Pre-registered rule: v3 replaces v2 only if it passes the gate; after four rounds (55 trials) it has not.
+* Head-to-head on the only window where both have genuine out-of-sample scores (feature dates
+  2026-07-15 → 2026-09-23, 30-session labels, trained ≤ 2026-05-29): on the legacy ~1.9k-name universe
+  that production trades, v3 `sn30_fund` scores IC **0.103** vs **0.140** for the v2 recipe
+  (`v2_long`, holdout_eval_phase4, 1,730-name common population). v3 is better only on its wider universe
+  (0.143 on ~3.2k names), which production does not trade.
+* v3's 8-year walk-forward proves the *ranking* is durable (IC > 0 in 7/8 years), but no long-only book built
+  from it beat SPY or the EW universe on IR over 2019–2026 — there is no evidence that switching would
+  improve the paper account's returns.
+* Caveat on v2: `v2final_nonews` has no multi-year out-of-sample record (trained 2024-10 → 2026-09, one
+  regime), the round-1 diagnosis that such models decay within ~9 months still applies — keep WS5's monthly
+  IC/drift monitoring and quarterly retrain, and use the broad strict-sector-cap long-only book
+  (`long_only_v3`, K=30) rather than the concentrated top-10.
+
+The decisive missing experiment is a 2019–2026 walk-forward of the *v2 recipe* itself on this
+survivorship-free store (same folds/books): only that can say whether v2's recent edge is a regime artefact.
+It needs the v2 training pipeline, which is not in this branch.

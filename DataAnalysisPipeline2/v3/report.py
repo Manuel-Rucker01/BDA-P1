@@ -637,9 +637,141 @@ def write_r3(r2: dict, r3: dict, g: dict) -> None:
     open(REPORT, "w").write(REPORT_TEXT.rstrip() + "\n" + "\n".join(L))
 
 
+# =========================================================================== #
+# Round 4: new signal blocks
+# =========================================================================== #
+R4_MARK = "\n## Round 4 — new signal features"
+
+
+def build_r4(log=print) -> dict:
+    from . import round4 as r4m
+    g = r4m.apply_gate(log=log)
+    write_r4(g)
+    return g
+
+
+def write_r4(g: dict) -> None:
+    r2 = json.load(open(ex.eval_dir("results_r2.json")))
+    r3j = json.load(open(ex.eval_dir("results_r3.json")))
+    r4 = json.load(open(ex.eval_dir("results_r4.json")))
+    lp = json.load(open(ex.eval_dir("leak_probe_r4.json")))
+    cov = pd.read_csv(ex.eval_dir("r4_coverage.csv"), index_col=0)
+    inc = gate.R4_INCUMBENT
+    sigs = {inc: r2["variants"][inc]["signal"]}
+    sigs.update(r4["signal"])
+    v, c = g["variant"], g["construction"]
+    g = dict(g, holdouts={**g["holdouts"], inc: json.load(open(ex.eval_dir(f"holdout_{inc}.json")))["mean_ic"]})
+    L = [R4_MARK + "\n"]
+    L.append("New PIT feature blocks on top of the round-2 recipe (core + EDGAR fundamentals + EDGAR sectors), "
+             "same walk-forward folds, embargo and hyperparameters. Blocks, variants, books, selection rule and "
+             f"trial count (N = {gate.N_TRIALS_R4}) were committed in `v3/gate.py` before any round-4 model was "
+             "trained (the LGBM-only candidate was added by a second commit while the dataset was still "
+             "building, before any training). Code: `v3/signals.py` (tests `v3/tests/test_signals.py`), "
+             "`v3/round4.py`.\n")
+    L.append("* **resmom** — rolling 504-bar OLS (min 252) of daily returns on market + EDGAR-sector EW returns; "
+             "residual 12-1 and 6-1 momentum and 1-month residual reversal scaled by residual vol; industry "
+             "(sector) 12-1 momentum.")
+    L.append("* **sue** — no analyst estimates exist, so the surprise is EDGAR-only: d = TTM NI(E_k) − "
+             "TTM NI(E_{k−1}) for consecutive quarters (= the latest quarter's YoY change), SUE = d / std(last 8 d); "
+             "ΔSUE; days since the latest report; fundamental momentum (Δ gross margin, Δ ROA, Δ accruals, asset "
+             "growth). Known from each filing's availability date; joined through the same CIK map and hot-deck "
+             "imputed jointly with the round-2 fundamentals.")
+    L.append("* **lvq** — market beta, idiosyncratic vol, and a low-vol/quality composite rank (−beta, −idio vol, "
+             "GP/A).")
+    L.append(f"* **Leak probe (rerun)**: AUC predicting `fund_imputed` — core {lp['core']:.3f}, EDGAR blocks "
+             f"{lp['fund']:.3f}, core+EDGAR {lp['both']:.3f} ({lp['both'] - lp['core']:+.3f}, same as round 2).\n")
+    cv = cov.copy()
+    for col in cv.columns:
+        cv[col] = cv[col].map(lambda x: _pct(x, 0))
+    L.append("Coverage among eligible rows (any value incl. imputed; `sue_real` = from the name's own filings):\n\n"
+             + md_table(cv) + "\n")
+    verdict = "**PASS**" if g["passed"] else "**FAIL — not promoted**"
+    L.append(f"### Verdict (round 4)\n\n{verdict}. Selected recipe `{v}`, construction `{c}` "
+             f"({R3_LABELS.get(c, c)}).\n")
+    gt = pd.DataFrame([{"#": x["id"], "criterion": x["criterion"],
+                        "value": (_f(x["value"], 4) if isinstance(x["value"], float) else x["value"]),
+                        "threshold": x["threshold"], "result": "PASS" if x["pass"] else "FAIL"} for x in g["gate"]])
+    L.append(md_table(gt, index=False) + "\n")
+    b, d = g["boot"], g["dsr"]
+    L.append(f"Sharpe {_f(b['sharpe']['point'])} [{_f(b['sharpe']['lo'])}, {_f(b['sharpe']['hi'])}], Sharpe − EW "
+             f"{_f(b['sharpe_minus_ew']['point'])} [{_f(b['sharpe_minus_ew']['lo'])}, {_f(b['sharpe_minus_ew']['hi'])}], "
+             f"IR vs EW {_f(b['ir_ew']['point'])} [{_f(b['ir_ew']['lo'])}, {_f(b['ir_ew']['hi'])}]; DSR "
+             f"{_f(d['dsr'], 3)} vs SR* {_f(d['sr_star_ann'])} (N = {d['n_trials']}).\n")
+    L.append("### Signal by block (weekly OOS, vs 30-session return)\n")
+    rows = []
+    base_ic = sigs[inc]["fwd_ret_30"]["all"]["mean_ic"]
+    for x, s in sigs.items():
+        a = s["fwd_ret_30"]["all"]
+        yp = sum(1 for y in gate.A_YEARS if s["fwd_ret_30"].get(y, {}).get("mean_ic", -1) > 0)
+        rows.append({"variant": x, "target": tr.VARIANTS[x][0], "IC": _f(a["mean_ic"], 4),
+                     "Δ IC vs sn30_fund": _f(a["mean_ic"] - base_ic, 4) if x != inc else "–",
+                     "NW t": _f(a["nw_t"]), "SN-IC": _f(a["sector_neutral_ic"], 4),
+                     "decile spread": _pct(a["decile_spread"], 2), "yrs IC>0": f"{yp}/8",
+                     "holdout IC": _f(g["holdouts"].get(x, float("nan")), 4) if x in g["holdouts"] else ""})
+    L.append(md_table(pd.DataFrame(rows), index=False) + "\n")
+    py = pd.DataFrame({x: {y: _f(s["fwd_ret_30"][y]["mean_ic"], 4) for y in gate.A_YEARS if y in s["fwd_ret_30"]}
+                       for x, s in sigs.items()})
+    L.append("Per-year IC:\n\n" + md_table(py) + "\n")
+    L.append("### Books (floor p50/$25M; Feb 2019 → 2026-11-04, 10 bps/side)\n")
+    brows = []
+    for cc in gate.R4_CONSTRUCTIONS:
+        m = r3j["configs"][f"{inc}/{cc}"]["all"]
+        brows.append({"preds": inc, "book": cc, **_book_cols(m)})
+    for k, val in r4["books"].items():
+        x, cc = k.split("/")
+        brows.append({"preds": x, "book": cc, **_book_cols(val["all"])})
+    for name, m in (("EW universe", r2["benchmarks"]["ew_universe"]["all"]), ("SPY", r2["benchmarks"]["spy"]["all"])):
+        brows.append({"preds": "-", "book": name, **_book_cols(m)})
+    L.append(md_table(pd.DataFrame(brows), index=False) + "\n")
+    L.append("### Recommendation (round 4)\n")
+    L.append(RECOMMENDATION_R4)
+    text = open(REPORT).read()
+    if R4_MARK in text:
+        text = text[:text.index(R4_MARK)]
+    open(REPORT, "w").write(text.rstrip() + "\n" + "\n".join(L) + "\n")
+
+
+def _book_cols(m: dict) -> dict:
+    return {"CAGR": _pct(m["cagr"]), "vol": _pct(m["vol"]), "Sharpe": _f(m["sharpe"]), "maxDD": _pct(m["max_dd"]),
+            "maxDD ex Feb–Apr 2020": _pct(m["max_dd_ex_covid"]) if "max_dd_ex_covid" in m else "",
+            "IR vs SPY": _f(m["ir_spy"]), "IR vs EW": _f(m["ir_ew"]) if np.isfinite(m.get("ir_ew", np.nan)) else "",
+            "turnover/reb": _pct(m.get("turnover_m", float("nan")), 0)}
+
+
+RECOMMENDATION_R4 = """**No new block clears the pre-registered bar, so the recipe stays `sn30_fund` and the gate fails
+again on Deflated Sharpe alone (0.49 vs 0.90, N = 55).** Residual momentum, EDGAR SUE / fundamental
+momentum and the low-vol/quality block each move the walk-forward IC by −0.004…+0.002 (bar: +0.005); combining
+them (`sn30_all`, ensemble or LGBM-only) gives +0.001. The trees already extract what these blocks add from
+the 32 price/volume features + the 14 fundamentals: e.g. the explicit low-vol/quality composite raises IC
+slightly but *lowers* book Sharpe (0.46 vs 0.58), i.e. the model already holds that tilt. Residual momentum
+gives the best recent holdout (0.147) but the worst walk-forward IC (0.062) — not a robust gain.
+
+**Which model should trade (initial paper buy): keep the current production `v2final_nonews`; do not
+deploy a v3 artefact.** Evidence:
+* Pre-registered rule: v3 replaces v2 only if it passes the gate; after four rounds (55 trials) it has not.
+* Head-to-head on the only window where both have genuine out-of-sample scores (feature dates
+  2026-07-15 → 2026-09-23, 30-session labels, trained ≤ 2026-05-29): on the legacy ~1.9k-name universe
+  that production trades, v3 `sn30_fund` scores IC **0.103** vs **0.140** for the v2 recipe
+  (`v2_long`, holdout_eval_phase4, 1,730-name common population). v3 is better only on its wider universe
+  (0.143 on ~3.2k names), which production does not trade.
+* v3's 8-year walk-forward proves the *ranking* is durable (IC > 0 in 7/8 years), but no long-only book built
+  from it beat SPY or the EW universe on IR over 2019–2026 — there is no evidence that switching would
+  improve the paper account's returns.
+* Caveat on v2: `v2final_nonews` has no multi-year out-of-sample record (trained 2024-10 → 2026-09, one
+  regime), the round-1 diagnosis that such models decay within ~9 months still applies — keep WS5's monthly
+  IC/drift monitoring and quarterly retrain, and use the broad strict-sector-cap long-only book
+  (`long_only_v3`, K=30) rather than the concentrated top-10.
+
+The decisive missing experiment is a 2019–2026 walk-forward of the *v2 recipe* itself on this
+survivorship-free store (same folds/books): only that can say whether v2's recent edge is a regime artefact.
+It needs the v2 training pipeline, which is not in this branch."""
+
+
 if __name__ == "__main__":
     import sys
-    if "--r3" in sys.argv:
+    if "--r4" in sys.argv:
+        build_r4()
+    elif "--r3" in sys.argv:
         build_r3()
     elif "--r2" in sys.argv:
         lp = ex.eval_dir("leak_probe.json")
