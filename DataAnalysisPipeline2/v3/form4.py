@@ -248,8 +248,10 @@ def refresh(start: str | None = None, end: str | None = None, issuer_filter: boo
     end = end or (dt.date.today() - dt.timedelta(days=1)).isoformat()
     client = SECClient()
     ciks = universe_issuer_ciks() if issuer_filter else None
+    from pandas.tseries.holiday import USFederalHolidayCalendar
     from .fundamentals import nyse_holidays
-    hol = set(pd.to_datetime(nyse_holidays()))
+    # EDGAR publishes no daily index on NYSE holidays nor on federal holidays (e.g. Columbus Day)
+    hol = set(pd.to_datetime(nyse_holidays())) | set(USFederalHolidayCalendar().holidays(start, end))
     days = [d for d in pd.bdate_range(start, end) if d not in hol]
     n_rows = 0
     for d in days:

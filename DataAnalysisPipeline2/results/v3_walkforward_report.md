@@ -1003,3 +1003,13 @@ What round 8 established:
 If the user wants a change on *risk* grounds, the optimizer book with this signal is the best-supported
 candidate (paper, explicit opt-in, with the documented gate failures). On *return* grounds, nothing tested
 in eight rounds (92 trials) has shown an edge over SPY after costs.
+
+## Live alternative-data path (engineering only — no new trials, N stays 92)
+
+`v3/form4.py` (daily EDGAR Form 4/5 ingestion), `v3/altlive.py` (`live_altdata_features`, cache refresh CLI `python -m DataAnalysisPipeline2.v3.altlive refresh`). Not wired into `bot.py`.
+
+* **Daily feed:** EDGAR daily master index → each Form 4/5 submission → the bulk-data schema (issuer CIK, filing date, availability = next business day, owner, officer/director flag, code, shares, price, value). Issuers restricted to the SEC ticker→CIK map (lossless: features only reach tickers through that map). ≤ 8 requests/s, retries with backoff, per-day Parquet cache, failed filings retried on the next refresh, NYSE and federal holidays skipped.
+* **Backfill 2026-04-01 → 2026-11-05:** 152 trading days, 29,213 filings with open-market lines → 69,320 P/S lines (58,238 sales, 11,082 purchases) for 3,745 issuers; ~96k requests, 3.3 h wall time, ≤ 160 MB RSS.
+* **Parity with the bulk data set** (2026-03-02 and 03-03, covered by both): 730 = 730 accessions, 1,327 = 1,327 lines, 100% matched both ways, 0 mismatches in issuer, value or availability date — after applying the bulk convention (price and shares rounded to 2 decimals, half up; identical lines collapsed). Documented difference: in multi-owner filings the bulk TSV's first reporting owner is not always the XML's first owner (3.4% of lines differ in owner CIK, 0.5% in the officer/director flag) — affects only `ins_n_buyers_90` / `ins_od_buy_90` / cluster counts.
+* **FINRA:** the live refresh downloads new bi-monthly files (quoted-header fix); latest usable on 2026-11-05 = the 2026-10-15 settlement (13,078 symbols).
+* **Live == offline:** `live_altdata_features` reproduces the round-8 training frame exactly on a historical date (test `test_live_features_equal_offline_frame`, 2025-06-27, all `ins_*_hd` and `si_*` columns). Live smoke on 2026-10-30: 75% of eligible names have insider activity in the trailing 180 days (65% over 2025–2026Q1), 1.7 s per decision date, 1.1 GB RSS.
