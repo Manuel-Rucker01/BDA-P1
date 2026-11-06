@@ -807,3 +807,68 @@ Registered in `v3/gate.py` (`R7_*`, `N_TRIALS_R7`, `choose_config_r7`); threshol
 * **Trials:** 8 new → **N = 85** (71 through Round 5 + 6 in Round 6 + 8).
 * **Selection:** highest IR vs SPY with max DD ≥ −35% among the configs at $100M plus the `lo30` books (else highest IR vs SPY).
 * **Gate (Round 5 criteria):** a1–a3 on the signal's weekly IC over v3-eligible names; b1 Sharpe > EW; b2 max DD ≥ −35%; b3 DSR ≥ 0.90 (N = 85); c1 ≥ 0.12 on the gate-c window using the signal's 2026 walk-forward fold (trained only through 2025-10); r5 IR vs SPY > 0 (bootstrap 95% CI).
+
+## Round 7 — results
+
+**FAIL — nothing replaces production**. Selected (pre-registered rule: highest IR vs SPY with max DD ≥ −35% among the $100M configs and the K=30 books): `stack/mv_abs_all_100m`. N = 85 trials (all rounds' Sharpe ratios in the DSR dispersion).
+
+| # | criterion | value | threshold | result |
+|---|---|---|---|---|
+| a1 | mean weekly IC > 0 | 0.0694 | > 0 | PASS |
+| a2 | Newey-West t of IC | 5.2020 | > 2.0 | PASS |
+| a3 | years with IC > 0 | 7 | >= 6 of 8 | PASS |
+| b1 | Sharpe(chosen) vs Sharpe(EW universe) | 0.9838 | > 0.477 | PASS |
+| b2 | max drawdown | -0.2984 | >= -0.35 | PASS |
+| b3 | Deflated Sharpe prob (N=85) | 0.8624 | >= 0.9 | FAIL |
+| c1 | holdout IC proxy (2026 fold, 10 weekly dates) | 0.1351 | >= 0.12 | PASS |
+| r5 | IR vs SPY (95% CI -0.82 .. 0.50) | -0.1596 | > 0.0 | FAIL |
+
+Bootstrap 95% CIs (stationary, block 21): Sharpe 0.98 [0.33, 1.73], IR vs SPY -0.16 [-0.82, 0.50], IR vs EW 0.22 [-0.44, 0.85]; DSR 0.862 vs SR* 0.58.
+
+### Books (Feb 2019 → 2026-11-04, after costs)
+
+| signal | book | AUM | CAGR | vol | Sharpe | maxDD | maxDD ex Feb–Apr 2020 | IR vs SPY | IR vs EW | turnover/reb | cost/yr | names | realized/ex-ante vol |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| v2rec_tr | MV absolute long-only (R5 optimizer) | 100m | 13.0% | 15.4% | 0.87 | -30.4% | -18.8% | -0.30 | 0.14 | 20% | 1.91% | 82 | 1.19 |
+| v2rec_tr | MV absolute long-only (R5 optimizer) | 1m | 12.0% | 15.4% | 0.82 | -30.5% | -18.9% | -0.38 | 0.08 | 23% | 1.94% | 74 | 1.19 |
+| v2rec_tr | long_only_v3 K=30 | – | 11.1% | 19.6% | 0.64 | -35.0% | -30.6% | -0.47 | 0.10 | 81% | 1.98% | 30 |  |
+| stack | MV absolute long-only (R5 optimizer) | 100m | 14.7% | 15.1% | 0.98 | -29.8% | -18.5% | -0.16 | 0.22 | 17% | 1.64% | 81 | 1.18 |
+| stack | MV absolute long-only (R5 optimizer) | 1m | 13.6% | 15.4% | 0.91 | -31.6% | -18.9% | -0.24 | 0.17 | 19% | 1.63% | 72 | 1.20 |
+| stack | long_only_v3 K=30 | – | 8.6% | 19.7% | 0.52 | -37.5% | -30.2% | -0.66 | -0.08 | 78% | 1.89% | 30 |  |
+| v2rec_tr | MV absolute, eigen-adjusted risk | 100m | 12.8% | 15.5% | 0.86 | -30.4% | -18.9% | -0.33 | 0.13 | 20% | 1.92% | 82 | 1.17 |
+| v2rec_tr | MV absolute, eigen-adjusted risk | 1m | 11.6% | 15.4% | 0.79 | -30.5% | -19.2% | -0.42 | 0.06 | 23% | 1.92% | 76 | 1.17 |
+| sn30_fund (R5 ref.) | MV absolute long-only (R5 optimizer) | 100m | 14.6% | 15.2% | 0.97 | -30.6% | -18.3% | -0.17 | 0.21 | 15% | 1.58% | 81 | 1.18 |
+| - | SPY |  | 16.1% | 18.9% | 0.89 | -33.8% | -24.5% |  | 0.50 |  |  |  |  |
+| - | EW eligible universe |  | 8.8% | 23.5% | 0.48 | -42.0% | -32.7% | -0.50 |  |  |  |  |  |
+| - | cap-weighted eligible universe |  | 15.1% | 19.6% | 0.81 | -33.9% | -27.7% | -0.26 | 0.49 |  |  |  |  |
+
+### Signals on the traded universe
+
+| signal | IC 30d (v3-eligible) | NW t | yrs>0 | holdout proxy |
+|---|---|---|---|---|
+| v2rec_tr | 0.0725 | 5.24 | 7/8 | 0.1261 |
+| stack | 0.0694 | 5.20 | 7/8 | 0.1351 |
+
+### Findings
+
+* **The v2 recipe's ranking edge does not survive the optimizer.** Scored on tradable names it has the highest IC (0.0725 vs 0.0653), but through `mv_abs_all` it is *worse* than the incumbent signal (Sharpe 0.87 vs 0.97, IR vs SPY −0.30 vs −0.17): the optimizer's alpha is the IC-scaled score times specific vol, and v2's extra skill sits in the volatile small names the risk/cost terms down-weight.
+* **Stacking + `mv_abs_all` is the best book of the project** (Sharpe 0.98, max DD −29.8%, IR vs EW +0.22) — essentially tied with Round 5's incumbent (0.97); DSR 0.862 is just below 0.90 and IR vs SPY is still negative (−0.16, CI −0.82…0.50). It beats SPY on risk (vol 15% vs 19%, DD −30% vs −34%) but not on return (14.7% vs 16.1% CAGR).
+* **Eigenfactor adjustment does not fix the risk bias** (realized/ex-ante vol 1.19 → 1.17) and slightly lowers performance: the under-prediction is not in the factor covariance's eigen-spectrum but in specific risk / concentration of the optimized book.
+* **K=30 heuristic books** remain clearly worse than the optimizer (Sharpe 0.52–0.64, DD −35…−38%).
+
+### Recommendation (round 7)
+
+**Nothing should replace production `v2final_nonews` + `long_only_v3` K=30 on the evidence of the
+pre-registered gate.** Every v3 book still fails IR vs SPY > 0 (best −0.16) and the DSR bar (best 0.862 at
+N = 85) — i.e. none has shown that it beats simply holding SPY after costs.
+
+Two caveats for the user's decision (not gate outcomes):
+* The production K=30 heuristic book is itself the weakest construction in every round (Sharpe 0.5–0.65,
+  max DD −35…−39% in the 2019–2026 walk-forwards, for both v2- and v3-style rankings). If a change were made
+  on risk grounds, the evidence favours the optimizer (`mv_abs_all`: Sharpe ~0.97, max DD −30%, vol 15%)
+  over K=30 — but it would be a risk-reduction choice, not an alpha one, and it fails the pre-registered
+  gate, so it should go to the paper account only as an explicit, user-approved experiment.
+* If the goal is to beat SPY, the honest finding of seven rounds is that this signal family (price/volume +
+  EDGAR fundamentals, IC ≈ 0.07, ~no large-cap skill) does not do it after costs. Next steps would be new
+  information (analyst revisions via the ready adapter, alternative data) rather than further model or
+  construction search, which would keep raising N.

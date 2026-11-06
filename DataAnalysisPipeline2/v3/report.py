@@ -914,9 +914,111 @@ RECOMMENDATION_R6 = """* **Nothing is promoted in round 6** (pre-registered gate
   information are the most promising additions."""
 
 
+# =========================================================================== #
+# Round 7 results
+# =========================================================================== #
+R7_MARK = "\n## Round 7 — results"
+R7_LABEL = {"mv_abs_all": "MV absolute long-only (R5 optimizer)", "mv_abs_all_eig": "MV absolute, eigen-adjusted risk",
+            "lo30": "long_only_v3 K=30"}
+
+
+def write_r7() -> None:
+    res = json.load(open(ex.eval_dir("results_r7.json")))
+    g = json.load(open(ex.eval_dir("gate_r7.json")))
+    r5j = json.load(open(ex.eval_dir("results_r5.json")))
+    L = [R7_MARK + "\n"]
+    verdict = "**PASS**" if g["passed"] else "**FAIL — nothing replaces production**"
+    L.append(f"{verdict}. Selected (pre-registered rule: highest IR vs SPY with max DD ≥ −35% among the $100M "
+             f"configs and the K=30 books): `{g['config']}`. N = {g['n_trials']} trials (all rounds' Sharpe ratios "
+             "in the DSR dispersion).\n")
+    L.append(_gt(g["gate"]) + "\n")
+    b = g["boot"]
+    L.append(f"Bootstrap 95% CIs (stationary, block 21): Sharpe {_f(b['sharpe']['point'])} [{_f(b['sharpe']['lo'])}, "
+             f"{_f(b['sharpe']['hi'])}], IR vs SPY {_f(b['ir_spy']['point'])} [{_f(b['ir_spy']['lo'])}, "
+             f"{_f(b['ir_spy']['hi'])}], IR vs EW {_f(b['ir_ew']['point'])} [{_f(b['ir_ew']['lo'])}, "
+             f"{_f(b['ir_ew']['hi'])}]; DSR {_f(g['dsr']['dsr'], 3)} vs SR* {_f(g['dsr']['sr_star_ann'])}.\n")
+    rows = []
+    for k, v in res["configs"].items():
+        a = v["all"]
+        sig, conf = k.split("/")
+        base = conf.rsplit("_", 1)[0] if conf.endswith("m") and conf != "lo30" else conf
+        rows.append({"signal": sig, "book": R7_LABEL.get(base, base),
+                     "AUM": conf.rsplit("_", 1)[1] if base != conf else "–",
+                     "CAGR": _pct(a["cagr"]), "vol": _pct(a["vol"]), "Sharpe": _f(a["sharpe"]),
+                     "maxDD": _pct(a["max_dd"]), "maxDD ex Feb–Apr 2020": _pct(a["max_dd_ex_covid"]),
+                     "IR vs SPY": _f(a["ir_spy"]), "IR vs EW": _f(a["ir_ew"]),
+                     "turnover/reb": _pct(a.get("turnover_m", float("nan")), 0),
+                     "cost/yr": _pct(a.get("cost_drag_ann", float("nan")), 2), "names": f"{a.get('avg_names', 30):.0f}",
+                     "realized/ex-ante vol": _f(a.get("realized_over_exante_vol", float("nan")))})
+    ref = r5j["configs"]["mv_abs_all_100m"]["all"]
+    rows.append({"signal": "sn30_fund (R5 ref.)", "book": R7_LABEL["mv_abs_all"], "AUM": "100m",
+                 "CAGR": _pct(ref["cagr"]), "vol": _pct(ref["vol"]), "Sharpe": _f(ref["sharpe"]),
+                 "maxDD": _pct(ref["max_dd"]), "maxDD ex Feb–Apr 2020": _pct(ref["max_dd_ex_covid"]),
+                 "IR vs SPY": _f(ref["ir_spy"]), "IR vs EW": _f(ref["ir_ew"]),
+                 "turnover/reb": _pct(ref.get("turnover_m", float("nan")), 0),
+                 "cost/yr": _pct(ref.get("cost_drag_ann", float("nan")), 2), "names": f"{ref.get('avg_names', 0):.0f}",
+                 "realized/ex-ante vol": _f(ref["vol"] / ref["ex_ante_vol"])})
+    for name in ("spy", "ew_universe", "cw_all"):
+        a = r5j["benchmarks"][name]["all"]
+        rows.append({"signal": "-", "book": {"spy": "SPY", "ew_universe": "EW eligible universe",
+                                              "cw_all": "cap-weighted eligible universe"}[name], "AUM": "",
+                     "CAGR": _pct(a["cagr"]), "vol": _pct(a["vol"]), "Sharpe": _f(a["sharpe"]),
+                     "maxDD": _pct(a["max_dd"]), "maxDD ex Feb–Apr 2020": _pct(a["max_dd_ex_covid"]),
+                     "IR vs SPY": _f(a.get("ir_spy", float("nan"))) if name != "spy" else "",
+                     "IR vs EW": _f(a.get("ir_ew", float("nan"))) if name != "ew_universe" else "",
+                     "turnover/reb": "", "cost/yr": "", "names": "", "realized/ex-ante vol": ""})
+    L.append("### Books (Feb 2019 → 2026-11-04, after costs)\n\n" + md_table(pd.DataFrame(rows), index=False) + "\n")
+    srows = []
+    for s, x in g["signals"].items():
+        a = x["summary"]["all"]
+        srows.append({"signal": s, "IC 30d (v3-eligible)": _f(a["mean_ic"], 4), "NW t": _f(a["nw_t"]),
+                      "yrs>0": f"{sum(1 for y in gate.A_YEARS if x['summary'].get(y, {}).get('mean_ic', -1) > 0)}/8",
+                      "holdout proxy": _f(x["holdout_proxy"], 4)})
+    L.append("### Signals on the traded universe\n\n" + md_table(pd.DataFrame(srows), index=False) + "\n")
+    L.append("### Findings\n")
+    L.append("\n".join([
+        "* **The v2 recipe's ranking edge does not survive the optimizer.** Scored on tradable names it has the "
+        "highest IC (0.0725 vs 0.0653), but through `mv_abs_all` it is *worse* than the incumbent signal "
+        "(Sharpe 0.87 vs 0.97, IR vs SPY −0.30 vs −0.17): the optimizer's alpha is the IC-scaled score times "
+        "specific vol, and v2's extra skill sits in the volatile small names the risk/cost terms down-weight.",
+        "* **Stacking + `mv_abs_all` is the best book of the project** (Sharpe 0.98, max DD −29.8%, IR vs EW +0.22) "
+        "— essentially tied with Round 5's incumbent (0.97); DSR 0.862 is just below 0.90 and IR vs SPY is still "
+        "negative (−0.16, CI −0.82…0.50). It beats SPY on risk (vol 15% vs 19%, DD −30% vs −34%) but not on "
+        "return (14.7% vs 16.1% CAGR).",
+        "* **Eigenfactor adjustment does not fix the risk bias** (realized/ex-ante vol 1.19 → 1.17) and slightly "
+        "lowers performance: the under-prediction is not in the factor covariance's eigen-spectrum but in "
+        "specific risk / concentration of the optimized book.",
+        "* **K=30 heuristic books** remain clearly worse than the optimizer (Sharpe 0.52–0.64, DD −35…−38%).",
+    ]) + "\n")
+    L.append("### Recommendation (round 7)\n")
+    L.append(RECOMMENDATION_R7)
+    text = open(REPORT).read()
+    if R7_MARK in text:
+        text = text[:text.index(R7_MARK)]
+    open(REPORT, "w").write(text.rstrip() + "\n" + "\n".join(L) + "\n")
+
+
+RECOMMENDATION_R7 = """**Nothing should replace production `v2final_nonews` + `long_only_v3` K=30 on the evidence of the
+pre-registered gate.** Every v3 book still fails IR vs SPY > 0 (best −0.16) and the DSR bar (best 0.862 at
+N = 85) — i.e. none has shown that it beats simply holding SPY after costs.
+
+Two caveats for the user's decision (not gate outcomes):
+* The production K=30 heuristic book is itself the weakest construction in every round (Sharpe 0.5–0.65,
+  max DD −35…−39% in the 2019–2026 walk-forwards, for both v2- and v3-style rankings). If a change were made
+  on risk grounds, the evidence favours the optimizer (`mv_abs_all`: Sharpe ~0.97, max DD −30%, vol 15%)
+  over K=30 — but it would be a risk-reduction choice, not an alpha one, and it fails the pre-registered
+  gate, so it should go to the paper account only as an explicit, user-approved experiment.
+* If the goal is to beat SPY, the honest finding of seven rounds is that this signal family (price/volume +
+  EDGAR fundamentals, IC ≈ 0.07, ~no large-cap skill) does not do it after costs. Next steps would be new
+  information (analyst revisions via the ready adapter, alternative data) rather than further model or
+  construction search, which would keep raising N."""
+
+
 if __name__ == "__main__":
     import sys
-    if "--r6" in sys.argv:
+    if "--r7" in sys.argv:
+        write_r7()
+    elif "--r6" in sys.argv:
         write_r6()
     elif "--r4" in sys.argv:
         build_r4()

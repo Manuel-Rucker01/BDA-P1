@@ -103,7 +103,10 @@ def lo30_book(sig: str):
     by_date = {d: g for d, g in p.groupby("Date")}
     wbd = {r: bt.build_book(by_date[d], bt.CONSTRUCTIONS["lo30"]) for r, d in plan.items()}
     rets = ex.returns_matrix(set(p["ticker"]), start="2018-12-01")
-    return bt.simulate(wbd, rets, min(plan))
+    ret, lg = bt.simulate(wbd, rets, min(plan))
+    # columns round5.metrics expects from optimizer logs (no ex-ante risk for a heuristic book)
+    lg = lg.assign(n_short=0, ex_ante_vol=np.nan, ex_ante_te=np.nan, status="solved")
+    return ret, lg
 
 
 def run(log=print) -> dict:
