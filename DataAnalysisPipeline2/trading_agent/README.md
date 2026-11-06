@@ -89,6 +89,21 @@ Customize your stock universe and basket size:
   `--strategy high_confidence` (default)
 * **Regime-Filtered Long/Short (Dynamic hedging)**:
   `--strategy regime_filtered`
+* **Optimized long-only (experimental, OFF by default)**:
+  `--strategy optimized_v3` (or `BDA_STRATEGY=optimized_v3`). Builds the book with the
+  Round-5/7 cost-aware mean-variance optimizer (`v3/optimizer.py`, spec `mv_abs_all`)
+  instead of the K=30 heuristic: better walk-forward risk (Sharpe 0.82-0.98, max DD ~-30%
+  vs 0.52-0.64 / -35..-38%), but it does **not** pass the promotion gate (IR vs SPY < 0,
+  DSR < 0.90), so the workflow default stays `long_only_v3`. Knobs: `BDA_OPT_IC` (0.0725),
+  `BDA_OPT_AUM` ($1M), `BDA_OPT_TARGET_EXPOSURE`, `BDA_OPT_MIN_WEIGHT`,
+  `BDA_OPT_HISTORY_DAYS` (800), `BDA_OPT_FUND_DIR`, `BDA_OPT_FUND_MAX_AGE_DAYS` (120).
+  Fundamentals (shares outstanding, EDGAR fundamentals, SIC sector) come from
+  `$BDA_DATA_V3/fundamentals` when present, else from the committed snapshot
+  `data/fundamentals_snapshot/` (~2 MB; refresh monthly with
+  `python -m DataAnalysisPipeline2.trading_agent.optimized snapshot`). If fundamentals are
+  missing or stale, the history is too short, or the solver / constraint check fails, the
+  bot logs a warning and uses `long_only_v3`; `CONSTRUCTION_JSON` / `RESULT_JSON` report the
+  construction actually used.
 
 ### 5. Market Regime Override
 To manually force the market trend regime (bypassing S&P 500 HMM decoders):

@@ -802,7 +802,8 @@ def validate_required_columns(df, required_cols, context):
 # Strategies whose book actually depends on the HMM regime. Everything else
 # skips the (network + fit) regime step entirely.
 REGIME_STRATEGIES = frozenset({"regime_filtered"})
-STRATEGIES = ("high_confidence", "regime_filtered", "top_k", "long_only_v3", "long_short_neutral")
+STRATEGIES = ("high_confidence", "regime_filtered", "top_k", "long_only_v3", "long_short_neutral",
+              "optimized_v3")
 
 
 def strategy_uses_regime(strategy):
@@ -862,6 +863,11 @@ class BDATradingAgent:
         self.last_decision_ctx = None
         self.last_predictions_df = None     # ticker, pred_rank, pred_proba, kalman_beta, ...
         self.last_feature_matrix = None     # scaled X used to call .predict()
+        # optimized_v3: full bar history for the risk model (fetch_live_data
+        # fetches risk_history_days when set) and the construction actually used.
+        self.risk_history_days = None
+        self.last_bars = None
+        self.last_construction = None
 
     def load_model(self):
         """Loads serialized ensemble classifier models and scaling metrics from best_model.pkl."""
@@ -980,17 +986,22 @@ class BDATradingAgent:
         from . import market_data
 
         n = len(config.TICKERS)
+        # optimized_v3 needs a longer history for the risk model: fetch it once,
+        # keep the full frame for the optimizer (self.last_bars), and hand
+        # inference exactly its usual window so the production signal is unchanged.
+        extra = int(getattr(self, "risk_history_days", None) or 0)
         if self.feature_version >= 3:
             # v3: >= 120 bars for eligibility + the proxy-sector window (120
             # sessions before the decision month) + EMA warm-up; raw closes
             # for the $3 rule.
             days = int(getattr(config, "LIVE_HISTORY_DAYS_V3", 420))
-            print(f"[Agent] Downloading {days} days of daily bars (+ raw closes) for {n} tickers (v3)...")
-            df, failures = market_data.fetch_daily_bars(config.TICKERS, lookback_days=days, raw_close=True)
+            print(f"[Agent] Downloading {max(days, extra)} days of daily bars (+ raw closes) for {n} tickers (v3)...")
+            df, failures = market_data.fetch_daily_bars(config.TICKERS, lookback_days=max(days, extra),
+                                                        raw_close=True)
         else:
             days = int(getattr(config, "LIVE_HISTORY_DAYS", 250))
-            print(f"[Agent] Downloading {days} days of daily bars for {n} tickers...")
-            df, failures = market_data.fetch_daily_bars(config.TICKERS, lookback_days=days)
+            print(f"[Agent] Downloading {max(days, extra)} days of daily bars for {n} tickers...")
+            df, failures = market_data.fetch_daily_bars(config.TICKERS, lookback_days=max(days, extra))
         if failures:
             print(f"[Agent] No data for {len(failures)} tickers (likely delisted; "
                   f"first 10: {failures[:10]}). Continuing with the rest.")
@@ -1004,6 +1015,10 @@ class BDATradingAgent:
         if n > 30 and coverage < min_cov:
             raise RuntimeError(f"Universe coverage {coverage:.0%} below {min_cov:.0%} — "
                                "refusing to rank a partial universe.")
+        self.last_bars = df
+        if extra > days:
+            d = pd.to_datetime(df["Date"])
+            df = df[d >= d.max() - pd.Timedelta(days=days)].reset_index(drop=True)
         return df
 
     def run_inference(self, price_history_df):
@@ -1372,6 +1387,75 @@ class BDATradingAgent:
         print(f"[Agent] Borrow check: {len(ok)}/{len(pool)} bottom-ranked names shortable + ETB.")
         return ok
 
+    def _long_only_v3_book(self, predictions_df):
+        w, diag = long_only_book(
+            predictions_df, k=config.V3_K, max_per_sector=config.V3_MAX_PER_SECTOR,
+            max_weight=config.V3_MAX_WEIGHT, target_exposure=config.V3_TARGET_EXPOSURE,
+            vol_floor=getattr(config, "VOL_FLOOR", 1e-3))
+        self.last_book_diagnostics = diag
+        print(f"[Agent] long_only_v3: held={diag['n_held']}/{config.V3_K} "
+              f"(<= {config.V3_MAX_PER_SECTOR}/sector, <= {config.V3_MAX_WEIGHT:.2%}/name) | "
+              f"long={diag['long']:.3f} cash={diag['cash']:.3f} | "
+              f"sectors={diag['sector_counts']}")
+        for note in diag["notes"]:
+            print(f"[Agent] long_only_v3 note: {note}")
+        return w, diag
+
+    def _current_weights(self):
+        """Current paper positions as fractions of equity (read-only GETs), the
+        optimizer's w_prev for its trading-cost term. {} when unavailable."""
+        if not (config.ALPACA_API_KEY and config.ALPACA_SECRET_KEY):
+            return {}
+        try:
+            from alpaca.trading.client import TradingClient
+            tc = TradingClient(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY,
+                               paper=config.ALPACA_PAPER_TRADING)
+            eq = float(tc.get_account().equity)
+            if eq <= 0:
+                return {}
+            return {p.symbol: float(p.market_value) / eq for p in tc.get_all_positions()}
+        except Exception as e:
+            print(f"[Agent] optimized_v3: current positions unavailable ({e}); w_prev = cash.")
+            return {}
+
+    def _optimized_v3_or_fallback(self, predictions_df):
+        """optimized_v3 book, or -- on ANY failure (fundamentals / risk model /
+        solver / constraint check) -- the long_only_v3 book. The optimizer
+        either returns a complete, checked book or raises; nothing in between
+        is ever used. ``self.last_construction`` records what was used."""
+        try:
+            from . import optimized
+            bars = getattr(self, "last_bars", None)
+            if bars is None or len(bars) == 0:
+                raise optimized.OptimizerUnavailable("no bar history (fetch_live_data not run)")
+            w, diag = optimized.optimized_book(
+                predictions_df, bars, aum=config.OPT_AUM, ic=config.OPT_IC,
+                target_exposure=config.OPT_TARGET_EXPOSURE, w_prev=self._current_weights(),
+                fund_dir=config.OPT_FUND_DIR or None, max_age_days=config.OPT_FUND_MAX_AGE_DAYS,
+                min_universe=config.OPT_MIN_UNIVERSE, min_names=config.OPT_MIN_NAMES,
+                spec={"min_weight": config.OPT_MIN_WEIGHT})
+            self.last_book_diagnostics = diag
+            self.last_construction = {"requested": "optimized_v3", "construction": "optimized_v3",
+                                      **{k: diag[k] for k in ("n_names", "long", "ex_ante_vol_ann",
+                                                               "turnover_oneway", "solve_seconds", "status")},
+                                      "fundamentals_source": diag["fundamentals"]["source"],
+                                      "fundamentals_as_of": diag["fundamentals"]["as_of"]}
+            print(f"[Agent] optimized_v3 ({diag['spec']}, AUM ${diag['aum']:,.0f}, IC {diag['ic']:.4f}): "
+                  f"{diag['n_names']} names | long={diag['long']:.3f} cash={diag['cash']:.3f} | "
+                  f"max w={diag['max_weight']:.2%} | ex-ante vol {diag['ex_ante_vol_ann']:.1%} | "
+                  f"exp. cost {diag['exp_cost'] * 1e4:.1f} bp | turnover {diag['turnover_oneway']:.1%} | "
+                  f"solve {diag['solve_seconds']:.1f}s ({diag['iters']} it)")
+            print(f"[Agent] optimized_v3 sectors: {diag['sector_weights']}")
+            return w, diag
+        except Exception as e:
+            reason = f"{type(e).__name__}: {e}"
+            print(f"[WARNING] optimized_v3 unavailable -- {reason}. "
+                  f"FALLING BACK to long_only_v3 (no optimized book is used).")
+            w, diag = self._long_only_v3_book(predictions_df)
+            self.last_construction = {"requested": "optimized_v3", "construction": "long_only_v3",
+                                      "fallback_reason": reason[:500]}
+            return w, {**diag, "construction": "long_only_v3", "fallback_reason": reason}
+
     def calculate_target_weights(self, predictions_df, is_bull, strategy="high_confidence"):
         """
         Computes optimal target portfolio weights from cross-sectional 30d
@@ -1391,6 +1475,8 @@ class BDATradingAgent:
           - long_only_v3    : broad long-only book (portfolio.long_only_book):
                               V3_K names, strict V3_MAX_PER_SECTOR cap, inverse-vol
                               capped at V3_MAX_WEIGHT, rest in cash.
+          - optimized_v3    : Round-5/7 cost-aware mean-variance book (optimized.py,
+                              spec mv_abs_all); falls back to long_only_v3 on any failure.
           - long_short_neutral : dollar-neutral long/short (portfolio.long_short_book):
                               LS_N_LONG / LS_N_SHORT names, LS_GROSS gross,
                               LS_MAX_WEIGHT per name, shortable + ETB shorts only,
@@ -1456,18 +1542,13 @@ class BDATradingAgent:
                     target_weights[row["ticker"]] = w_each
 
         elif strategy == "long_only_v3":
-            w, diag = long_only_book(
-                predictions_df, k=config.V3_K, max_per_sector=config.V3_MAX_PER_SECTOR,
-                max_weight=config.V3_MAX_WEIGHT, target_exposure=config.V3_TARGET_EXPOSURE,
-                vol_floor=getattr(config, "VOL_FLOOR", 1e-3))
+            w, _ = self._long_only_v3_book(predictions_df)
+            self.last_construction = {"requested": "long_only_v3", "construction": "long_only_v3"}
             target_weights.update(w)
-            self.last_book_diagnostics = diag
-            print(f"[Agent] long_only_v3: held={diag['n_held']}/{config.V3_K} "
-                  f"(<= {config.V3_MAX_PER_SECTOR}/sector, <= {config.V3_MAX_WEIGHT:.2%}/name) | "
-                  f"long={diag['long']:.3f} cash={diag['cash']:.3f} | "
-                  f"sectors={diag['sector_counts']}")
-            for note in diag["notes"]:
-                print(f"[Agent] long_only_v3 note: {note}")
+
+        elif strategy == "optimized_v3":
+            w, _ = self._optimized_v3_or_fallback(predictions_df)
+            target_weights.update(w)
 
         elif strategy == "long_short_neutral":
             shortable = self._shortable_universe(predictions_df, config.LS_N_SHORT)

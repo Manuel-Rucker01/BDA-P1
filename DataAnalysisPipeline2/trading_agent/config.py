@@ -234,6 +234,30 @@ LS_SECTOR_NEUTRAL = bool(_env_num("LS_SECTOR_NEUTRAL", 1, int))
 # Skip trades smaller than this fraction of equity (and < MIN_ORDER_VALUE):
 # avoids churning on small weight drifts. Full liquidations are never skipped.
 MIN_TRADE_PCT = _env_num("MIN_TRADE_PCT", 0.0025)
+
+# --- optimized_v3 (OFF by default; see trading_agent/optimized.py) ---
+# Round-5/7 cost-aware mean-variance book (spec mv_abs_all: long-only, <= 5%/name,
+# <= 10% ADV/AUM, FF-12 sectors within +-10 pp of the cap-weighted universe).
+# Better risk than K=30 in the 2019-2026 walk-forward (Sharpe 0.82-0.98 vs 0.52-0.64,
+# max DD -30..-32% vs -35..-38%) but it FAILS the pre-registered gate (IR vs SPY < 0,
+# DSR < 0.90): an explicit, user-approved paper experiment only. Any failure
+# falls back to long_only_v3.
+# OPT_IC: IC used to scale alpha; 0.0725 = the v2-recipe signal's mean weekly IC
+#   on the traded (v3-eligible) universe in Round 7 (results_r7 / report). The
+#   R7 backtest's trailing-shrunk estimate at the last decision was ~0.049.
+# OPT_AUM: AUM for the impact / liquidity terms; $1M = the R7 $1M configuration
+#   (conservative for the ~$100k paper account).
+# OPT_MIN_WEIGHT: names below this are dropped (R5 spec 0.001); default = the
+#   executor's MIN_TRADE_PCT so every planned position is actually tradable.
+OPT_IC = _env_num("OPT_IC", 0.0725)
+OPT_AUM = _env_num("OPT_AUM", 1e6)
+OPT_TARGET_EXPOSURE = _env_num("OPT_TARGET_EXPOSURE", V3_TARGET_EXPOSURE)
+OPT_MIN_WEIGHT = _env_num("OPT_MIN_WEIGHT", max(0.001, MIN_TRADE_PCT))
+OPT_HISTORY_DAYS = _env_num("OPT_HISTORY_DAYS", 800, int)    # calendar days of bars for the risk model
+OPT_FUND_DIR = os.getenv("BDA_OPT_FUND_DIR", "")             # override; else local store, else snapshot
+OPT_FUND_MAX_AGE_DAYS = _env_num("OPT_FUND_MAX_AGE_DAYS", 120, int)
+OPT_MIN_UNIVERSE = _env_num("OPT_MIN_UNIVERSE", 300, int)
+OPT_MIN_NAMES = _env_num("OPT_MIN_NAMES", 20, int)
 # Exposure-reducing orders (sells / covers) are sent first and the bot waits up
 # to FILL_WAIT_TIMEOUT_S for them to fill (polling every FILL_POLL_INTERVAL_S)
 # before sending buys / new shorts. Unfilled orders are reported.
