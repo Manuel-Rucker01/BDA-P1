@@ -51,13 +51,18 @@ def _safe_div(a: pd.Series, b: pd.Series) -> pd.Series:
     return out.where(np.isfinite(out) & (b != 0))
 
 
-def compute_features(panel: pd.DataFrame, meta: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Compute feature_version-2 features for every (ticker, Date) row.
+CS_COLUMNS = ["sector_daily_return", "sector_return_5d", "rank_daily_return",
+              "rank_return_5d", "rank_return_20d", "rank_volatility", "rank_volume_ratio"]
+TS_COLUMNS = [c for c in FEATURE_COLUMNS if c not in CS_COLUMNS]
 
-    Returns the panel (sorted by ticker, Date) with ``FEATURE_COLUMNS``,
-    ``Sector``, ``n_bars``, ``eligible`` and ``return_volatility_20d`` (an alias
-    of ``ret_vol_20d`` used for position sizing). Cross-sectional features are
-    computed over eligible rows only and are NaN elsewhere.
+
+def time_series_features(panel: pd.DataFrame) -> pd.DataFrame:
+    """Per-ticker (time-series) part of the feature set.
+
+    Every value depends only on the ticker's own rows up to that date, so it can
+    be computed on any subset of tickers (e.g. ticker chunks) as long as each
+    ticker's FULL history is present. Returns the panel sorted by (ticker, Date)
+    with ``TS_COLUMNS``, ``return_volatility_20d`` and ``n_bars``.
     """
     need = {"ticker", "Date", "company_close", "company_volume"}
     missing = need - set(panel.columns)
@@ -125,10 +130,65 @@ def compute_features(panel: pd.DataFrame, meta: pd.DataFrame | None = None) -> p
         df[f"daily_return_lag_{k}"] = lag(r1, k)
         df[f"volume_ratio_lag_{k}"] = lag(df["volume_ratio"], k)
 
+    df["n_bars"] = g.cumcount() + 1
+    return df
+
+
+def add_cross_sectional_features(df: pd.DataFrame, population: str = "eligible") -> pd.DataFrame:
+    """Add ``CS_COLUMNS`` in place: per-date sector means and percentile ranks
+    computed over the rows where boolean column ``population`` is True (NaN
+    elsewhere). ``Sector`` must be present (missing -> 'Unknown')."""
+    df["Sector"] = df["Sector"].fillna("Unknown") if "Sector" in df.columns else "Unknown"
+    for col in CS_COLUMNS:
+        df[col] = np.nan
+    el = df.loc[df[population].fillna(False).astype(bool)]
+    if len(el):
+        by_sd = el.groupby(["Sector", "Date"], observed=True, sort=False)
+        df.loc[el.index, "sector_daily_return"] = by_sd["daily_return"].transform("mean")
+        df.loc[el.index, "sector_return_5d"] = by_sd["return_5d"].transform("mean")
+        by_d = el.groupby("Date", observed=True, sort=False)
+        for src, dst in (("daily_return", "rank_daily_return"), ("return_5d", "rank_return_5d"),
+                         ("return_20d", "rank_return_20d"), ("ret_vol_10d", "rank_volatility"),
+                         ("volume_ratio", "rank_volume_ratio")):
+            df.loc[el.index, dst] = by_d[src].rank(pct=True)
+    return df
+
+
+def compute_features(panel: pd.DataFrame, meta: pd.DataFrame | None = None,
+                     population: pd.Series | str | None = None) -> pd.DataFrame:
+    """Compute feature_version-2 features for every (ticker, Date) row.
+
+    Returns the panel (sorted by ticker, Date) with ``FEATURE_COLUMNS``,
+    ``Sector``, ``n_bars``, ``eligible`` and ``return_volatility_20d`` (an alias
+    of ``ret_vol_20d`` used for position sizing). Cross-sectional features are
+    computed over eligible rows only and are NaN elsewhere.
+
+    ``population`` (optional) replaces the default eligibility rule (price >=
+    MIN_PRICE and >= MIN_HISTORY bars) as the population for every
+    cross-sectional statistic AND as the ``eligible`` column: either a boolean
+    Series aligned to ``panel``'s index or the name of a boolean column of
+    ``panel``. ``None`` (default) keeps the feature_version-2 rule that the
+    live v2 path depends on.
+    """
+    pop = None
+    if population is not None:
+        if isinstance(population, str):
+            if population not in panel.columns:
+                raise ValueError(f"population column {population!r} not in panel")
+            pop = panel[population]
+        else:
+            pop = pd.Series(population).reindex(panel.index)
+        panel = panel.assign(_population=pop.fillna(False).astype(bool).to_numpy())
+
+    df = time_series_features(panel)
+    c = df["company_close"]
+
     # Eligibility: one rule for training rows, live scoring and every
     # cross-sectional statistic below.
-    df["n_bars"] = g.cumcount() + 1
-    df["eligible"] = (c >= MIN_PRICE) & (df["n_bars"] >= MIN_HISTORY) & c.notna()
+    if pop is None:
+        df["eligible"] = (c >= MIN_PRICE) & (df["n_bars"] >= MIN_HISTORY) & c.notna()
+    else:
+        df["eligible"] = df.pop("_population").astype(bool)
 
     # Sector.
     if meta is not None and "Sector" in meta.columns:
@@ -139,22 +199,7 @@ def compute_features(panel: pd.DataFrame, meta: pd.DataFrame | None = None) -> p
     df["Sector"] = df["Sector"].fillna("Unknown")
 
     # Cross-sectional features over eligible rows only (NaN-skipping means).
-    cs_cols = ["sector_daily_return", "sector_return_5d", "rank_daily_return",
-               "rank_return_5d", "rank_return_20d", "rank_volatility", "rank_volume_ratio"]
-    for col in cs_cols:
-        df[col] = np.nan
-    el = df.loc[df["eligible"]]
-    if len(el):
-        by_sd = el.groupby(["Sector", "Date"])
-        df.loc[el.index, "sector_daily_return"] = by_sd["daily_return"].transform("mean")
-        df.loc[el.index, "sector_return_5d"] = by_sd["return_5d"].transform("mean")
-        by_d = el.groupby("Date")
-        for src, dst in (("daily_return", "rank_daily_return"), ("return_5d", "rank_return_5d"),
-                         ("return_20d", "rank_return_20d"), ("ret_vol_10d", "rank_volatility"),
-                         ("volume_ratio", "rank_volume_ratio")):
-            df.loc[el.index, dst] = by_d[src].rank(pct=True)
-
-    return df
+    return add_cross_sectional_features(df, "eligible")
 
 
 def decision_rows(features: pd.DataFrame, decision_date: str | None = None) -> pd.DataFrame:
