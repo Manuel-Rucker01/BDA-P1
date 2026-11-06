@@ -116,3 +116,14 @@ def test_insider_hotdeck_copies_mapped_donor_and_keeps_missing():
         assert any(np.allclose(v, d) for d in donors)
     assert np.allclose(hd.loc[first & w["cik"].notna()].to_numpy(), donors)   # mapped rows untouched
     assert hd.loc[~first].isna().all().all()                # after the data end: still missing
+
+
+def test_si_quoted_header_format():
+    assert ad.is_si_payload("accountingYearMonthNumber|symbolCode") and ad.is_si_payload('"accountingYearMonthNumber"|"x"')
+    assert not ad.is_si_payload("<html>")
+    txt = ('"accountingYearMonthNumber"|"symbolCode"|"issueName"|"issuerServicesGroupExchangeCode"|"marketClassCode"|'
+           '"currentShortPositionQuantity"|"previousShortPositionQuantity"|"stockSplitFlag"|"averageDailyVolumeQuantity"|'
+           '"daysToCoverQuantity"|"revisionFlag"|"changePercent"|"changePreviousNumber"|"settlementDate"\n'
+           '"20260915"|"AAA"|"x"|"A"|"NYSE"|"500"|"400"|""|"1000"|"2.5"|""|"0"|"0"|"2026-09-15"')
+    s = ad.parse_si_csv(io.StringIO(txt))
+    assert list(s["symbol"]) == ["AAA"] and s["si"].iloc[0] == 500

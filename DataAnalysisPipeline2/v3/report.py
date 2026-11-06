@@ -1014,9 +1014,132 @@ Two caveats for the user's decision (not gate outcomes):
   construction search, which would keep raising N."""
 
 
+# =========================================================================== #
+# Round 8 results
+# =========================================================================== #
+R8_MARK = "\n## Round 8 — results"
+
+
+def write_r8() -> None:
+    g = json.load(open(ex.eval_dir("gate_r8.json")))
+    res = json.load(open(ex.eval_dir("results_r8.json")))
+    fic = json.load(open(ex.eval_dir("r8_feature_ics.json")))
+    leak = json.load(open(ex.eval_dir("r8_leak.json")))
+    sic = json.load(open(ex.eval_dir("r8_signal_ics.json")))
+    r5j = json.load(open(ex.eval_dir("results_r5.json")))
+    r7j = json.load(open(ex.eval_dir("results_r7.json")))
+    L = [R8_MARK + "\n"]
+    L.append(("**PASS**" if g["passed"] else "**FAIL — nothing replaces production**")
+             + f". Selected (highest IR vs SPY with max DD ≥ −35% among the eligible books): `{g['config']}` "
+             f"through `mv_abs_all` at $100M; N = {g['n_trials']}.\n")
+    L.append(_gt(g["gate"]) + "\n")
+    b = g["boot"]
+    L.append(f"Sharpe {_f(b['sharpe']['point'])} [{_f(b['sharpe']['lo'])}, {_f(b['sharpe']['hi'])}], IR vs SPY "
+             f"{_f(b['ir_spy']['point'])} [{_f(b['ir_spy']['lo'])}, {_f(b['ir_spy']['hi'])}], IR vs EW "
+             f"{_f(b['ir_ew']['point'])} [{_f(b['ir_ew']['lo'])}, {_f(b['ir_ew']['hi'])}]; DSR {_f(g['dsr']['dsr'], 3)} "
+             f"vs SR* {_f(g['dsr']['sr_star_ann'])}.\n")
+    L.append("### Data\n")
+    L.append("* **SEC insider transactions**: 33 quarterly data sets 2018Q1–2026Q1 (latest published), 934k open-"
+             "market P/S lines; 36% of weekly rows have activity in the trailing 180 days; features missing after "
+             "2026-03-31 (data end).\n"
+             "* **FINRA short interest**: 198 bi-monthly files (settlements 2018-06-15 → 2026-08-31), exchange-listed "
+             "rows; 64% of weekly rows matched (symbol on the settlement date, reused-symbol guard). Files from "
+             "2026-09 onward quote their header and were missed by the downloader's format check (fixed afterwards, "
+             "`altdata.is_si_payload`); the evaluated runs therefore use SI that is up to ~2 months stale on the "
+             "last ~8 weekly dates (`si_age` carries the staleness) — not re-run, to keep the trial count honest.\n")
+    L.append("### The insider survivorship leak and its correction\n")
+    lp, lc = leak["leak_probe"], leak["leak_probe_corrected"]
+    L.append(f"AUC of a classifier predicting \"no EDGAR record\" (≈ future delister): core+fund {lc['core+fund']:.3f}; "
+             f"+ insider raw **{lc['core+fund+insider (raw)']:.3f}** (insider alone {lp['insider only']:.3f}); "
+             f"+ insider hot-decked {lc['core+fund+insider_hd']:.3f}; + SI {lc['core+fund+si']:.3f}. The decisive "
+             "check is the IC on mapped names only, where the leak cannot operate:\n")
+    rows = []
+    for v in ("sn30_fund", "stack", "sn30_si", "sn30_ins", "sn30_altall", "sn30_ins_hd", "sn30_altall_hd", "stack_r8_hd"):
+        x = sic[v]
+        rows.append({"signal": v + (" (invalid: leak)" if v in gate.R8_INVALID else ""),
+                     "IC 30d": _f(x["ic_all"], 4), "NW t": _f(x["nw_t"]),
+                     "IC mapped names only": _f(x["ic_mapped_only"], 4),
+                     "IC through 2026Q1": _f(x["ic_through_2026q1"], 4),
+                     "top-1000 IC (t)": f"{_f(x['top1000'], 4)} ({_f(x['top1000_t'])})"})
+    L.append(md_table(pd.DataFrame(rows), index=False) + "\n")
+    L.append("The leaky first pass looked like +0.005 IC but had **no** gain on mapped names (0.057 vs 0.058): pure "
+             "leak. After the hot-deck the gain is real on mapped names (+0.006 insider, +0.008 insider+SI).\n")
+    py = pd.DataFrame({v: {y: _f(sic[v]["by_year"].get(y, float("nan")), 3) for y in gate.A_YEARS}
+                       for v in ("sn30_fund", "stack", "sn30_si", "sn30_ins_hd", "sn30_altall_hd", "stack_r8_hd")})
+    L.append("Per-year IC (insider data ends 2026-03-31):\n\n" + md_table(py) + "\n")
+    L.append("### Standalone feature ICs (weekly, vs 30-session return)\n")
+    frows = []
+    for c, x in fic.items():
+        frows.append({"feature": c, "IC all names": _f(x["all"]["ic"], 4), "t": _f(x["all"]["nw_t"]),
+                      "IC tradable": _f(x["tradable"]["ic"], 4), "t ": _f(x["tradable"]["nw_t"]),
+                      "IC top-1000": _f(x["top1000"]["ic"], 4), "nonzero share": _pct(x["tradable"]["coverage"], 0),
+                      **{f"decay {h}d": _f(v, 3) for h, v in x["decay"].items() if h in ("5", "21", "63")}})
+    L.append(md_table(pd.DataFrame(frows), index=False) + "\n")
+    L.append("Insider *sales* carry positive IC and net-buying negative IC — the opposite of the classic insider "
+             "result; on mapped names the sign persists, so it is a size/quality/attention effect (large, "
+             "established firms with stock-based pay sell routinely), not information in the trades. Purchases, "
+             "officer/director buys and cluster buys are ≈ 0 (≤ 0.01). Short interest / shares is the cleanest "
+             "standalone signal on tradable names (−0.033; −0.014 in the top-1000).\n")
+    brows = []
+    for k, v in res["configs"].items():
+        a = v["all"]
+        brows.append({"signal": k + (" (invalid)" if k in gate.R8_INVALID else ""), "CAGR": _pct(a["cagr"]),
+                      "vol": _pct(a["vol"]), "Sharpe": _f(a["sharpe"]), "maxDD": _pct(a["max_dd"]),
+                      "maxDD ex Feb–Apr 2020": _pct(a["max_dd_ex_covid"]), "IR vs SPY": _f(a["ir_spy"]),
+                      "IR vs EW": _f(a["ir_ew"]), "turnover/reb": _pct(a.get("turnover_m", float("nan")), 0),
+                      "cost/yr": _pct(a.get("cost_drag_ann", float("nan")), 2)})
+    for name, a in (("sn30_fund (R5)", r5j["configs"]["mv_abs_all_100m"]["all"]),
+                    ("stack (R7)", r7j["configs"]["stack/mv_abs_all_100m"]["all"])):
+        brows.append({"signal": name, "CAGR": _pct(a["cagr"]), "vol": _pct(a["vol"]), "Sharpe": _f(a["sharpe"]),
+                      "maxDD": _pct(a["max_dd"]), "maxDD ex Feb–Apr 2020": _pct(a["max_dd_ex_covid"]),
+                      "IR vs SPY": _f(a["ir_spy"]), "IR vs EW": _f(a["ir_ew"]),
+                      "turnover/reb": _pct(a.get("turnover_m", float("nan")), 0),
+                      "cost/yr": _pct(a.get("cost_drag_ann", float("nan")), 2)})
+    for name in ("spy", "ew_universe", "cw_all"):
+        a = r5j["benchmarks"][name]["all"]
+        brows.append({"signal": {"spy": "SPY", "ew_universe": "EW eligible universe",
+                                 "cw_all": "cap-weighted universe"}[name], "CAGR": _pct(a["cagr"]),
+                      "vol": _pct(a["vol"]), "Sharpe": _f(a["sharpe"]), "maxDD": _pct(a["max_dd"]),
+                      "maxDD ex Feb–Apr 2020": _pct(a["max_dd_ex_covid"]),
+                      "IR vs SPY": _f(a.get("ir_spy", float("nan"))) if name != "spy" else "",
+                      "IR vs EW": _f(a.get("ir_ew", float("nan"))) if name != "ew_universe" else "",
+                      "turnover/reb": "", "cost/yr": ""})
+    L.append("### Books — `mv_abs_all` at $100M (Feb 2019 → 2026-11-04, after costs)\n\n"
+             + md_table(pd.DataFrame(brows), index=False) + "\n")
+    L.append("### Recommendation (round 8)\n")
+    L.append(RECOMMENDATION_R8)
+    text = open(REPORT).read()
+    if R8_MARK in text:
+        text = text[:text.index(R8_MARK)]
+    open(REPORT, "w").write(text.rstrip() + "\n" + "\n".join(L) + "\n")
+
+
+RECOMMENDATION_R8 = """**Do not replace production (`v2final_nonews` + `long_only_v3` K=30).** The best round-8 book —
+core + fundamentals + insider + short interest through the Round 5 optimizer — is the best of the project
+(Sharpe 1.02, max DD −28.5%, IR vs EW +0.25) but still fails the two decisive criteria: IR vs SPY −0.13
+(95% CI −0.78…0.48) and DSR 0.863 < 0.90 at N = 92. Over 2019–2026 it earned 15.2%/yr vs SPY's 16.1% with
+lower risk (vol 15% vs 19%) — a better-risk book, not one that beats the index.
+
+What round 8 established:
+* **Free insider + short-interest data add real information**, but only after removing a survivorship leak
+  (the naive insider block looked like +0.005 IC and was pure leak). Corrected, the gain is +0.008 IC
+  overall and on mapped names; the signal is a size/quality-correlated *selling* effect plus short interest,
+  not classic insider buying.
+* The incremental IC moves the optimizer book by about +0.05 Sharpe / +0.04 IR vs SPY over the R5/R7
+  incumbents — consistent with the small IC step, far from closing the gap to SPY.
+* Insider data end at 2026Q1 (latest SEC release); a live version would need the daily EDGAR Form 4 feed
+  (free, but ~2k filings/day to parse) before it could be used in production.
+
+If the user wants a change on *risk* grounds, the optimizer book with this signal is the best-supported
+candidate (paper, explicit opt-in, with the documented gate failures). On *return* grounds, nothing tested
+in eight rounds (92 trials) has shown an edge over SPY after costs."""
+
+
 if __name__ == "__main__":
     import sys
-    if "--r7" in sys.argv:
+    if "--r8" in sys.argv:
+        write_r8()
+    elif "--r7" in sys.argv:
         write_r7()
     elif "--r6" in sys.argv:
         write_r6()

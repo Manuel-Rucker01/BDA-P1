@@ -886,3 +886,120 @@ New free information only. Registered in `v3/gate.py` (`R8_*`, `N_TRIALS_R8`, `c
 *Addendum (data availability, before evaluation):* the latest published SEC insider data set is 2026Q1, so insider features are set to **missing** (z = 0 for every name — no information, no leak) for decision dates after the last filing date in the data (≈ 2026-03-31). The insider variants therefore carry no insider information in 2026Q2–Q4, including the gate-c window. Pulling ~150 days of individual Form 4 XML filings (~300k requests at ≤ 10 req/s) was judged out of scope.
 
 *Correction (registered before re-running, after the first round-8 pass):* the insider block leaked survivorship. Names without a CIK mapping (mostly future delisters) had exactly zero insider activity, so the block identified "no EDGAR record" with AUC 0.849 (core+fund 0.700 → +insider 0.901). The first-pass insider configs (`sn30_ins`, `sn30_altall`, `stack_r8`) are invalid as evidence: still counted as trials, not eligible for selection. Correction: unmapped eligible rows receive the whole insider vector of a same-date mapped donor among their 5 nearest neighbours (round-2 hot-deck), and the three configs are re-run as `*_hd`: +3 trials, **N = 92**; eligible for selection: `sn30_si`, `sn30_ins_hd`, `sn30_altall_hd`, `stack_r8_hd`.
+
+## Round 8 — results
+
+**FAIL — nothing replaces production**. Selected (highest IR vs SPY with max DD ≥ −35% among the eligible books): `sn30_altall_hd` through `mv_abs_all` at $100M; N = 92.
+
+| # | criterion | value | threshold | result |
+|---|---|---|---|---|
+| a1 | mean weekly IC > 0 | 0.0734 | > 0 | PASS |
+| a2 | Newey-West t of IC | 5.0995 | > 2.0 | PASS |
+| a3 | years with IC > 0 | 8 | >= 6 of 8 | PASS |
+| b1 | Sharpe(chosen) vs Sharpe(EW universe) | 1.0218 | > 0.477 | PASS |
+| b2 | max drawdown | -0.2854 | >= -0.35 | PASS |
+| b3 | Deflated Sharpe prob (N=92) | 0.8629 | >= 0.9 | FAIL |
+| c1 | holdout IC proxy (2026 fold, gate-c window) | 0.1622 | >= 0.12 | PASS |
+| r5 | IR vs SPY (95% CI -0.78 .. 0.48) | -0.1255 | > 0.0 | FAIL |
+
+Sharpe 1.02 [0.35, 1.75], IR vs SPY -0.13 [-0.78, 0.48], IR vs EW 0.25 [-0.40, 0.90]; DSR 0.863 vs SR* 0.62.
+
+### Data
+
+* **SEC insider transactions**: 33 quarterly data sets 2018Q1–2026Q1 (latest published), 934k open-market P/S lines; 36% of weekly rows have activity in the trailing 180 days; features missing after 2026-03-31 (data end).
+* **FINRA short interest**: 198 bi-monthly files (settlements 2018-06-15 → 2026-08-31), exchange-listed rows; 64% of weekly rows matched (symbol on the settlement date, reused-symbol guard). Files from 2026-09 onward quote their header and were missed by the downloader's format check (fixed afterwards, `altdata.is_si_payload`); the evaluated runs therefore use SI that is up to ~2 months stale on the last ~8 weekly dates (`si_age` carries the staleness) — not re-run, to keep the trial count honest.
+
+### The insider survivorship leak and its correction
+
+AUC of a classifier predicting "no EDGAR record" (≈ future delister): core+fund 0.700; + insider raw **0.901** (insider alone 0.849); + insider hot-decked 0.748; + SI 0.721. The decisive check is the IC on mapped names only, where the leak cannot operate:
+
+| signal | IC 30d | NW t | IC mapped names only | IC through 2026Q1 | top-1000 IC (t) |
+|---|---|---|---|---|---|
+| sn30_fund | 0.0653 | 4.81 | 0.0581 | 0.0625 | 0.0134 (1.02) |
+| stack | 0.0694 | 5.20 | 0.0623 | 0.0670 | 0.0211 (1.83) |
+| sn30_si | 0.0674 | 4.79 | 0.0600 | 0.0647 | 0.0157 (1.25) |
+| sn30_ins (invalid: leak) | 0.0703 | 5.31 | 0.0571 | 0.0678 | 0.0197 (1.40) |
+| sn30_altall (invalid: leak) | 0.0700 | 5.13 | 0.0572 | 0.0675 | 0.0207 (1.50) |
+| sn30_ins_hd | 0.0716 | 5.05 | 0.0639 | 0.0694 | 0.0180 (1.30) |
+| sn30_altall_hd | 0.0734 | 5.10 | 0.0659 | 0.0713 | 0.0208 (1.54) |
+| stack_r8_hd | 0.0735 | 5.23 | 0.0658 | 0.0713 | 0.0251 (2.17) |
+
+The leaky first pass looked like +0.005 IC but had **no** gain on mapped names (0.057 vs 0.058): pure leak. After the hot-deck the gain is real on mapped names (+0.006 insider, +0.008 insider+SI).
+
+Per-year IC (insider data ends 2026-03-31):
+
+| index | sn30_fund | stack | sn30_si | sn30_ins_hd | sn30_altall_hd | stack_r8_hd |
+|---|---|---|---|---|---|---|
+| 2019 | 0.067 | 0.072 | 0.068 | 0.061 | 0.061 | 0.071 |
+| 2020 | -0.013 | -0.017 | -0.024 | 0.017 | 0.007 | -0.015 |
+| 2021 | 0.121 | 0.135 | 0.124 | 0.138 | 0.137 | 0.144 |
+| 2022 | 0.072 | 0.076 | 0.075 | 0.082 | 0.086 | 0.088 |
+| 2023 | 0.095 | 0.095 | 0.096 | 0.084 | 0.088 | 0.091 |
+| 2024 | 0.080 | 0.079 | 0.085 | 0.083 | 0.088 | 0.086 |
+| 2025 | 0.025 | 0.036 | 0.036 | 0.031 | 0.040 | 0.042 |
+| 2026 | 0.082 | 0.084 | 0.086 | 0.081 | 0.086 | 0.086 |
+
+### Standalone feature ICs (weekly, vs 30-session return)
+
+| feature | IC all names | t | IC tradable | t  | IC top-1000 | nonzero share | decay 5d | decay 21d | decay 63d |
+|---|---|---|---|---|---|---|---|---|---|
+| ins_buy_n_30 | 0.0104 | 3.94 | 0.0036 | 1.24 | 0.0058 | 5% | 0.001 | 0.002 | 0.006 |
+| ins_buy_n_90 | 0.0185 | 5.22 | 0.0063 | 1.68 | 0.0063 | 11% | 0.002 | 0.005 | 0.008 |
+| ins_buy_n_180 | 0.0216 | 5.32 | 0.0093 | 2.14 | 0.0094 | 17% | 0.004 | 0.008 | 0.011 |
+| ins_sell_n_30 | 0.0337 | 6.90 | 0.0164 | 2.51 | 0.0101 | 21% | 0.011 | 0.014 | 0.020 |
+| ins_sell_n_90 | 0.0477 | 8.11 | 0.0225 | 3.05 | 0.0108 | 34% | 0.016 | 0.020 | 0.029 |
+| ins_sell_n_180 | 0.0555 | 8.69 | 0.0277 | 3.61 | 0.0129 | 42% | 0.019 | 0.024 | 0.036 |
+| ins_buy_val_90 | 0.0191 | 5.43 | 0.0068 | 1.85 | 0.0058 | 11% | 0.003 | 0.005 | 0.008 |
+| ins_buy_val_180 | 0.0225 | 5.52 | 0.0099 | 2.33 | 0.0083 | 17% | 0.004 | 0.008 | 0.012 |
+| ins_sell_val_90 | 0.0502 | 8.37 | 0.0259 | 3.52 | 0.0129 | 34% | 0.018 | 0.023 | 0.034 |
+| ins_sell_val_180 | 0.0584 | 8.97 | 0.0315 | 4.16 | 0.0155 | 42% | 0.021 | 0.028 | 0.041 |
+| ins_net_ratio_90 | -0.0327 | -6.78 | -0.0192 | -3.07 | -0.0084 | 40% | -0.014 | -0.017 | -0.026 |
+| ins_net_ratio_180 | -0.0377 | -7.47 | -0.0236 | -3.77 | -0.0114 | 48% | -0.016 | -0.021 | -0.032 |
+| ins_n_buyers_90 | 0.0186 | 5.20 | 0.0063 | 1.70 | 0.0064 | 11% | 0.002 | 0.005 | 0.008 |
+| ins_od_buy_90 | 0.0199 | 5.53 | 0.0079 | 2.13 | 0.0059 | 10% | 0.003 | 0.006 | 0.010 |
+| ins_cluster_30 | 0.0022 | 1.26 | -0.0016 | -0.81 | 0.0055 | 1% | -0.000 | -0.002 | -0.000 |
+| si_ratio | -0.0087 | -0.90 | -0.0333 | -2.65 | -0.0139 | 81% | -0.015 | -0.027 | -0.047 |
+| si_dtc | 0.0248 | 3.06 | -0.0120 | -1.73 | -0.0212 | 82% | -0.001 | -0.010 | -0.018 |
+| si_chg | 0.0022 | 1.10 | -0.0013 | -0.59 | 0.0020 | 82% | -0.001 | -0.001 | -0.004 |
+| si_age | -0.0004 | -0.25 | -0.0011 | -0.56 | 0.0022 | 78% | -0.002 | -0.001 | -0.002 |
+
+Insider *sales* carry positive IC and net-buying negative IC — the opposite of the classic insider result; on mapped names the sign persists, so it is a size/quality/attention effect (large, established firms with stock-based pay sell routinely), not information in the trades. Purchases, officer/director buys and cluster buys are ≈ 0 (≤ 0.01). Short interest / shares is the cleanest standalone signal on tradable names (−0.033; −0.014 in the top-1000).
+
+### Books — `mv_abs_all` at $100M (Feb 2019 → 2026-11-04, after costs)
+
+| signal | CAGR | vol | Sharpe | maxDD | maxDD ex Feb–Apr 2020 | IR vs SPY | IR vs EW | turnover/reb | cost/yr |
+|---|---|---|---|---|---|---|---|---|---|
+| sn30_ins (invalid) | 13.5% | 15.2% | 0.91 | -29.5% | -18.5% | -0.26 | 0.16 | 18% | 1.86% |
+| sn30_si | 14.1% | 15.1% | 0.95 | -29.4% | -18.3% | -0.21 | 0.19 | 16% | 1.56% |
+| sn30_altall (invalid) | 13.4% | 15.4% | 0.90 | -29.5% | -17.7% | -0.27 | 0.16 | 18% | 1.79% |
+| stack_r8 (invalid) | 14.0% | 15.1% | 0.94 | -29.9% | -16.9% | -0.22 | 0.18 | 17% | 1.70% |
+| sn30_ins_hd | 13.6% | 15.0% | 0.93 | -29.1% | -18.7% | -0.25 | 0.16 | 20% | 1.94% |
+| sn30_altall_hd | 15.2% | 15.0% | 1.02 | -28.5% | -16.2% | -0.13 | 0.25 | 19% | 1.88% |
+| stack_r8_hd | 14.8% | 15.0% | 0.99 | -29.6% | -16.3% | -0.16 | 0.22 | 18% | 1.75% |
+| sn30_fund (R5) | 14.6% | 15.2% | 0.97 | -30.6% | -18.3% | -0.17 | 0.21 | 15% | 1.58% |
+| stack (R7) | 14.7% | 15.1% | 0.98 | -29.8% | -18.5% | -0.16 | 0.22 | 17% | 1.64% |
+| SPY | 16.1% | 18.9% | 0.89 | -33.8% | -24.5% |  | 0.50 |  |  |
+| EW eligible universe | 8.8% | 23.5% | 0.48 | -42.0% | -32.7% | -0.50 |  |  |  |
+| cap-weighted universe | 15.1% | 19.6% | 0.81 | -33.9% | -27.7% | -0.26 | 0.49 |  |  |
+
+### Recommendation (round 8)
+
+**Do not replace production (`v2final_nonews` + `long_only_v3` K=30).** The best round-8 book —
+core + fundamentals + insider + short interest through the Round 5 optimizer — is the best of the project
+(Sharpe 1.02, max DD −28.5%, IR vs EW +0.25) but still fails the two decisive criteria: IR vs SPY −0.13
+(95% CI −0.78…0.48) and DSR 0.863 < 0.90 at N = 92. Over 2019–2026 it earned 15.2%/yr vs SPY's 16.1% with
+lower risk (vol 15% vs 19%) — a better-risk book, not one that beats the index.
+
+What round 8 established:
+* **Free insider + short-interest data add real information**, but only after removing a survivorship leak
+  (the naive insider block looked like +0.005 IC and was pure leak). Corrected, the gain is +0.008 IC
+  overall and on mapped names; the signal is a size/quality-correlated *selling* effect plus short interest,
+  not classic insider buying.
+* The incremental IC moves the optimizer book by about +0.05 Sharpe / +0.04 IR vs SPY over the R5/R7
+  incumbents — consistent with the small IC step, far from closing the gap to SPY.
+* Insider data end at 2026Q1 (latest SEC release); a live version would need the daily EDGAR Form 4 feed
+  (free, but ~2k filings/day to parse) before it could be used in production.
+
+If the user wants a change on *risk* grounds, the optimizer book with this signal is the best-supported
+candidate (paper, explicit opt-in, with the documented gate failures). On *return* grounds, nothing tested
+in eight rounds (92 trials) has shown an edge over SPY after costs.

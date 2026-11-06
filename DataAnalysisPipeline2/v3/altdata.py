@@ -106,6 +106,11 @@ def _settlement_candidates(year: int, month: int) -> list[list[str]]:
             [x.strftime("%Y%m%d") for x in end if x.weekday() < 5]]
 
 
+def is_si_payload(text: str) -> bool:
+    """FINRA files start with the header row; from 2026-09 the fields are quoted."""
+    return text.lstrip('"').startswith("accountingYearMonthNumber")
+
+
 def download_si(start: str = "2018-06", log=print) -> list[str]:
     import requests
     out = data_dir("finra_si", "raw")
@@ -119,7 +124,7 @@ def download_si(start: str = "2018-06", log=print) -> list[str]:
             for d in cands:
                 r = requests.get(FINRA_URL.format(d=d), timeout=120)
                 time.sleep(0.4)
-                if r.status_code == 200 and r.text.startswith("accountingYearMonthNumber"):
+                if r.status_code == 200 and is_si_payload(r.text):
                     p = os.path.join(out, f"shrt{d}.csv")
                     open(p, "w").write(r.text)
                     got.append(p)
