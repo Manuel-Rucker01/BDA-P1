@@ -279,6 +279,10 @@ def _stable_u64(keys) -> np.ndarray:
                      for k in keys], dtype=np.uint64)
 
 
+HOTDECK_K = 5
+MATCH_COLUMNS = ["log_dollar_volume_20d", "ret_vol_20d", "return_50d", "return_20d", "log_close_raw"]
+
+
 class FundamentalsBlock:
     """PIT fundamentals feature block (WS2 EDGAR data).
 
@@ -287,15 +291,18 @@ class FundamentalsBlock:
       the period end); market cap = raw close x shares as filed. Segment ids
       ``SYM~k`` are resolved through their base symbol and the CIK map's
       validity windows.
-    * **Missingness is made uninformative (hot-deck).** The ticker->CIK map
+    * **Missingness is made (nearly) uninformative (hot-deck).** The ticker->CIK map
       comes mostly from the SEC's *current* ticker list, so in early years a
       name without fundamentals is very likely a stock that later delisted
-      (look-ahead). Every row without any EDGAR record (``fund_staleness_days``
-      NaN) therefore receives the full fundamentals vector of a donor drawn
-      deterministically (hash of ticker+date) from the rows of the SAME date
-      that have one (eligible rows only when ``donor_col`` is given). The model
-      cannot tell imputed rows from real ones; ``fund_imputed`` records it (not a
-      feature). Partially missing fields of mapped names stay NaN.
+      (look-ahead). Every eligible row without any EDGAR record
+      (``fund_staleness_days`` NaN) therefore receives the full fundamentals
+      vector of an eligible donor of the SAME date that has one, drawn
+      deterministically (hash of ticker+date) among its ``HOTDECK_K`` nearest
+      neighbours on ``MATCH_COLUMNS`` (standardised per date), so the copied
+      fundamentals fit the recipient's own liquidity/volatility/momentum/price.
+      ``fund_imputed`` records it (not a feature); the residual separability is
+      measured by a leak probe in the report. Partially missing fields of
+      mapped names stay NaN.
     * The block returns no sector (sectors come from ``edgar_sector_map``)."""
 
     def __init__(self, fund_asof: pd.DataFrame, cik_map: pd.DataFrame, sectors: pd.DataFrame | None = None,
@@ -324,6 +331,11 @@ class FundamentalsBlock:
             vals = f.to_numpy()
             dates = df["Date"].to_numpy().astype(str)
             tick = df["ticker"].to_numpy().astype(str)
+            M = np.column_stack([
+                df[c].to_numpy(dtype=float) if c in df.columns else np.zeros(len(df)) for c in MATCH_COLUMNS[:-1]]
+                + [np.log(df["close_raw"].fillna(df["company_close"]).clip(lower=1e-6)).to_numpy(dtype=float)])
+            elig = (df[self.donor_col].fillna(False).to_numpy(dtype=bool) if self.donor_col
+                    else np.ones(len(df), dtype=bool))
             donor_ok = has & (df[self.donor_col].fillna(False).to_numpy(dtype=bool) if self.donor_col else True)
             order = np.lexsort((tick, dates))
             ds_, starts = np.unique(dates[order], return_index=True)
@@ -331,11 +343,28 @@ class FundamentalsBlock:
             for i in range(len(ds_)):
                 idx = order[bounds[i]:bounds[i + 1]]
                 donors = idx[donor_ok[idx]]
-                rec = idx[~has[idx]]
+                rec = idx[~has[idx] & elig[idx]]   # only rows the model sees
                 if len(donors) == 0 or len(rec) == 0:
                     continue
                 h = _stable_u64([f"{tick[r]}|{ds_[i]}" for r in rec])
-                pick = donors[(h % np.uint64(len(donors))).astype(np.int64)]
+                # nearest-neighbour donors on the recipient's own price profile
+                # (liquidity, volatility, momentum, price level), standardised
+                # over the donors of the date; one of the K nearest by hash
+                Xd, Xr = M[donors], M[rec]
+                med = np.nanmedian(Xd, axis=0)
+                med = np.where(np.isfinite(med), med, 0.0)
+                Xd = np.where(np.isfinite(Xd), Xd, med)
+                Xr = np.where(np.isfinite(Xr), Xr, med)
+                sd = Xd.std(axis=0)
+                sd = np.where(sd > 0, sd, 1.0)
+                Xd, Xr = (Xd - med) / sd, (Xr - med) / sd
+                k = min(HOTDECK_K, len(donors))
+                d2 = (Xr ** 2).sum(1)[:, None] + (Xd ** 2).sum(1)[None, :] - 2.0 * Xr @ Xd.T
+                nn = np.argpartition(d2, k - 1, axis=1)[:, :k] if k < len(donors) else \
+                    np.tile(np.arange(len(donors)), (len(rec), 1))
+                nn = np.take_along_axis(nn, np.argsort(np.take_along_axis(d2, nn, axis=1), axis=1, kind="stable"),
+                                        axis=1)
+                pick = donors[nn[np.arange(len(rec)), (h % np.uint64(k)).astype(np.int64)]]
                 vals[rec] = vals[pick]
                 imputed[rec] = True
             f = pd.DataFrame(vals, columns=self.columns, index=df.index)

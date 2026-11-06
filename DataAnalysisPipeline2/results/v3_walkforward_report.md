@@ -151,3 +151,153 @@ The v2 reference (0.14) was measured on the legacy ~1.9k-name universe with the 
 * **Benchmark EW** is gross of costs (a conservative bar for gate b).
 * **2026** is a partial year (labels end 30 sessions before the last bar, so the last ~6 weekly dates have no IC; the backtest runs to the last bar).
 * **Trials**: DSR counts the configurations evaluated in this run; earlier project iterations (v1/v2) are not re-counted because the v3 recipe and gate were fixed in advance.
+
+## Round 2 — EDGAR sectors + fundamentals
+
+Added after the WS2 EDGAR data became available (SEC `companyfacts` + submissions; `$BDA_DATA_V3/fundamentals/`). Round-2 rules were committed in `v3/gate.py` (`PRIMARY_VARIANT_R2`, `CANDIDATE_VARIANTS_R2`, `N_TRIALS_R2`, `COVID_WINDOW`) before any round-2 walk-forward ran; all thresholds are the round-1 ones.
+
+### Verdict (round 2)
+
+**FAIL — v3 is NOT promoted**. Chosen recipe `sn30_fund` (`target_sn_30`), chosen construction `lo50` — Long-only K=50 (7/sector, 4%/name).
+
+| # | criterion | value | threshold | result |
+|---|---|---|---|---|
+| a1 | mean weekly IC > 0 | 0.0653 | > 0 | PASS |
+| a2 | Newey-West t of IC | 4.8123 | > 2.0 | PASS |
+| a3 | years with IC > 0 | 7 | >= 6 of 8 | PASS |
+| b1 | Sharpe(chosen) vs Sharpe(EW universe) | 0.5580 | > 0.477 | PASS |
+| b2 | max drawdown | -0.3399 | >= -0.35 | PASS |
+| b3 | Deflated Sharpe prob (N=32) | 0.4701 | >= 0.9 | FAIL |
+| c1 | holdout IC 2026-07-15..2026-09-23 | 0.1426 | >= 0.12 | PASS |
+
+### What changed
+
+* **Sectors:** EDGAR SIC → Fama-French 12 (`sectors.parquet`, `sector_name`) per ticker id, resolved through the SEC ticker→CIK map at the ticker's last bar (segment ids `SYM~k` via their base symbol and the map's validity windows). Names without an EDGAR sector get the round-1 return-correlation proxy, now referenced to the EDGAR sectors. Used everywhere sector is used: `sector_daily_return`/`sector_return_5d`, the sector-neutral target and IC, and every per-sector cap in the books. Caveat: SIC codes are the current EDGAR snapshot (not point-in-time); reclassifications are rare, but this part is not strictly PIT.
+* **Fundamentals** (`FundamentalsBlock`, 14 columns: E/P, B/P, S/P, CF/P, GP/A, ROA, ROE, accruals, sales growth, scaled NI growth, leverage, 12-month net issuance, log market cap, filing staleness): `fundamentals.fundamental_features`, an as-of join on `asof_date` = next business day after the EDGAR **filing** date (never the period end); market cap = raw close × shares as filed. Z-scored per date over eligible names like every other feature.
+* **Survivorship leak found and neutralised.** The ticker→CIK map is built mostly from the SEC's *current* ticker list: 98.7% of eligible rows of names still trading in Oct-2026 are mapped vs 21.5% of names that later delisted, and mapped rows have a higher mean future rank (≈0.51 vs ≈0.48 in every year 2017–2024). Fed naively, "fundamentals missing" would tell the model the stock is going to die. Fix: every eligible row without an EDGAR record receives the complete fundamentals vector of a same-date donor drawn (deterministic hash) among its 5 nearest mapped neighbours on liquidity, volatility, 20/50-day momentum and price level. `fund_imputed` is kept for diagnostics, never as a feature.
+* **Leak probe** (LightGBM classifier predicting `fund_imputed` from model inputs, 2017–2022, held-out dates): AUC core only 0.675 (legitimate — future delisters trade differently), fundamentals only 0.647, core+fund 0.700. The fundamentals add +0.025 AUC of separability (a naive liquidity-decile hot-deck added +0.110). A small residual channel remains and is a caveat on the fundamentals' measured value.
+
+Coverage among eligible rows (share of rows):
+
+| year | EDGAR sector | proxy sector | Unknown | fundamentals (real) | hot-deck imputed | none | E/P real | B/P real | sales growth real |
+|---|---|---|---|---|---|---|---|---|---|
+| 2,017 | 64.5% | 35.5% | 0.0% | 57.4% | 42.6% | 0.0% | 56.1% | 56.1% | 44.9% |
+| 2,018 | 66.9% | 33.1% | 0.0% | 62.5% | 37.5% | 0.0% | 58.1% | 58.3% | 46.2% |
+| 2,019 | 71.1% | 28.9% | 0.0% | 68.0% | 32.0% | 0.0% | 62.0% | 62.2% | 55.4% |
+| 2,020 | 73.9% | 26.1% | 0.0% | 71.0% | 29.0% | 0.0% | 64.7% | 65.0% | 59.7% |
+| 2,021 | 74.7% | 25.3% | 0.0% | 71.6% | 28.4% | 0.0% | 64.2% | 65.1% | 58.3% |
+| 2,022 | 79.2% | 20.8% | 0.0% | 76.4% | 23.6% | 0.0% | 69.4% | 70.1% | 63.9% |
+| 2,023 | 83.9% | 16.1% | 0.0% | 81.9% | 18.1% | 0.0% | 75.1% | 75.1% | 69.5% |
+| 2,024 | 88.1% | 11.9% | 0.0% | 86.6% | 13.4% | 0.0% | 79.2% | 79.1% | 72.6% |
+| 2,025 | 92.0% | 8.0% | 0.0% | 90.9% | 9.1% | 0.0% | 82.6% | 82.4% | 75.4% |
+| 2,026 | 96.8% | 3.2% | 0.0% | 95.9% | 4.1% | 0.0% | 86.4% | 86.4% | 77.6% |
+
+Round 1 for comparison (legacy DuckDB sectors): 26.4% of eligible rows had a real sector label, 73.2% a proxy, 0.34% Unknown. With EDGAR: 65% (2017) → 97% (2026) real.
+
+### Portfolios — `sn30_fund` (Feb 2019 → 2026-11-04, same costs/books)
+
+| book | CAGR | vol | Sharpe | maxDD | IR vs SPY | IR vs EW | turnover/reb | hit (m>0) | hit vs EW |
+|---|---|---|---|---|---|---|---|---|---|
+| Long-only K=30 (5/sector, 6%/name) | 8.4% | 19.2% | 0.52 | -34.4% | -0.66 | -0.09 | 65% | 61% | 50% |
+| Long-only K=50 (7/sector, 4%/name) | 9.0% | 18.5% | 0.56 | -34.0% | -0.67 | -0.07 | 61% | 60% | 46% |
+| Long/short 40/40 sector-neutral (gross 1.6) | 32.5% | 135.2% | 0.57 | -87.8% | 0.45 | 0.48 | 125% | 69% | 59% |
+| Legacy top-5% gate, top-10 | 7.1% | 22.7% | 0.41 | -36.5% | -0.48 | -0.10 | 77% | 56% | 51% |
+| EW eligible universe (gross) | 8.8% | 23.5% | 0.48 | -42.0% | -0.50 |  |  | 60% | 0% |
+| SPY | 16.1% | 18.9% | 0.89 | -33.8% |  | 0.50 |  | 66% | 57% |
+
+Per year (return / Sharpe / max drawdown):
+
+| book | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 |
+|---|---|---|---|---|---|---|---|---|
+| lo30 | 10% / 0.9 / -7% | 28% / 0.9 / -34% | 3% / 0.2 / -15% | -16% / -0.7 / -24% | 12% / 1.0 / -12% | 3% / 0.4 / -6% | 10% / 0.6 / -17% | 22% / 1.8 / -9% |
+| lo50 | 17% / 1.6 / -5% | 25% / 0.8 / -34% | 4% / 0.3 / -13% | -16% / -0.7 / -24% | 10% / 0.9 / -11% | 5% / 0.6 / -7% | 6% / 0.4 / -17% | 25% / 2.2 / -7% |
+| ls40 | 38% / 2.0 / -14% | -40% / -1.0 / -46% | -20% / -0.2 / -56% | 103% / 2.6 / -15% | 52% / 1.5 / -21% | 66% / 1.6 / -24% | -2% / 0.9 / -88% | 169% / 3.3 / -27% |
+| legacy_top10 | 12% / 1.0 / -12% | 25% / 0.8 / -33% | -1% / 0.1 / -31% | -16% / -0.5 / -25% | 17% / 1.2 / -11% | -1% / -0.0 / -10% | 9% / 0.6 / -16% | 16% / 1.1 / -9% |
+| ew_universe | 12% / 0.9 / -10% | 21% / 0.7 / -42% | 15% / 0.8 / -12% | -21% / -0.7 / -28% | 16% / 0.9 / -18% | 8% / 0.6 / -10% | 12% / 0.7 / -23% | 11% / 0.9 / -10% |
+| spy | 22% / 1.9 / -7% | 18% / 0.7 / -34% | 29% / 2.0 / -5% | -18% / -0.7 / -24% | 26% / 1.9 / -10% | 25% / 1.8 / -8% | 18% / 0.9 / -19% | 13% / 1.2 / -9% |
+
+| book | Sharpe [95% CI] | IR vs EW [95% CI] | Sharpe − EW [95% CI] | PSR(0) | DSR | SR* (ann.) |
+|---|---|---|---|---|---|---|
+| lo30 | 0.52 [-0.08, 1.23] | -0.09 [-0.80, 0.61] | 0.04 [-0.41, 0.46] | 0.923 | 0.423 | 0.59 |
+| lo50 | 0.56 [-0.04, 1.27] | -0.07 [-0.78, 0.66] | 0.08 [-0.33, 0.49] | 0.938 | 0.470 | 0.59 |
+| ls40 | 0.57 [0.33, 1.82] | 0.48 [0.05, 1.30] | 0.10 [-0.66, 1.64] | 1.000 | 0.473 | 0.59 |
+| legacy_top10 | 0.41 [-0.19, 1.12] | -0.10 [-0.79, 0.62] | -0.06 [-0.62, 0.46] | 0.874 | 0.318 | 0.59 |
+
+DSR: N = 32 trials (round 1's 20 + round 2's 3 variants × 4 books), variance of their daily Sharpe ratios 3.08e-04 → SR* = 0.59 annualised.
+
+### Ablation — sectors vs fundamentals (same folds, weekly OOS IC vs 30-session return)
+
+| variant | sectors | fundamentals | target | IC | NW t | SN-IC | decile spread | yrs IC>0 | holdout IC | Sharpe lo30/lo50/ls40/top10 | maxDD lo30/lo50/top10 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| base | legacy+proxy | no | target_raw_30 | 0.0673 | 5.37 | 0.0668 | 1.92% | 7/8 |  | 0.69 / 0.58 / 0.48 / 0.75 | -39% / -40% / -39% |
+| base_sec | EDGAR+proxy | no | target_raw_30 | 0.0638 | 5.14 | 0.0631 | 1.81% | 7/8 | 0.1116 | 0.49 / 0.59 / -0.05 / 0.41 | -39% / -39% / -49% |
+| base_fund | EDGAR+proxy | yes | target_raw_30 | 0.0602 | 4.61 | 0.0575 | 1.60% | 8/8 | 0.1317 | 0.46 / 0.58 / 0.88 / 0.40 | -35% / -35% / -53% |
+| sn30_fund | EDGAR+proxy | yes | target_sn_30 | 0.0653 | 4.81 | 0.0616 | 1.91% | 7/8 | 0.1426 | 0.52 / 0.56 / 0.57 / 0.41 | -34% / -34% / -37% |
+
+Per-year IC:
+
+| index | base | base_sec | base_fund | sn30_fund |
+|---|---|---|---|---|
+| 2019 | 0.0780 | 0.0638 | 0.0704 | 0.0667 |
+| 2020 | -0.0126 | -0.0026 | 0.0046 | -0.0134 |
+| 2021 | 0.1199 | 0.1031 | 0.0540 | 0.1207 |
+| 2022 | 0.0705 | 0.0666 | 0.0741 | 0.0722 |
+| 2023 | 0.0833 | 0.0831 | 0.0912 | 0.0951 |
+| 2024 | 0.0895 | 0.0879 | 0.0831 | 0.0801 |
+| 2025 | 0.0379 | 0.0386 | 0.0262 | 0.0251 |
+| 2026 | 0.0763 | 0.0742 | 0.0858 | 0.0817 |
+
+`base` → `base_sec` isolates the sector source (only the two sector-mean features, the sector caps and the SN-IC definition change); `base_sec` → `base_fund` isolates the fundamentals. SN-IC is measured with each variant's own sectors, so it is not strictly comparable between `base` and the EDGAR variants. Holdout IC (gate c definition) is shown for every round-2 candidate for information; only the chosen recipe's enters the gate.
+
+### Drawdown excluding the COVID crash (information only — not a gate criterion)
+
+| variant | book | maxDD | maxDD ex Feb-Apr 2020 |
+|---|---|---|---|
+| base | lo30 | -38.5% | -27.0% |
+| base | lo50 | -39.5% | -27.9% |
+| base | ls40 | -95.6% | -95.6% |
+| base | legacy_top10 | -39.1% | -35.8% |
+| base_sec | lo30 | -39.3% | -23.7% |
+| base_sec | lo50 | -38.9% | -20.9% |
+| base_sec | ls40 | ruin (NAV < 0) | ruin (NAV < 0) |
+| base_sec | legacy_top10 | -49.0% | -26.5% |
+| base_fund | lo30 | -34.7% | -33.4% |
+| base_fund | lo50 | -35.3% | -30.5% |
+| base_fund | ls40 | -66.6% | -66.6% |
+| base_fund | legacy_top10 | -52.9% | -52.9% |
+| sn30_fund | lo30 | -34.4% | -28.9% |
+| sn30_fund | lo50 | -34.0% | -29.3% |
+| sn30_fund | ls40 | -87.8% | -87.8% |
+| sn30_fund | legacy_top10 | -36.5% | -32.8% |
+| - | ew_universe | -42.0% | -32.7% |
+| - | spy | -33.8% | -24.5% |
+
+Computed by deleting the sessions 2020-02-01 → 2020-04-30 from each daily return series and re-chaining the rest (the same days for every book and SPY).
+
+### Recommendation
+
+**Do not promote v3 yet.** The pre-registered gate fails on one criterion — Deflated Sharpe
+(b3) — and that is the one that matters most: with 32 configurations tried, the best long-only book's
+Sharpe (~0.56) is indistinguishable from the expected maximum of 32 noise trials (SR* ≈ 0.59). The
+chosen book `lo50` beats the EW universe on Sharpe only through lower volatility (IR vs EW ≈ −0.07,
+bootstrap CI of Sharpe − EW Sharpe spans 0), it underperforms SPY, and its drawdown passes b2 by
+one point (−34.0% vs −35%).
+
+What round 2 did show:
+* **The signal is real and stable** (weekly IC 0.065, NW t 4.8, positive in 7/8 years; holdout IC
+  0.143 for `sn30_fund`, above v2's 0.14 reference) — the problem is converting it into a long-only
+  book that beats cheap beta, not the ranking itself.
+* **EDGAR sectors** (`base` → `base_sec`) did not raise IC (0.067 → 0.064); their value is correct
+  risk buckets for caps and sector-neutral targets.
+* **Fundamentals** (`base_sec` → `base_fund`) did not raise walk-forward IC either (0.064 → 0.060)
+  but lifted the recent holdout (0.112 → 0.132) and cut long-only drawdowns (−39% → −35%); with the
+  sector-neutral target (`sn30_fund`) IC returns to 0.065 and holdout to 0.143. Treat the holdout gain
+  cautiously: it is 50 days of one regime, and a small residual imputation channel remains.
+* **COVID**: excluding Feb–Apr 2020, long-only drawdowns fall to −27…−33% (SPY −24.5%), so most of
+  the b2 margin is the crash; the 2022 bear (−24%) is the next-worst episode.
+* The long/short book remains uninvestable as simulated (squeeze-driven ruin).
+
+Suggested next steps (each would be a new, pre-registered round with N counted): a broad long-only
+book with a market-cap/liquidity floor (to stop the book tilting into micro-caps that EW and SPY
+don't hold), a beta/vol-targeted overlay, and an L/S version with a volatility filter and borrow
+data on the short leg. Until one clears DSR, keep v2final in production.

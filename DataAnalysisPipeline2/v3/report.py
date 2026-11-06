@@ -13,6 +13,7 @@ import pandas as pd
 
 from . import backtest as bt
 from . import dataset as ds
+from . import evaluation as ev
 from . import experiment as ex
 from . import gate
 from . import train as tr
@@ -296,5 +297,222 @@ def write_markdown(res: dict, g: dict) -> None:
     open(REPORT, "w").write("\n".join(L))
 
 
+# =========================================================================== #
+# Round 2: EDGAR sectors + fundamentals
+# =========================================================================== #
+R2_MARK = "\n## Round 2 — EDGAR sectors + fundamentals"
+R2_VARIANTS = ("base", "base_sec", "base_fund", "sn30_fund")
+
+
+def maxdd_excluding(r: pd.Series, window=gate.COVID_WINDOW) -> float:
+    keep = ~((r.index >= window[0]) & (r.index <= window[1]))
+    return ev.max_drawdown(r[keep].to_numpy())
+
+
+def build_r2(leak: dict | None = None, log=print) -> dict:
+    res = json.load(open(ex.eval_dir("results_r2.json")))
+    V = res["variants"]
+    sig_all = {v: {"mean_ic": V[v]["signal"]["fwd_ret_30"]["all"]["mean_ic"],
+                   "nw_t": V[v]["signal"]["fwd_ret_30"]["all"]["nw_t"]} for v in V}
+    variant = gate.choose_variant_r2({v: s for v, s in sig_all.items() if v in gate.CANDIDATE_VARIANTS_R2})
+    perf_all = {c: V[variant]["perf"][c]["all"] for c in gate.CONSTRUCTIONS}
+    construction = gate.choose_construction(perf_all)
+    trials = res["trials"]
+    assert len(trials) == gate.N_TRIALS_R2, f"expected {gate.N_TRIALS_R2} trials, got {len(trials)}"
+    log(f"[report r2] variant={variant} construction={construction} trials={len(trials)}")
+    boots = {c: ex.bootstrap_and_dsr(variant, c, trials) for c in gate.CONSTRUCTIONS}
+    holds = {}
+    for v in gate.CANDIDATE_VARIANTS_R2:
+        hp = ex.eval_dir(f"holdout_{v}.json")
+        if not os.path.exists(hp):
+            ex.holdout_ic(v, log=log)
+        holds[v] = json.load(open(hp))
+    years_ic = {y: V[variant]["signal"]["fwd_ret_30"][y]["mean_ic"] for y in gate.A_YEARS
+                if y in V[variant]["signal"]["fwd_ret_30"]}
+    ew_sh = res["benchmarks"]["ew_universe"]["all"]["sharpe"]
+    rows = gate.evaluate_gate(sig_all[variant], years_ic, perf_all[construction], ew_sh,
+                              boots[construction]["dsr"]["dsr"], holds[variant]["mean_ic"])
+    rows[5]["criterion"] = f"Deflated Sharpe prob (N={gate.N_TRIALS_R2})"
+    passed = all(r["pass"] for r in rows)
+    # Information only: drawdown excluding Feb-Apr 2020
+    spy = ex.spy_returns()
+    ew = pd.read_parquet(ex.eval_dir("ew_universe_daily.parquet"))["ret"]
+    covid = []
+    for v in R2_VARIANTS:
+        for c in gate.CONSTRUCTIONS:
+            r = pd.read_parquet(ex.eval_dir(f"{v}_{c}_daily.parquet"))["ret"]
+            covid.append({"variant": v, "book": c, "maxDD": ev.max_drawdown(r.to_numpy()),
+                          "maxDD ex Feb-Apr 2020": maxdd_excluding(r)})
+    s = spy.reindex(ew.index).fillna(0.0)
+    covid += [{"variant": "-", "book": "ew_universe", "maxDD": ev.max_drawdown(ew.to_numpy()),
+               "maxDD ex Feb-Apr 2020": maxdd_excluding(ew)},
+              {"variant": "-", "book": "spy", "maxDD": ev.max_drawdown(s.to_numpy()),
+               "maxDD ex Feb-Apr 2020": maxdd_excluding(s)}]
+    out = {"variant": variant, "construction": construction, "gate": rows, "passed": passed,
+           "holdouts": holds, "bootstrap": boots, "sig_all": sig_all, "covid": covid, "leak": leak}
+    json.dump(out, open(ex.eval_dir("gate_r2.json"), "w"), indent=1, default=float)
+    write_r2(res, out)
+    return out
+
+
+def write_r2(res: dict, g: dict) -> None:
+    V = res["variants"]
+    v, c = g["variant"], g["construction"]
+    cov = pd.read_csv(os.path.join(ds.v3_dir("eval"), "edgar_coverage.csv"), index_col=0)
+    L = [R2_MARK + "\n"]
+    L.append("Added after the WS2 EDGAR data became available (SEC `companyfacts` + submissions; "
+             "`$BDA_DATA_V3/fundamentals/`). Round-2 rules were committed in `v3/gate.py` "
+             "(`PRIMARY_VARIANT_R2`, `CANDIDATE_VARIANTS_R2`, `N_TRIALS_R2`, `COVID_WINDOW`) before any round-2 "
+             "walk-forward ran; all thresholds are the round-1 ones.\n")
+    verdict = "**PASS — v3 is promotable**" if g["passed"] else "**FAIL — v3 is NOT promoted**"
+    L.append(f"### Verdict (round 2)\n\n{verdict}. Chosen recipe `{v}` (`{tr.VARIANTS[v][0]}`), chosen construction "
+             f"`{c}` — {CNAMES[c]}.\n")
+    gt = pd.DataFrame([{"#": r["id"], "criterion": r["criterion"],
+                        "value": (_f(r["value"], 4) if isinstance(r["value"], float) else r["value"]),
+                        "threshold": r["threshold"], "result": "PASS" if r["pass"] else "FAIL"} for r in g["gate"]])
+    L.append(md_table(gt, index=False) + "\n")
+
+    L.append("### What changed\n")
+    L.append("* **Sectors:** EDGAR SIC → Fama-French 12 (`sectors.parquet`, `sector_name`) per ticker id, resolved "
+             "through the SEC ticker→CIK map at the ticker's last bar (segment ids `SYM~k` via their base symbol and "
+             "the map's validity windows). Names without an EDGAR sector get the round-1 return-correlation proxy, "
+             "now referenced to the EDGAR sectors. Used everywhere sector is used: `sector_daily_return`/"
+             "`sector_return_5d`, the sector-neutral target and IC, and every per-sector cap in the books. Caveat: SIC codes are the current EDGAR snapshot "
+             "(not point-in-time); reclassifications are rare, but this part is not strictly PIT.")
+    L.append("* **Fundamentals** (`FundamentalsBlock`, 14 columns: E/P, B/P, S/P, CF/P, GP/A, ROA, ROE, accruals, "
+             "sales growth, scaled NI growth, leverage, 12-month net issuance, log market cap, filing staleness): "
+             "`fundamentals.fundamental_features`, an as-of join on `asof_date` = next business day after the "
+             "EDGAR **filing** date (never the period end); market cap = raw close × shares as filed. Z-scored per "
+             "date over eligible names like every other feature.")
+    L.append("* **Survivorship leak found and neutralised.** The ticker→CIK map is built mostly from the SEC's "
+             "*current* ticker list: 98.7% of eligible rows of names still trading in Oct-2026 are mapped vs 21.5% "
+             "of names that later delisted, and mapped rows have a higher mean future rank (≈0.51 vs ≈0.48 "
+             "in every year 2017–2024). Fed naively, \"fundamentals missing\" would tell the model the stock is "
+             "going to die. Fix: every eligible row without an EDGAR record receives the complete fundamentals "
+             f"vector of a same-date donor drawn (deterministic hash) among its {ds.HOTDECK_K} nearest mapped "
+             "neighbours on liquidity, volatility, 20/50-day momentum and price level. `fund_imputed` is kept "
+             "for diagnostics, never as a feature.")
+    if g.get("leak"):
+        lk = g["leak"]
+        L.append(f"* **Leak probe** (LightGBM classifier predicting `fund_imputed` from model inputs, 2017–2022, "
+                 f"held-out dates): AUC core only {lk['core']:.3f} (legitimate — future delisters trade differently), "
+                 f"fundamentals only {lk['fund']:.3f}, core+fund {lk['both']:.3f}. The fundamentals add "
+                 f"{lk['both'] - lk['core']:+.3f} AUC of separability (a naive liquidity-decile hot-deck added "
+                 f"{lk.get('both_naive', float('nan')) - lk['core']:+.3f}). A small residual channel remains and is "
+                 "a caveat on the fundamentals' measured value.")
+    L.append("")
+    L.append("Coverage among eligible rows (share of rows):\n")
+    cv = cov.copy()
+    for col in cv.columns:
+        cv[col] = cv[col].map(lambda x: _pct(x, 1))
+    L.append(md_table(cv.rename(columns={"edgar_sector": "EDGAR sector", "proxy_sector": "proxy sector",
+                                         "unknown_sector": "Unknown", "fund_real": "fundamentals (real)",
+                                         "fund_imputed": "hot-deck imputed", "fund_none": "none",
+                                         "ep_real": "E/P real", "bp_real": "B/P real",
+                                         "sales_growth_real": "sales growth real"})) + "\n")
+    L.append("Round 1 for comparison (legacy DuckDB sectors): 26.4% of eligible rows had a real sector label, "
+             "73.2% a proxy, 0.34% Unknown. With EDGAR: 65% (2017) → 97% (2026) real.\n")
+
+    L.append(f"### Portfolios — `{v}` (Feb 2019 → 2026-11-04, same costs/books)\n")
+    rows = [perf_row(k, V[v]["perf"][k]["all"]) for k in gate.CONSTRUCTIONS]
+    rows += [perf_row("ew_universe", res["benchmarks"]["ew_universe"]["all"]),
+             perf_row("spy", res["benchmarks"]["spy"]["all"])]
+    L.append(md_table(pd.DataFrame(rows), index=False) + "\n")
+    yrs = sorted(k for k in res["benchmarks"]["ew_universe"] if k != "all")
+    yr_rows = []
+    for k in list(gate.CONSTRUCTIONS) + ["ew_universe", "spy"]:
+        src = V[v]["perf"][k] if k in V[v]["perf"] else res["benchmarks"][k]
+        r = {"book": k}
+        for y in yrs:
+            m = src[y]
+            r[y] = f"{_pct((1 + m['cagr']) ** (m['n_days'] / 252) - 1, 0)} / {_f(m['sharpe'], 1)} / {_pct(m['max_dd'], 0)}"
+        yr_rows.append(r)
+    L.append("Per year (return / Sharpe / max drawdown):\n\n" + md_table(pd.DataFrame(yr_rows), index=False) + "\n")
+    b_rows = []
+    for k in gate.CONSTRUCTIONS:
+        b = g["bootstrap"][k]
+        b_rows.append({"book": k, "Sharpe [95% CI]": f"{_f(b['sharpe']['point'])} [{_f(b['sharpe']['lo'])}, {_f(b['sharpe']['hi'])}]",
+                       "IR vs EW [95% CI]": f"{_f(b['ir_ew']['point'])} [{_f(b['ir_ew']['lo'])}, {_f(b['ir_ew']['hi'])}]",
+                       "Sharpe − EW [95% CI]": f"{_f(b['sharpe_minus_ew']['point'])} [{_f(b['sharpe_minus_ew']['lo'])}, {_f(b['sharpe_minus_ew']['hi'])}]",
+                       "PSR(0)": _f(b["dsr"]["psr0"], 3), "DSR": _f(b["dsr"]["dsr"], 3),
+                       "SR* (ann.)": _f(b["dsr"]["sr_star_ann"])})
+    L.append(md_table(pd.DataFrame(b_rows), index=False) + "\n")
+    d0 = g["bootstrap"][c]["dsr"]
+    L.append(f"DSR: N = {d0['n_trials']} trials (round 1's 20 + round 2's 3 variants × 4 books), variance of their "
+             f"daily Sharpe ratios {d0['var_trial_sr_pp']:.2e} → SR* = {_f(d0['sr_star_ann'])} annualised.\n")
+
+    L.append("### Ablation — sectors vs fundamentals (same folds, weekly OOS IC vs 30-session return)\n")
+    ab = []
+    for x in R2_VARIANTS:
+        s30 = V[x]["signal"]["fwd_ret_30"]["all"]
+        yr_pos = sum(1 for y in gate.A_YEARS if V[x]["signal"]["fwd_ret_30"].get(y, {}).get("mean_ic", -1) > 0)
+        ab.append({"variant": x, "sectors": "legacy+proxy" if x == "base" else "EDGAR+proxy",
+                   "fundamentals": "yes" if tr.EDGAR_VARIANTS.get(x) else "no", "target": tr.VARIANTS[x][0],
+                   "IC": _f(s30["mean_ic"], 4), "NW t": _f(s30["nw_t"]), "SN-IC": _f(s30["sector_neutral_ic"], 4),
+                   "decile spread": _pct(s30["decile_spread"], 2), "yrs IC>0": f"{yr_pos}/8",
+                   "holdout IC": _f(g["holdouts"][x]["mean_ic"], 4) if x in g["holdouts"] else "",
+                   "Sharpe lo30/lo50/ls40/top10": " / ".join(_f(V[x]["perf"][k]["all"]["sharpe"]) for k in gate.CONSTRUCTIONS),
+                   "maxDD lo30/lo50/top10": " / ".join(_pct(V[x]["perf"][k]["all"]["max_dd"], 0) for k in ("lo30", "lo50", "legacy_top10"))})
+    L.append(md_table(pd.DataFrame(ab), index=False) + "\n")
+    py = pd.DataFrame({x: {y: _f(V[x]["signal"]["fwd_ret_30"][y]["mean_ic"], 4) for y in gate.A_YEARS
+                           if y in V[x]["signal"]["fwd_ret_30"]} for x in R2_VARIANTS})
+    L.append("Per-year IC:\n\n" + md_table(py) + "\n")
+    L.append("`base` → `base_sec` isolates the sector source (only the two sector-mean features, the sector "
+             "caps and the SN-IC definition change); `base_sec` → `base_fund` isolates the fundamentals. SN-IC is "
+             "measured with each variant's own sectors, so it is not strictly comparable between `base` and the "
+             "EDGAR variants. Holdout IC (gate c definition) is shown for every round-2 candidate for information; "
+             "only the chosen recipe's enters the gate.\n")
+
+    L.append("### Drawdown excluding the COVID crash (information only — not a gate criterion)\n")
+    cd = pd.DataFrame(g["covid"])
+    ddf = lambda x: "ruin (NAV < 0)" if x < -1 else _pct(x)
+    cd["maxDD"] = cd["maxDD"].map(ddf)
+    cd["maxDD ex Feb-Apr 2020"] = cd["maxDD ex Feb-Apr 2020"].map(ddf)
+    L.append(md_table(cd, index=False) + "\n")
+    L.append("Computed by deleting the sessions 2020-02-01 → 2020-04-30 from each daily return series and "
+             "re-chaining the rest (the same days for every book and SPY).\n")
+
+    L.append("### Recommendation\n")
+    L.append(RECOMMENDATION_R2.format(v=v, c=c) if not g["passed"] else
+             "The gate passes; the artefact is built under `$BDA_DATA_V3/v3model/` (see manifest).")
+    L.append("")
+    text = open(REPORT).read()
+    if R2_MARK in text:
+        text = text[:text.index(R2_MARK)]
+    open(REPORT, "w").write(text.rstrip() + "\n" + "\n".join(L))
+
+
+RECOMMENDATION_R2 = """**Do not promote v3 yet.** The pre-registered gate fails on one criterion — Deflated Sharpe
+(b3) — and that is the one that matters most: with 32 configurations tried, the best long-only book's
+Sharpe (~0.56) is indistinguishable from the expected maximum of 32 noise trials (SR* ≈ 0.59). The
+chosen book `{c}` beats the EW universe on Sharpe only through lower volatility (IR vs EW ≈ −0.07,
+bootstrap CI of Sharpe − EW Sharpe spans 0), it underperforms SPY, and its drawdown passes b2 by
+one point (−34.0% vs −35%).
+
+What round 2 did show:
+* **The signal is real and stable** (weekly IC 0.065, NW t 4.8, positive in 7/8 years; holdout IC
+  0.143 for `{v}`, above v2's 0.14 reference) — the problem is converting it into a long-only
+  book that beats cheap beta, not the ranking itself.
+* **EDGAR sectors** (`base` → `base_sec`) did not raise IC (0.067 → 0.064); their value is correct
+  risk buckets for caps and sector-neutral targets.
+* **Fundamentals** (`base_sec` → `base_fund`) did not raise walk-forward IC either (0.064 → 0.060)
+  but lifted the recent holdout (0.112 → 0.132) and cut long-only drawdowns (−39% → −35%); with the
+  sector-neutral target (`{v}`) IC returns to 0.065 and holdout to 0.143. Treat the holdout gain
+  cautiously: it is 50 days of one regime, and a small residual imputation channel remains.
+* **COVID**: excluding Feb–Apr 2020, long-only drawdowns fall to −27…−33% (SPY −24.5%), so most of
+  the b2 margin is the crash; the 2022 bear (−24%) is the next-worst episode.
+* The long/short book remains uninvestable as simulated (squeeze-driven ruin).
+
+Suggested next steps (each would be a new, pre-registered round with N counted): a broad long-only
+book with a market-cap/liquidity floor (to stop the book tilting into micro-caps that EW and SPY
+don't hold), a beta/vol-targeted overlay, and an L/S version with a volatility filter and borrow
+data on the short leg. Until one clears DSR, keep v2final in production."""
+
+
 if __name__ == "__main__":
-    build()
+    import sys
+    if "--r2" in sys.argv:
+        lp = ex.eval_dir("leak_probe.json")
+        build_r2(json.load(open(lp)) if os.path.exists(lp) else None)
+    else:
+        build()

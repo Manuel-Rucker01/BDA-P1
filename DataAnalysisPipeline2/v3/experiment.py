@@ -69,23 +69,30 @@ def signal_tables(preds: pd.DataFrame, weekly: pd.DataFrame) -> dict:
     return out
 
 
-def run_all(variants=None, log=print) -> dict:
+def run_all(variants=None, log=print, out_name: str = "results.json") -> dict:
+    """Signal tables and backtests for every variant. Each variant is evaluated
+    with ITS dataset's sectors (EDGAR variants: EDGAR/FF12 sectors for the
+    sector-neutral IC and every sector cap)."""
     t0 = time.time()
     variants = variants or [v for v in tr.VARIANTS if os.path.exists(os.path.join(ds.v3_dir("wf"), f"{v}.parquet"))]
-    weekly = pd.read_parquet(tr.weekly_path(), columns=EVAL_COLS)
+    weeklies = {dsn: pd.read_parquet(tr.weekly_path(dsn), columns=EVAL_COLS)
+                for dsn in sorted({tr.variant_dataset(v) for v in variants} | {"dataset"})}
+    weekly = weeklies["dataset"]
     cal = ds.calendar_from_dataset()
     preds = {v: load_preds(v) for v in variants}
     tick = set(weekly.loc[weekly["Date"] >= "2018-12-01", "ticker"])
     rets = returns_matrix(tick)
     spy = spy_returns()
     log(f"[eval] returns matrix {rets.shape} ({time.time() - t0:.0f}s)")
-    info = weekly[["ticker", "Date", "Sector", "return_volatility_20d", "company_close"]]
+    infos = {k: w[["ticker", "Date", "Sector", "return_volatility_20d", "company_close"]] for k, w in weeklies.items()}
 
     res = {"variants": {}, "trials": {}}
     ew = None
     for v in variants:
         log(f"[eval] variant {v}")
-        sig = signal_tables(preds[v], weekly)
+        wk = weeklies[tr.variant_dataset(v)]
+        info = infos[tr.variant_dataset(v)]
+        sig = signal_tables(preds[v], wk)
         for lab, tab in sig.items():
             tab.to_csv(eval_dir(f"{v}_signal_{lab}.csv"))
         bts = bt.run_constructions(preds[v], info, rets, cal, with_ew=(ew is None), log=log)
@@ -106,7 +113,7 @@ def run_all(variants=None, log=print) -> dict:
     spyby = ev.perf_by_year(spy.reindex(ew["ret"].index).fillna(0.0), spy.reindex(ew["ret"].index).fillna(0.0), ew["ret"])
     res["benchmarks"] = {"ew_universe": ewby.to_dict(orient="index"), "spy": spyby.to_dict(orient="index")}
     res["seconds"] = round(time.time() - t0)
-    json.dump(res, open(eval_dir("results.json"), "w"), indent=1, default=float)
+    json.dump(res, open(eval_dir(out_name), "w"), indent=1, default=float)
     return res
 
 
@@ -131,16 +138,17 @@ def holdout_ic(variant: str, log=print) -> dict:
     """Train ``variant`` on weekly dates <= C_TRAIN_END, score every session in
     [C_START, C_END], mean daily Spearman IC vs the 30-session label."""
     t0 = time.time()
-    frame = tr.load_weekly()
+    dsn = tr.variant_dataset(variant)
+    frame = tr.load_weekly(dsn)
     cal = ds.calendar_from_dataset()
     f, feats, target = tr.variant_frame(variant, frame)
     trn = f[f["Date"] <= gate.C_TRAIN_END]
     assert trn["Date"].max() <= gate.C_TRAIN_END
     ms, info = tr.fit_ensemble(trn, feats, target, cal, log=log)
     days = [d for d in cal if gate.C_START <= d <= gate.C_END]
-    daily = ds.load_daily(years=[2026], dates=days)
+    daily = ds.load_daily(years=[2026], dates=days, out_dir=ds.v3_dir(dsn))
     daily = daily[daily["eligible"]].reset_index(drop=True)
-    X = ds.zscore(daily)
+    X = ds.zscore(daily, [c for c in feats if c in daily.columns])
     te = pd.concat([daily[["ticker", "Date", "Sector", gate.C_LABEL, "fwd_ret_21"]], X], axis=1)
     if variant.startswith("common"):
         kg = tr.kg_embedding_frame(tr.default_kg_path())
@@ -165,13 +173,35 @@ def holdout_ic(variant: str, log=print) -> dict:
     return out
 
 
+def leak_probe(end: str = "2022-12-31", seed: int = 0) -> dict:
+    """Can the model inputs separate hot-deck-imputed rows (names without an
+    EDGAR record -- mostly future delisters) from real ones? LightGBM classifier,
+    30% of dates held out; returns held-out AUCs for core, fundamentals, both."""
+    from lightgbm import LGBMClassifier
+    from sklearn.metrics import roc_auc_score
+    w = tr.load_weekly(ds.EDGAR_DATASET)
+    w = w[w["Date"] <= end]
+    y = w["fund_imputed"].astype(int).to_numpy()
+    dates = np.array(sorted(w["Date"].unique()))
+    rng = np.random.default_rng(seed)
+    te = w["Date"].isin(set(dates[rng.random(len(dates)) < 0.3])).to_numpy()
+    out = {"period": f"2017..{end}"}
+    for name, cols in (("core", ds.FEATURE_COLUMNS), ("fund", tr.fund_columns()),
+                       ("both", ds.FEATURE_COLUMNS + tr.fund_columns())):
+        m = LGBMClassifier(n_estimators=200, num_leaves=31, learning_rate=0.05, verbose=-1, n_jobs=8)
+        m.fit(w.loc[~te, cols], y[~te])
+        out[name] = float(roc_auc_score(y[te], m.predict_proba(w.loc[te, cols])[:, 1]))
+    return out
+
+
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["evaluate", "holdout"])
     ap.add_argument("--variant", default="base")
+    ap.add_argument("--round", type=int, default=1)
     a = ap.parse_args()
     if a.cmd == "evaluate":
-        run_all()
+        run_all(out_name="results.json" if a.round == 1 else "results_r2.json")
     else:
         holdout_ic(a.variant)
