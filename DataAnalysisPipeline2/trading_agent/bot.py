@@ -595,6 +595,8 @@ def validate_model_artifact_schema(model_data):
     """
     if not isinstance(model_data, dict):
         raise ValueError("Model artifact must be a dict loaded from best_model.pkl.")
+    if _artifact_feature_version(model_data) >= 3:
+        return validate_v3_artifact_schema(model_data)
 
     required_keys = {
         "trained_models", "mix_models", "scaler", "pca",
@@ -629,6 +631,110 @@ def validate_model_artifact_schema(model_data):
     duplicate_cols = sorted({c for c in feature_cols if feature_cols.count(c) > 1})
     if duplicate_cols:
         raise ValueError(f"Model artifact has duplicate feature columns: {duplicate_cols}")
+
+
+def _v3(name):
+    """Import ``DataAnalysisPipeline2.v3.<name>`` (the v3 package uses
+    package-absolute imports, so the repository root must be importable)."""
+    import importlib
+    root = os.path.abspath(os.path.join(_PIPELINE_DIR, ".."))
+    if root not in sys.path:
+        sys.path.append(root)
+    return importlib.import_module(f"DataAnalysisPipeline2.v3.{name}")
+
+
+def _artifact_feature_version(model_data):
+    meta =(model_data.get("metadata") or model_data.get("manifest") or {}) if isinstance(model_data, dict) else {}
+    try:
+        return int(meta.get("feature_version", 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+V3_MANIFEST_KEYS = ("feature_version", "feature_columns", "label_horizon", "eligibility_rule",
+                    "zscore_method", "training_range")
+
+
+def validate_v3_artifact_schema(model_data):
+    """feature_version-3 contract: no KG/PCA/scaler, per-date robust z-score
+    (``cs_z_standardize``), the model's feature columns equal the manifest's
+    and are produced by the v3 dataset code, and the manifest documents
+    label / universe / z-score."""
+    for k in ("trained_models", "mix_models", "tabular_cols"):
+        if k not in model_data:
+            raise ValueError(f"v3 model artifact missing required key: {k!r}")
+    meta = model_data.get("metadata") or model_data.get("manifest") or {}
+    missing = [k for k in V3_MANIFEST_KEYS if k not in meta]
+    if missing:
+        raise ValueError(f"v3 manifest missing keys: {missing}")
+    if not isinstance(model_data["trained_models"], dict) or not model_data["trained_models"]:
+        raise ValueError("Model artifact key 'trained_models' must be a non-empty dict.")
+    mix = list(model_data["mix_models"])
+    if not mix or set(mix) - set(model_data["trained_models"]):
+        raise ValueError("v3 mix_models must be a non-empty subset of trained_models.")
+    if model_data.get("pca_cols"):
+        raise ValueError("feature_version-3 artefacts carry no KG/PCA columns.")
+    if list(meta["feature_columns"]) != list(model_data["tabular_cols"]):
+        raise ValueError("v3 manifest feature_columns does not match tabular_cols.")
+    if not bool(model_data.get("cs_z_standardize", False)):
+        raise ValueError("feature_version>=2 artefacts must use cross-sectional z-scoring")
+    v3ds = _v3("dataset")
+    unknown = sorted(set(model_data["tabular_cols"]) - set(v3ds.FEATURE_COLUMNS))
+    if unknown:
+        raise ValueError(f"v3 artefact uses columns the v3 feature code does not produce: {unknown}")
+
+
+def v3_live_universe(classification_path=None, verbose=True):
+    """Live v3 universe: currently listed (``status == active``) common stocks
+    from the WS1 classification (``$BDA_DATA_V3/universe/classification.parquet``),
+    minus symbols known to be pure aliases of another symbol's history.
+    Eligibility (price / ADV / history) is applied later, on the decision date.
+
+    Without the WS1 store (e.g. a stateless runner) it falls back to Alpaca's
+    active asset list classified by the same name/symbol rules
+    (``universe.classify_assets``; read-only GET)."""
+    v3u = _v3("universe")
+    DEFAULT_DATA_DIR = _v3("_alpaca").DEFAULT_DATA_DIR
+    path = classification_path or os.path.join(
+        os.environ.get("BDA_DATA_V3", DEFAULT_DATA_DIR), "universe", "classification.parquet")
+    if os.path.exists(path):
+        c = pd.read_parquet(path)
+        syms = c.loc[c["in_universe"] & (c["status"] == "active"), "fetch_symbol"].dropna()
+        dup = os.path.join(os.path.dirname(path), "duplicates.parquet")
+        aliases = set()
+        if os.path.exists(dup):
+            d = pd.read_parquet(dup)
+            aliases = set(d.loc[d["mode"] == "alias", "alias"])
+        out = sorted(set(syms) - aliases)
+        src = f"WS1 classification ({path})"
+    else:
+        AlpacaClient = _v3("_alpaca").AlpacaClient
+        assets = pd.DataFrame(AlpacaClient().get_assets("active"))
+        cls = v3u.classify_assets(assets)
+        out = sorted(cls.loc[cls["cls"] == "common", "fetch_symbol"].dropna().unique())
+        src = "Alpaca active assets + universe.classify_assets (no WS1 store)"
+    if verbose:
+        print(f"[Agent] v3 live universe: {len(out)} active common stocks from {src}")
+    return out
+
+
+def _ols_betas(features_df, tickers, sp_returns, window=120):
+    """Beta of each ticker's daily return on the benchmark over the last
+    ``window`` sessions (OLS; 1.0 with < 20 common observations)."""
+    if not sp_returns:
+        return {t: 1.0 for t in tickers}
+    f = features_df[features_df["ticker"].isin(set(tickers))]
+    wide = f.pivot(index="Date", columns="ticker", values="daily_return").sort_index().iloc[-window:]
+    m = pd.Series(sp_returns).reindex(wide.index).astype(float)
+    out = {}
+    for t in wide.columns:
+        y = wide[t].astype(float)
+        ok = y.notna() & m.notna()
+        if ok.sum() < 20 or m[ok].var() <= 0:
+            out[t] = 1.0
+            continue
+        out[t] = float(np.cov(y[ok], m[ok])[0, 1] / m[ok].var())
+    return out
 
 
 def validate_required_columns(df, required_cols, context):
@@ -719,11 +825,11 @@ class BDATradingAgent:
         validate_model_artifact_schema(self.model_data)
         self.trained_models = self.model_data["trained_models"]
         self.mix_models = list(self.model_data["mix_models"])
-        self.scaler = self.model_data["scaler"]
-        self.pca = self.model_data["pca"]
+        self.scaler = self.model_data.get("scaler")
+        self.pca = self.model_data.get("pca")
         self.tabular_cols = list(self.model_data["tabular_cols"])
-        self.pca_cols = list(self.model_data["pca_cols"])
-        self.company_embeddings = self.model_data["company_embeddings"]
+        self.pca_cols = list(self.model_data.get("pca_cols") or [])
+        self.company_embeddings = self.model_data.get("company_embeddings") or {}
         self.model_metadata = (
             self.model_data.get("metadata")
             or self.model_data.get("manifest")
@@ -823,9 +929,17 @@ class BDATradingAgent:
         from . import market_data
 
         n = len(config.TICKERS)
-        days = int(getattr(config, "LIVE_HISTORY_DAYS", 250))
-        print(f"[Agent] Downloading {days} days of daily bars for {n} tickers...")
-        df, failures = market_data.fetch_daily_bars(config.TICKERS, lookback_days=days)
+        if self.feature_version >= 3:
+            # v3: >= 120 bars for eligibility + the proxy-sector window (120
+            # sessions before the decision month) + EMA warm-up; raw closes
+            # for the $3 rule.
+            days = int(getattr(config, "LIVE_HISTORY_DAYS_V3", 420))
+            print(f"[Agent] Downloading {days} days of daily bars (+ raw closes) for {n} tickers (v3)...")
+            df, failures = market_data.fetch_daily_bars(config.TICKERS, lookback_days=days, raw_close=True)
+        else:
+            days = int(getattr(config, "LIVE_HISTORY_DAYS", 250))
+            print(f"[Agent] Downloading {days} days of daily bars for {n} tickers...")
+            df, failures = market_data.fetch_daily_bars(config.TICKERS, lookback_days=days)
         if failures:
             print(f"[Agent] No data for {len(failures)} tickers (likely delisted; "
                   f"first 10: {failures[:10]}). Continuing with the rest.")
@@ -848,6 +962,8 @@ class BDATradingAgent:
             ["ticker", "Date", "company_close", "company_volume"],
             "price_history_df",
         )
+        if self.feature_version >= 3:
+            return self._run_inference_v3(price_history_df)
         metadata_df = fetch_company_metadata()
         if self.feature_version >= 2:
             # Shared training/live feature module: same code, same eligibility
@@ -1053,6 +1169,68 @@ class BDATradingAgent:
                           "pred_proba", "kalman_beta",
                           "return_volatility_20d", "Sector"]].sort_values(
             "pred_rank", ascending=False)
+
+    def _run_inference_v3(self, price_history_df):
+        """feature_version-3 path: the exact offline v3 dataset code
+        (``v3.dataset.compute_v3_features``: core features, v3 eligibility --
+        raw close >= $3, 20-session ADV >= $2M, >= 120 bars, a bar on the
+        decision date --, metadata/proxy sectors, cross-sectional features over
+        the eligible population) and the per-date robust z-score over eligible
+        names; no KG. Members' predictions are rank-averaged."""
+        import warnings
+        v3ds = _v3("dataset")
+        meta = fetch_company_metadata()
+        meta = meta[["ticker", "Sector"]] if "Sector" in meta.columns else None
+        decision_date = str(price_history_df["Date"].max())[:10]
+        print("[Agent] Computing feature_version-3 features (shared v3 dataset module)...")
+        feats = v3ds.compute_v3_features(price_history_df, meta, decision_date=decision_date)
+        latest_df = v3ds.decision_rows(feats, decision_date)
+        if latest_df.empty:
+            raise RuntimeError("No v3-eligible tickers on the decision date.")
+        print(f"[Agent] v3-eligible on {decision_date}: {len(latest_df)}/"
+              f"{price_history_df['ticker'].nunique()} tickers (raw close >= $3, ADV20 >= $2M, "
+              f">= 120 bars, fresh bar); sector source: "
+              f"{latest_df['sector_source'].value_counts().to_dict()}")
+        validate_required_columns(latest_df, self.tabular_cols, "live v3 feature frame")
+        X_full_df = v3ds.zscore(latest_df, self.tabular_cols).reset_index(drop=True)[self.tabular_cols]
+
+        model_preds = []
+        for m in self.mix_models:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=UserWarning)
+                model_preds.append(np.asarray(self.trained_models[m].predict(X_full_df), dtype=float))
+        ranks = np.column_stack([pd.Series(p).rank(pct=True).values for p in model_preds])
+        avg_rank = pd.Series(ranks.mean(axis=1)).rank(pct=True).values
+        latest_df["pred_rank"] = avg_rank
+        latest_df["pred_proba"] = avg_rank
+
+        try:
+            from . import market_data
+            sp = market_data.fetch_benchmark_closes(
+                config.SP500_INDEX, lookback_days=int(getattr(config, "LIVE_HISTORY_DAYS", 250)))
+            sp = sp.sort_values("Date").reset_index(drop=True)
+            sp_ret = sp.set_index("Date")["Close"].pct_change().dropna().to_dict()
+        except Exception as e:
+            print(f"[WARNING] Failed to fetch the benchmark for betas: {e}.")
+            sp_ret = {}
+        self.kalman_betas = _ols_betas(feats, latest_df["ticker"].tolist(), sp_ret)
+        latest_df["kalman_beta"] = latest_df["ticker"].map(self.kalman_betas).fillna(1.0)
+
+        try:
+            self.last_decision_ctx = build_decision_context(
+                model_path=config.MODEL_PATH, feature_df=X_full_df,
+                universe=list(latest_df["ticker"].unique()), hmm_state=self.hmm_state,
+                hmm_probs=self.hmm_probs, decision_date=decision_date)
+            snapshot_path = save_feature_snapshot(self.last_decision_ctx.decision_id, X_full_df)
+            write_decision_row(self.last_decision_ctx,
+                               extras={"snapshot_path": snapshot_path, "n_tickers": int(len(latest_df))})
+        except Exception as e:
+            print(f"[WARN] Could not record decision context: {e}")
+
+        self.last_predictions_df = latest_df.copy()
+        self.last_feature_matrix = X_full_df.copy()
+        return latest_df[["ticker", "company_close", "pred_rank", "pred_proba", "kalman_beta",
+                          "return_volatility_20d", "Sector"]].sort_values("pred_rank", ascending=False)
 
     def apply_news_sentiment_tilt(self, predictions_df):
         """LIVE-ONLY: tilt the model's predicted rank by real-time news
