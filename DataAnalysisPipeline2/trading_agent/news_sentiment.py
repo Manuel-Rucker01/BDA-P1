@@ -26,10 +26,9 @@ The RDF + SPARQL step keeps the feature thematically a Knowledge-Graph
 extension (consistent with the project's semantic-data framing) while staying
 completely separate from the structural KG that trains the embeddings.
 
-SENTIMENT BACKEND (pluggable, graceful degradation):
-    1. FinBERT  (transformers) — finance-tuned, best quality   [optional]
-    2. VADER    (vaderSentiment) — general lexicon            [optional]
-    3. Built-in finance lexicon — zero-dependency fallback    [always present]
+SENTIMENT BACKEND: pinned by the SENTIMENT_BACKEND constant (default the
+built-in finance lexicon). No silent fallback chain -- training and live must
+use the same scorer (audit F12); an unavailable pinned backend raises.
 """
 
 from __future__ import annotations
@@ -123,36 +122,42 @@ def _get_vader():
     return _VADER
 
 
+# PINNED sentiment backend (audit F12). Training features and live inference
+# must score articles with the SAME backend: FinBERT/VADER use different scales
+# and FinBERT scores every article (the lexicon drops term-less ones, which also
+# changes news_count_7d). The backend is therefore a constant, never a silent
+# fallback chain; a pinned backend that cannot be loaded raises. Changing it
+# requires rebuilding news_features.parquet and retraining any news model.
+SENTIMENT_BACKEND = "finance-lexicon"   # one of: "finance-lexicon", "vader", "finbert"
+_BACKENDS = ("finance-lexicon", "vader", "finbert")
+
+
+def _pinned_backend() -> str:
+    if SENTIMENT_BACKEND not in _BACKENDS:
+        raise ValueError(f"Unknown SENTIMENT_BACKEND {SENTIMENT_BACKEND!r}; expected one of {_BACKENDS}")
+    if SENTIMENT_BACKEND == "finbert" and not _get_finbert():
+        raise RuntimeError("SENTIMENT_BACKEND='finbert' is pinned but transformers/FinBERT is unavailable")
+    if SENTIMENT_BACKEND == "vader" and not _get_vader():
+        raise RuntimeError("SENTIMENT_BACKEND='vader' is pinned but vaderSentiment is unavailable")
+    return SENTIMENT_BACKEND
+
+
 def score_text(text: str) -> float | None:
-    """Sentiment of a headline/summary in [-1, 1]. Tries FinBERT -> VADER ->
-    finance lexicon. Returns None when no signal could be extracted."""
-    fb = _get_finbert()
-    if fb:
-        try:
-            r = fb(text[:512])[0]
-            lab, sc = r["label"].lower(), float(r["score"])
-            if lab == "positive":
-                return sc
-            if lab == "negative":
-                return -sc
-            return 0.0
-        except Exception:
-            pass
-    vd = _get_vader()
-    if vd:
-        try:
-            return float(vd.polarity_scores(text)["compound"])
-        except Exception:
-            pass
+    """Sentiment of a headline/summary in [-1, 1] with the PINNED backend.
+    Returns None when no signal could be extracted (lexicon: no finance terms)."""
+    backend = _pinned_backend()
+    if backend == "finbert":
+        r = _get_finbert()(text[:512])[0]
+        lab, sc = r["label"].lower(), float(r["score"])
+        return sc if lab == "positive" else (-sc if lab == "negative" else 0.0)
+    if backend == "vader":
+        return float(_get_vader().polarity_scores(text)["compound"])
     return _lexicon_score(text)
 
 
 def sentiment_backend_name() -> str:
-    if _get_finbert():
-        return "FinBERT"
-    if _get_vader():
-        return "VADER"
-    return "finance-lexicon"
+    """Name of the pinned backend (raises if it cannot be loaded)."""
+    return _pinned_backend()
 
 
 # ── Alpaca news fetch ─────────────────────────────────────────────────────────

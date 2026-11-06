@@ -57,6 +57,7 @@ import torch.nn as nn
 import torch.optim as optim
 from rdflib import Graph, Namespace, URIRef
 from scipy.stats import binom, spearmanr
+from sklearn.base import clone
 from sklearn.decomposition import PCA
 from sklearn.ensemble import RandomForestRegressor, StackingRegressor
 from sklearn.linear_model import RidgeCV
@@ -784,14 +785,159 @@ def build_feature_matrices(df_obs, company_embeddings, embed_dim_real):
     return feature_sets, y_rank, y_ret, merged, pca, tabular_cols, pca_cols
 
 
+def load_price_panel(csv_path=None):
+    """Full, unfiltered daily panel (ticker, Date, Open, High, Low,
+    company_close, company_volume) from the Landing-zone company_history CSV."""
+    path = csv_path or PANEL_CSV
+    raw = pd.read_csv(path, usecols=["Date", "Open", "High", "Low", "Close", "Volume", "Company"])
+    panel = raw.rename(columns={"Company": "ticker", "Close": "company_close",
+                                "Volume": "company_volume"})
+    panel["ticker"] = panel["ticker"].astype(str).str.strip()
+    panel["Date"] = pd.to_datetime(panel["Date"]).dt.strftime("%Y-%m-%d")
+    return panel[["ticker", "Date", "Open", "High", "Low", "company_close", "company_volume"]]
+
+
+def build_v2_scored_frame(panel, meta, company_embeddings, pca, pca_cols, news_df=None):
+    """feature_version-2 frame for EVERY eligible+embedded (ticker, Date): core
+    features + model PCA cols (+ news), robust-z-scored per date on exactly that
+    population (= the population live z-scores). Shared by training and the
+    holdout evaluator. Returns (frame, tabular_cols) with z-scored columns."""
+    from features import core
+    feats = core.compute_features(panel, meta)
+    feats = feats[feats["eligible"] & feats["ticker"].isin(set(company_embeddings))].copy()
+    tick = sorted(feats["ticker"].unique())
+    reduced = pca.transform(np.array([company_embeddings[t] for t in tick]))
+    emb_df = pd.DataFrame(reduced, columns=pca_cols)
+    emb_df["ticker"] = tick
+    feats = feats.merge(emb_df, on="ticker", how="inner")
+    tabular_cols = list(core.FEATURE_COLUMNS)
+    if news_df is not None:
+        nf = news_df.copy()
+        nf["Date"] = pd.to_datetime(nf["Date"]).dt.strftime("%Y-%m-%d")
+        news_cols = [c for c in nf.columns if c not in ("ticker", "Date")]
+        feats = feats.merge(nf, on=["ticker", "Date"], how="left")
+        for c in news_cols:
+            feats[c] = feats[c].fillna(0.0)
+        tabular_cols += news_cols
+    cols = tabular_cols + list(pca_cols)
+    Z = core.cross_sectional_zscore(feats, cols, date_col="Date")
+    feats[cols] = Z.values
+    return feats, tabular_cols
+
+
+def build_feature_matrices_v2(company_embeddings, embed_dim_real):
+    """feature_version-2 replacement for load_observation_features +
+    attach_* + build_feature_matrices. Same return signature."""
+    from features import core
+    from trading_agent.bot import fetch_company_metadata  # the function live uses
+    print("\n[4/5] [v2] Building features with features/core.py on the full price panel...")
+    panel = load_price_panel()
+    smoke_n = int(os.environ.get("V2_SMOKE_TICKERS", "0") or 0)
+    if smoke_n:  # debugging aid only: restrict the panel to N embedded tickers
+        keep = sorted(set(panel["ticker"]) & set(company_embeddings))[:smoke_n]
+        panel = panel[panel["ticker"].isin(keep)]
+        print(f"  -> [smoke] V2_SMOKE_TICKERS={smoke_n}: panel restricted to {len(keep)} tickers")
+    print(f"  -> panel {PANEL_CSV}: {len(panel):,} rows, {panel['ticker'].nunique()} tickers, "
+          f"{panel['Date'].min()} -> {panel['Date'].max()}")
+    meta = fetch_company_metadata()[["ticker", "Sector"]]
+
+    embed_cols = [f"emb_{i}" for i in range(embed_dim_real)]
+    emb_df = pd.DataFrame.from_dict(company_embeddings, orient="index", columns=embed_cols)
+    pca = PCA(n_components=min(PCA_DIM, embed_dim_real), random_state=SEED)
+    pca.fit(emb_df[embed_cols].values)
+    pca_cols = [f"kg_pc{i}" for i in range(pca.n_components_)]
+    print(f"  -> PCA: {embed_dim_real} → {pca.n_components_} dims, "
+          f"variance retained = {pca.explained_variance_ratio_.sum():.3f}")
+
+    news_df = None
+    if os.environ.get("USE_NEWS_FEATURES", "0") == "1":
+        news_df = pd.read_parquet(NEWS_PARQUET)
+        print(f"  -> [news] {NEWS_PARQUET}: {len(news_df):,} rows "
+              f"{pd.to_datetime(news_df['Date']).min().date()}..{pd.to_datetime(news_df['Date']).max().date()}")
+    feats, tabular_cols = build_v2_scored_frame(panel, meta, company_embeddings, pca, pca_cols, news_df)
+    print(f"  -> eligible+embedded rows: {len(feats):,} ({feats['ticker'].nunique()} tickers); "
+          f"z-scored per date ({len(tabular_cols)} tabular + {len(pca_cols)} pca cols)")
+
+    conn = duckdb.connect(DB_PATH, read_only=True)
+    labels = conn.execute(
+        "SELECT Symbol AS ticker, strftime(CAST(Date AS DATE), '%Y-%m-%d') AS Date, "
+        "target_7d_up, target_30d_return, target_30d_rank FROM master_dataset "
+        "WHERE target_30d_rank IS NOT NULL").df()
+    conn.close()
+    merged = feats.merge(labels, on=["ticker", "Date"], how="inner")
+    merged = apply_target_mode(merged)
+    merged = apply_train_window(merged)
+    merged = merged.sort_values("Date", kind="stable").reset_index(drop=True)
+    print(f"  -> labelled training rows: {len(merged):,} ({merged['ticker'].nunique()} tickers, "
+          f"{merged['Date'].nunique()} dates)")
+
+    X_tab = merged[tabular_cols].values.astype(np.float32)
+    X_emb = merged[pca_cols].values.astype(np.float32)
+    feature_sets = {
+        "tabular_only": X_tab,
+        "embedding_only": X_emb,
+        "tabular+embedding": np.concatenate([X_tab, X_emb], axis=1),
+    }
+    y_rank = merged["target_30d_rank"].astype(float).values
+    y_ret = merged["target_30d_return"].astype(float).values
+    return feature_sets, y_rank, y_ret, merged, pca, tabular_cols, pca_cols
+
+
 # ── Step 6: Multi-model regression bake-off + Walk-forward CV ─────────────────
 
 # Walk-forward CV — chronological expanding-window folds.  Each fold trains
 # on all data up to a cut date and evaluates on the following window.  An
 # embargo of EMBARGO_DAYS sits between train and test to prevent the
 # 30-day forward-return target from leaking across the boundary.
-N_FOLDS = 5
+N_FOLDS = int(os.environ.get("N_FOLDS", "5"))   # env override; default 5
 EMBARGO_DAYS = 30
+
+# ── feature_version 2 (shared training/live features; audit 2026-11) ─────────
+# FEATURE_VERSION=2 switches to features/core.py computed on the full,
+# unfiltered daily price panel, robust per-date z-scoring on the
+# eligible+embedded population (exactly what live scores), session-based
+# purge/embargo in CV AND in the early-stopping split (F7), and a final REFIT of
+# the deployed mix on all labelled rows of the training window (F8).
+# Default 1 = the legacy path, byte-for-byte unchanged.
+FEATURE_VERSION = int(os.environ.get("FEATURE_VERSION", "1"))
+# Label = 30 sessions forward, so >= 31 sessions between the last training
+# feature date and the first test / validation date guarantees no overlap.
+EMBARGO_SESSIONS = int(os.environ.get("EMBARGO_SESSIONS", "31"))
+PANEL_CSV = os.environ.get(
+    "PANEL_CSV",
+    os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "datasets", "company_history.csv")))
+NEWS_PARQUET = os.environ.get("NEWS_PARQUET", os.path.join(EXPLOITATION_DIR, "news_features.parquet"))
+# Best iteration per (feature_set, model) per fold, collected by the v2 early-
+# stopping split and used to size the final refit.
+_BEST_ITERS = {}
+
+# Optional training-window controls (default: empty = use every labeled date,
+# i.e. unchanged behavior). Applied to the FEATURE date of the observation
+# frame AFTER all per-ticker window features are computed (so lags/rolling
+# stats still see the pre-window history) and BEFORE fold construction.
+# Note: an observation's 30d label extends ~30 sessions past its feature date,
+# so TRAIN_END_DATE should sit ~6 weeks before any holdout start.
+TRAIN_START_DATE = os.environ.get("TRAIN_START_DATE", "").strip()
+TRAIN_END_DATE = os.environ.get("TRAIN_END_DATE", "").strip()
+
+
+def apply_train_window(df_obs):
+    """Filter the observation frame to TRAIN_START_DATE <= Date <= TRAIN_END_DATE
+    (inclusive, either bound optional). No-op when both are unset."""
+    if not (TRAIN_START_DATE or TRAIN_END_DATE):
+        return df_obs
+    d = pd.to_datetime(df_obs["Date"]).dt.tz_localize(None)
+    mask = pd.Series(True, index=df_obs.index)
+    if TRAIN_START_DATE:
+        mask &= d >= pd.Timestamp(TRAIN_START_DATE)
+    if TRAIN_END_DATE:
+        mask &= d <= pd.Timestamp(TRAIN_END_DATE)
+    out = df_obs[mask.values].copy()
+    od = pd.to_datetime(out["Date"])
+    print(f"  -> [window] TRAIN_START_DATE={TRAIN_START_DATE or '-'} "
+          f"TRAIN_END_DATE={TRAIN_END_DATE or '-'}: kept {len(out):,}/{len(df_obs):,} rows, "
+          f"{od.nunique()} dates ({od.min().date()} -> {od.max().date()})")
+    return out
 
 
 # ── Part 4 P3: cross-sectional Z standardisation ──────────────────────────────
@@ -1028,7 +1174,9 @@ def make_stacking_model(base_models):
     estimators = []
     for name in ("CatBoost", "XGBoost", "LightGBM"):
         if name in base_models:
-            estimators.append((name.lower(), base_models[name]))
+            # clone: the v2 path sets early_stopping_rounds on the XGBoost
+            # template before Stack is fitted, which would break Stack's inner fits
+            estimators.append((name.lower(), clone(base_models[name])))
     if len(estimators) < 2:
         return None
     return StackingRegressor(
@@ -1133,10 +1281,22 @@ def build_model_manifest(*, trained_models, mix_models, tabular_cols, pca_cols,
 
 def fit_with_early_stopping(model, X_train_s, y_train, model_name, train_dates=None):
     """Train a regressor/ranker with a 90/10 temporal validation split for early
-    stopping. RandomForest and Stack just use a plain fit."""
+    stopping. RandomForest and Stack just use a plain fit.
+
+    FEATURE_VERSION>=2: the split is by DATE (last 10% of training dates =
+    validation) and the early-stopping training part ends EMBARGO_SESSIONS
+    dates before the first validation date, so no ES-training label overlaps
+    the validation window (audit F7). Rows must be sorted by date."""
     val_split = int(len(X_train_s) * 0.9)
-    X_tr, X_val = X_train_s[:val_split], X_train_s[val_split:]
-    y_tr, y_val = y_train[:val_split], y_train[val_split:]
+    tr_end, val_start = val_split, val_split
+    if FEATURE_VERSION >= 2 and train_dates is not None:
+        u = np.unique(train_dates)
+        cut = int(len(u) * 0.9)
+        if cut - EMBARGO_SESSIONS >= 1:
+            val_start = int(np.searchsorted(train_dates, u[cut], side="left"))
+            tr_end = int(np.searchsorted(train_dates, u[cut - EMBARGO_SESSIONS], side="right"))
+    X_tr, X_val = X_train_s[:tr_end], X_train_s[val_start:]
+    y_tr, y_val = y_train[:tr_end], y_train[val_start:]
 
     if model_name.endswith("_Rank"):
         # Map targets in [0, 1] to integer relevance grades in [0, 30] for rankers
@@ -1145,8 +1305,8 @@ def fit_with_early_stopping(model, X_train_s, y_train, model_name, train_dates=N
         y_train = np.clip(y_train * 30, 0, 30).astype(int)
 
         if train_dates is not None:
-            train_dates_tr = train_dates[:val_split]
-            train_dates_val = train_dates[val_split:]
+            train_dates_tr = train_dates[:tr_end]
+            train_dates_val = train_dates[val_start:]
 
             # Compute date query groups for temporal validation splits.
             # Since merged_df is sorted by Date chronologically, np.unique preserves the order.
@@ -1185,6 +1345,12 @@ def fit_with_early_stopping(model, X_train_s, y_train, model_name, train_dates=N
         if model_name == "CatBoost":
             model.fit(X_tr, y_tr, eval_set=(X_val, y_val),
                       early_stopping_rounds=50, verbose=0)
+        elif model_name == "XGBoost" and FEATURE_VERSION >= 2:
+            # xgboost>=2 takes early_stopping_rounds as an estimator param; the
+            # legacy fit(..., early_stopping_rounds=) path below raises
+            # TypeError and silently falls back to a full 1000-tree fit.
+            model.set_params(early_stopping_rounds=50)
+            model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], verbose=False)
         elif model_name == "XGBoost":
             try:
                 model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)],
@@ -1213,6 +1379,23 @@ def fit_with_early_stopping(model, X_train_s, y_train, model_name, train_dates=N
         else:
             # RandomForest, Stack — no early stopping support
             model.fit(X_train_s, y_train)
+
+
+def _best_iteration_count(model, model_name):
+    """Number of boosting rounds actually kept by early stopping (None if n/a)."""
+    try:
+        if model_name.startswith("CatBoost"):
+            b = model.get_best_iteration()
+            return None if b is None else int(b) + 1
+        if model_name.startswith("XGBoost"):
+            b = getattr(model, "best_iteration", None)
+            return None if b is None else int(b) + 1
+        if model_name.startswith("LightGBM"):
+            b = getattr(model, "best_iteration_", None)
+            return int(b) if b else None
+    except Exception:
+        return None
+    return None
 
 
 def regression_metrics(y_true_rank, y_pred_rank, y_true_return,
@@ -1449,7 +1632,15 @@ def make_walk_forward_folds(merged_df, n_folds=N_FOLDS, embargo_days=EMBARGO_DAY
         if train_end_idx >= len(unique_dates):
             break
         train_end_date = unique_dates[train_end_idx]
-        test_start_date = train_end_date + pd.Timedelta(days=embargo_days)
+        if FEATURE_VERSION >= 2:
+            # Session-based purge/embargo: the 30-session label of the last
+            # training date must end before the first test date.
+            ts_idx = train_end_idx + EMBARGO_SESSIONS
+            if ts_idx >= len(unique_dates):
+                break
+            test_start_date = unique_dates[ts_idx]
+        else:
+            test_start_date = train_end_date + pd.Timedelta(days=embargo_days)
         # Test ends at the end of block k+1 (or the data, whichever first)
         test_end_idx = min((k + 2) * block_size - 1, len(unique_dates) - 1)
         test_end_date = unique_dates[test_end_idx]
@@ -1461,15 +1652,122 @@ def make_walk_forward_folds(merged_df, n_folds=N_FOLDS, embargo_days=EMBARGO_DAY
         yield k, train_mask, test_mask, train_end_date, test_start_date
 
 
+_REG_MIX = ("RandomForest", "CatBoost", "XGBoost", "LightGBM")
+_RANK_MIX = ("CatBoost_Rank", "XGBoost_Rank", "LightGBM_Rank")
+
+
+def refit_v2_artefacts(fold_df, feature_sets, y_rank, merged_df, pca,
+                       tabular_cols, pca_cols, company_embeddings):
+    """FEATURE_VERSION=2 deployable artefact: choose SoftVote vs SoftVote_Rank
+    on the CV MEAN IC of the combined feature set (not the last fold's test IC,
+    audit F7), then refit each member on ALL labelled rows of the training
+    window with the median early-stopped iteration count from CV (audit F8)."""
+    feat = "tabular+embedding"
+    cv = fold_df[fold_df.feature_set == feat].groupby("model")["ic"].mean()
+    use_rank = cv.get("SoftVote_Rank", -np.inf) > cv.get("SoftVote", -np.inf)
+    recipe = "SoftVote_Rank" if use_rank else "SoftVote"
+    base = make_base_models()
+    deployed = [m for m in (_RANK_MIX if use_rank else _REG_MIX) if m in base]
+    print("\n" + "=" * 86)
+    print(f"[v2 REFIT] recipe={recipe} (CV mean IC SoftVote={cv.get('SoftVote', np.nan):+.4f}, "
+          f"SoftVote_Rank={cv.get('SoftVote_Rank', np.nan):+.4f}); members={deployed}")
+
+    feature_cols = list(tabular_cols) + list(pca_cols)
+    X = pd.DataFrame(feature_sets[feat], columns=feature_cols)
+    y = np.asarray(y_rank, dtype=float)
+    dates = pd.to_datetime(merged_df["Date"]).values
+    refit_iters = {}
+    trained = {}
+    for m in deployed:
+        est = base[m]
+        its = _BEST_ITERS.get((feat, m))
+        n = int(np.median(its)) if its else None
+        if n:
+            if m.startswith("CatBoost"):
+                est.set_params(iterations=n)
+            else:
+                est.set_params(n_estimators=n)
+        if m.startswith("XGBoost"):
+            est.set_params(early_stopping_rounds=None)
+        refit_iters[m] = {"cv_best_iterations": [int(i) for i in (its or [])], "refit_iterations": n}
+        t0 = time.time()
+        if m.endswith("_Rank"):
+            yg = np.clip(y * 30, 0, 30).astype(int)
+            _, groups = np.unique(dates, return_counts=True)
+            if m == "CatBoost_Rank":
+                from catboost import Pool
+                _, gid = np.unique(dates, return_inverse=True)
+                est.fit(Pool(X, yg, group_id=gid), verbose=0)
+            else:
+                est.fit(X, yg, group=groups)
+        else:
+            est.fit(X, y)
+        trained[m] = est
+        print(f"  -> refit {m:<13} on {len(X):,} rows, iterations={n} "
+              f"(CV best: {its}) in {time.time() - t0:.1f}s")
+
+    news_cols = [c for c in tabular_cols if c.startswith("news_")]
+    news_backend = None
+    if news_cols:
+        from trading_agent.news_sentiment import SENTIMENT_BACKEND
+        news_backend = SENTIMENT_BACKEND
+    manifest = build_model_manifest(
+        trained_models=trained, mix_models=deployed, tabular_cols=tabular_cols,
+        pca_cols=pca_cols, merged_df=merged_df, selected_feature_set=feat,
+        selected_model_recipe=recipe)
+    manifest["hyperparameters"].update({
+        "FEATURE_VERSION": FEATURE_VERSION, "EMBARGO_SESSIONS": EMBARGO_SESSIONS,
+        "TRAIN_START_DATE": TRAIN_START_DATE or None, "TRAIN_END_DATE": TRAIN_END_DATE or None,
+        "TARGET_MODE": TARGET_MODE, "EMBARGO_DAYS": None,
+    })
+    from features import core as _core
+    manifest.update({
+        "feature_version": 2,
+        "cs_z_method": "core.robust_v2",
+        "cs_z_standardize": True,
+        "core_min_price": _core.MIN_PRICE,
+        "core_min_history": _core.MIN_HISTORY,
+        "news_backend": news_backend,
+        "news_parquet": os.path.basename(NEWS_PARQUET) if news_cols else None,
+        "price_panel": os.path.relpath(PANEL_CSV, os.path.join(SCRIPT_DIR, "..", "..")),
+        "label": "master_dataset.target_30d_rank (30 sessions)",
+        "refit": "all labelled rows in [TRAIN_START_DATE, TRAIN_END_DATE]",
+        "refit_iterations": refit_iters,
+        "n_training_rows": int(len(X)),
+        "n_training_tickers": int(merged_df["ticker"].nunique()),
+        "cv_mean_ic": {k: float(v) for k, v in cv.items()},
+        "candidate_tag": CANDIDATE_TAG or None,
+    })
+    return {
+        "trained_models": trained,
+        "mix_models": deployed,
+        "scaler": None,
+        "pca": pca,
+        "tabular_cols": list(tabular_cols),
+        "pca_cols": list(pca_cols),
+        "company_embeddings": company_embeddings,
+        "cs_z_standardize": True,
+        "metadata": manifest,
+        "manifest": manifest,
+    }
+
+
 def evaluate_all(feature_sets, y_rank, y_ret, merged_df,
                  pca=None, tabular_cols=None, pca_cols=None,
                  company_embeddings=None):
     print("\n" + "=" * 72)
-    print(f"  Walk-Forward Bake-Off — target_30d_rank, {N_FOLDS} expanding folds, "
-          f"{EMBARGO_DAYS}-day embargo")
+    emb_txt = (f"{EMBARGO_SESSIONS}-session purge/embargo (CV + early stopping)"
+               if FEATURE_VERSION >= 2 else f"{EMBARGO_DAYS}-day embargo")
+    print(f"  Walk-Forward Bake-Off — target_30d_rank, {N_FOLDS} expanding folds, {emb_txt}, "
+          f"FEATURE_VERSION={FEATURE_VERSION}")
     print("=" * 72)
 
-    merged_df = merged_df.sort_values("Date").reset_index(drop=True)
+    if FEATURE_VERSION >= 2:
+        # Already date-sorted (stable) and aligned with feature_sets/y; a
+        # non-stable re-sort could permute same-date rows vs. X.
+        merged_df = merged_df.reset_index(drop=True)
+    else:
+        merged_df = merged_df.sort_values("Date").reset_index(drop=True)
 
     # Collect per-fold metrics keyed by (feature_set, model_name)
     fold_records = []
@@ -1518,12 +1816,19 @@ def evaluate_all(feature_sets, y_rank, y_ret, merged_df,
             # target_30d_rank measures. We still pass a (fit-train)
             # StandardScaler to the artefacts dict so live inference can
             # mirror the same transform on a single observation if needed.
-            scaler = StandardScaler()
-            scaler.fit(X_train)
-            if CS_Z_STANDARDIZE:
+            if FEATURE_VERSION >= 2:
+                # v2 features are already robust-z-scored per date on the
+                # eligible+embedded population (core.cross_sectional_zscore).
+                scaler = None
+                X_train_s, X_test_s = X_train, X_test
+            elif CS_Z_STANDARDIZE:
+                scaler = StandardScaler()
+                scaler.fit(X_train)
                 X_train_s = cross_sectional_zscore(X_train, train_dates)
                 X_test_s  = cross_sectional_zscore(X_test, test_dates)
             else:
+                scaler = StandardScaler()
+                scaler.fit(X_train)
                 X_train_s = scaler.transform(X_train)
                 X_test_s = scaler.transform(X_test)
 
@@ -1541,6 +1846,9 @@ def evaluate_all(feature_sets, y_rank, y_ret, merged_df,
                 t0 = time.time()
                 try:
                     fit_with_early_stopping(model, X_train_s, y_train, model_name, train_dates=train_dates)
+                    n_it = _best_iteration_count(model, model_name)
+                    if n_it:
+                        _BEST_ITERS.setdefault((feat_name, model_name), []).append(n_it)
                     y_pred = model.predict(X_test_s)
                     # Predictions are continuous regression outputs.  Squash
                     # them into [0,1] for IC/decile metrics that interpret
@@ -1937,6 +2245,12 @@ def evaluate_all(feature_sets, y_rank, y_ret, merged_df,
               f"decile spread = {b['decile_spread_pct_mean']:+.2f}% "
               f"(SE {b['decile_spread_pct_se']:.2f}, σ {b['decile_spread_pct_std']:.2f})")
 
+    # ── v2: refit the deployed mix on ALL labelled rows (audit F8) ──────────
+    if FEATURE_VERSION >= 2 and last_fold_artefacts:
+        last_fold_artefacts = refit_v2_artefacts(
+            fold_df, feature_sets, y_rank, merged_df, pca, tabular_cols, pca_cols,
+            company_embeddings)
+
     # ── Export last-fold predictions + frozen model artefacts ───────────────
     if last_fold_predictions and last_fold_artefacts:
         try:
@@ -1989,7 +2303,9 @@ def main():
         print(f"[CANDIDATE]   best_model   -> {_out(os.path.join(EXPLOITATION_DIR, 'best_model.pkl'))}")
         print(f"[CANDIDATE]   manifest     -> {_out(os.path.join(EXPLOITATION_DIR, 'best_model_manifest.json'))}")
         print(f"[CANDIDATE]   per-fold/oof/sign/pairwise/corr/test_predictions all tagged '_{CANDIDATE_TAG}'.")
-        print(f"[CANDIDATE]   TARGET_MODE={TARGET_MODE}  EXTRA_FACTORS={int(EXTRA_FACTORS)}")
+        print(f"[CANDIDATE]   TARGET_MODE={TARGET_MODE}  EXTRA_FACTORS={int(EXTRA_FACTORS)}  "
+              f"FEATURE_VERSION={FEATURE_VERSION}  N_FOLDS={N_FOLDS}  "
+              f"TRAIN_START_DATE={TRAIN_START_DATE or '-'}  TRAIN_END_DATE={TRAIN_END_DATE or '-'}")
         print("=" * 72)
 
     if os.path.exists(EMBED_PATH):
@@ -2007,12 +2323,18 @@ def main():
         model = train_rotate(triples, ent2id, rel2id)
         company_embeddings, embed_dim_real = extract_company_embeddings(model, ent2id)
 
-    df_obs = load_observation_features(DB_PATH)
-    df_obs = attach_macro_features(df_obs, DB_PATH, MACRO_KG_PATH)
-    df_obs = attach_news_features(df_obs, os.path.join(EXPLOITATION_DIR, "news_features.parquet"))
-    feature_sets, y_rank, y_ret, merged, pca, tabular_cols, pca_cols = (
-        build_feature_matrices(df_obs, company_embeddings, embed_dim_real)
-    )
+    if FEATURE_VERSION >= 2:
+        feature_sets, y_rank, y_ret, merged, pca, tabular_cols, pca_cols = (
+            build_feature_matrices_v2(company_embeddings, embed_dim_real)
+        )
+    else:
+        df_obs = load_observation_features(DB_PATH)
+        df_obs = attach_macro_features(df_obs, DB_PATH, MACRO_KG_PATH)
+        df_obs = attach_news_features(df_obs, os.path.join(EXPLOITATION_DIR, "news_features.parquet"))
+        df_obs = apply_train_window(df_obs)
+        feature_sets, y_rank, y_ret, merged, pca, tabular_cols, pca_cols = (
+            build_feature_matrices(df_obs, company_embeddings, embed_dim_real)
+        )
     evaluate_all(feature_sets, y_rank, y_ret, merged,
                  pca=pca, tabular_cols=tabular_cols, pca_cols=pca_cols,
                  company_embeddings=company_embeddings)
