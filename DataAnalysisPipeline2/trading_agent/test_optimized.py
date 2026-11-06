@@ -265,3 +265,16 @@ def test_fetch_live_data_keeps_long_history_but_feeds_inference_its_window(live,
     agent2 = bot.BDATradingAgent()
     agent2.feature_version = 2
     assert len(agent2.fetch_live_data()) == len(bars) and calls == [config.LIVE_HISTORY_DAYS]
+
+
+def test_duplicate_share_classes_keeps_most_liquid(tmp_path):
+    import numpy as np
+    import pandas as pd
+    from DataAnalysisPipeline2.trading_agent.optimized import duplicate_share_classes
+    pd.DataFrame({"cik": [1, 1, 2, 3, 3], "ticker": ["GOOG", "GOOGL", "AAPL", "FOX", "FOXA"],
+                  "valid_to": [pd.NaT] * 5}).to_parquet(tmp_path / "cik_map.parquet")
+    t = np.array(["GOOG", "GOOGL", "AAPL", "FOX", "FOXA", "XYZ"])
+    adv = np.array([2e9, 3e9, 9e9, 1e8, 2e8, 1e7])
+    keep = np.array([True, True, True, False, True, True])      # FOX not a candidate
+    assert duplicate_share_classes(t, adv, keep, str(tmp_path)) == {"GOOG"}
+    assert duplicate_share_classes(t, adv, keep, str(tmp_path / "missing")) == set()

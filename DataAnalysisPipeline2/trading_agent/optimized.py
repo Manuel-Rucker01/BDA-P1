@@ -165,6 +165,23 @@ def _wide(b: pd.DataFrame, col: str, dates, tickers) -> pd.DataFrame:
              .reindex(index=dates, columns=tickers).astype(float))
 
 
+def duplicate_share_classes(tickers, adv, keep, fund_dir: str) -> set:
+    """Secondary share classes to drop: tickers that map to the same EDGAR CIK
+    as another candidate (GOOG/GOOGL, FOX/FOXA, ...). EDGAR shares outstanding
+    are company-level, so every class gets the WHOLE company's market cap and
+    the cap-weighted benchmark double-counts it (Alphabet was ~18% of b).
+    Keeps the most liquid class (highest ADV) per CIK. Fails open (empty set)."""
+    try:
+        cm = pd.read_parquet(os.path.join(fund_dir, "cik_map.parquet"), columns=["cik", "ticker", "valid_to"])
+    except Exception:
+        return set()
+    cm = cm[cm["valid_to"].isna()].drop_duplicates("ticker")
+    df = pd.DataFrame({"ticker": np.asarray(tickers).astype(str), "adv": np.asarray(adv, float)})[np.asarray(keep)]
+    df = df.merge(cm[["ticker", "cik"]], on="ticker", how="inner")
+    df = df.sort_values(["cik", "adv", "ticker"], ascending=[True, False, True])
+    return set(df.loc[df.duplicated("cik", keep="first"), "ticker"])
+
+
 def build_inputs(bars: pd.DataFrame, scores: pd.Series, fund_dir: str, *, min_price: float = 3.0,
                  min_adv_usd: float = 2e6, min_bars: int = 120) -> tuple[dict, dict]:
     """``optimize_portfolio`` keyword inputs for the last date of ``bars``.
@@ -209,6 +226,9 @@ def build_inputs(bars: pd.DataFrame, scores: pd.Series, fund_dir: str, *, min_pr
     sc.index = sc.index.astype(str)
     s = sc[~sc.index.duplicated(keep="last")].reindex(m.tickers).to_numpy(dtype=float)
     keep = np.isfinite(s) & np.isfinite(m.mcap) & (m.mcap > 0)          # round5 universe "all"
+    adv_last = p.adv[-1, col].astype(float)
+    dup = duplicate_share_classes(m.tickers, adv_last, keep, fund_dir)
+    keep &= ~np.isin(m.tickers, list(dup))
     v = vol60.to_numpy()[col]
     sigma = np.where(np.isfinite(v), v, np.nanmedian(v))
     inputs = dict(tickers=m.tickers[keep], scores=s[keep], X=m.X[keep], F_daily=m.F, D_daily=m.D[keep],
@@ -217,7 +237,8 @@ def build_inputs(bars: pd.DataFrame, scores: pd.Series, fund_dir: str, *, min_pr
                   adv=p.adv[-1, col][keep].astype(float))
     meta = {"decision_date": str(p.dates[-1]), "n_sessions": T, "n_bar_tickers": int(len(p.tickers)),
             "n_risk_eligible": int(len(m.tickers)), "n_scored": int(np.isfinite(s).sum()),
-            "n_universe": int(keep.sum()), "sector_names": list(p.sector_names)}
+            "n_universe": int(keep.sum()), "sector_names": list(p.sector_names),
+            "dropped_share_classes": sorted(dup)}
     return inputs, meta
 
 
