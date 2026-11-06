@@ -144,7 +144,8 @@ def holdout_ic(variant: str, log=print) -> dict:
     f, feats, target = tr.variant_frame(variant, frame)
     trn = f[f["Date"] <= gate.C_TRAIN_END]
     assert trn["Date"].max() <= gate.C_TRAIN_END
-    ms, info = tr.fit_ensemble(trn, feats, target, cal, log=log)
+    ms, info = tr.fit_ensemble(trn, feats, target, cal, models=getattr(gate, "R4_MODELS", {}).get(variant, tr.MODEL_NAMES),
+                               log=log)
     days = [d for d in cal if gate.C_START <= d <= gate.C_END]
     daily = ds.load_daily(years=[2026], dates=days, out_dir=ds.v3_dir(dsn))
     daily = daily[daily["eligible"]].reset_index(drop=True)
@@ -173,21 +174,21 @@ def holdout_ic(variant: str, log=print) -> dict:
     return out
 
 
-def leak_probe(end: str = "2022-12-31", seed: int = 0) -> dict:
+def leak_probe(end: str = "2022-12-31", seed: int = 0, dataset: str | None = None, edgar_cols=None) -> dict:
     """Can the model inputs separate hot-deck-imputed rows (names without an
     EDGAR record -- mostly future delisters) from real ones? LightGBM classifier,
     30% of dates held out; returns held-out AUCs for core, fundamentals, both."""
     from lightgbm import LGBMClassifier
     from sklearn.metrics import roc_auc_score
-    w = tr.load_weekly(ds.EDGAR_DATASET)
+    w = tr.load_weekly(dataset or ds.EDGAR_DATASET)
     w = w[w["Date"] <= end]
     y = w["fund_imputed"].astype(int).to_numpy()
     dates = np.array(sorted(w["Date"].unique()))
     rng = np.random.default_rng(seed)
     te = w["Date"].isin(set(dates[rng.random(len(dates)) < 0.3])).to_numpy()
     out = {"period": f"2017..{end}"}
-    for name, cols in (("core", ds.FEATURE_COLUMNS), ("fund", tr.fund_columns()),
-                       ("both", ds.FEATURE_COLUMNS + tr.fund_columns())):
+    ecols = list(edgar_cols or tr.fund_columns())
+    for name, cols in (("core", ds.FEATURE_COLUMNS), ("fund", ecols), ("both", ds.FEATURE_COLUMNS + ecols)):
         m = LGBMClassifier(n_estimators=200, num_leaves=31, learning_rate=0.05, verbose=-1, n_jobs=8)
         m.fit(w.loc[~te, cols], y[~te])
         out[name] = float(roc_auc_score(y[te], m.predict_proba(w.loc[te, cols])[:, 1]))

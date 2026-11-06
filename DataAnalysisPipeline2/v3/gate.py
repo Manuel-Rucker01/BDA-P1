@@ -168,3 +168,79 @@ def choose_config_r3(perf: dict) -> str:
     ok = {k: v for k, v in perf.items() if k in R3_CONFIGS and v["max_dd"] >= MAX_DD_FLOOR}
     pool = ok or {k: v for k, v in perf.items() if k in R3_CONFIGS}
     return max(pool, key=lambda k: pool[k]["sharpe"])
+
+
+# --------------------------------------------------------------------------- #
+# Round 4 (new SIGNAL features) -- pre-registered 2026-11-06 BEFORE any
+# round-4 feature was computed or model trained. Thresholds unchanged.
+# --------------------------------------------------------------------------- #
+# Feature blocks (all PIT; implemented in v3/signals.py):
+#  resmom  -- per ticker, rolling OLS over the last 504 bars (min 252) of the
+#             daily return (clipped to [-50%, +100%]) on the market (EW mean
+#             over eligible names that day) and the ticker's effective-sector
+#             EW return (EDGAR FF12/proxy) WITH an intercept; residual
+#             e = r - beta_m m - beta_s s (intercept kept in e).
+#             resmom_12_1 = sum(e, t-251..t-21) / (sigma_e sqrt(231));
+#             resmom_6_1  = sum(e, t-125..t-21) / (sigma_e sqrt(105));
+#             strev_1m    = sum(e, t-20..t) / (sigma_e sqrt(21));
+#             ind_mom_12_1 = cumulative sector EW log-return t-251..t-21.
+#  sue     -- EDGAR, from fundamentals_asof (as known at each filing's
+#             availability date = next business day after filing):
+#             d_q = TTM net income(E_k) - TTM net income(E_{k-1}) for
+#             consecutive period ends 75..105 days apart (= latest quarter's
+#             year-over-year change); sue = d_q / std(last 8 d_q, >= 4);
+#             sue_chg = sue - previous sue; days_since_report = Date - the
+#             availability date of the latest new period;
+#             fundamental momentum: d_gross_margin (GP/Rev TTM vs TTM a year
+#             earlier), d_roa (NI/A vs NI_prev/A_1y), d_accruals ((NI-CFO)/A vs
+#             a year earlier), asset_growth (A / A_1y - 1), A_1y = assets at the
+#             period end 320..410 days earlier, as known at the same filing.
+#             Joined through the same ticker->CIK map and imputed jointly with
+#             the round-2 fundamentals (same KNN hot-deck donor); leak probe
+#             re-run.
+#  lvq     -- beta_mkt and idio_vol (annualised sigma_e) from the resmom
+#             regression, plus lvq_composite = mean of per-date percentile ranks
+#             of (-beta_mkt, -idio_vol, gpa) over eligible names.
+# All features z-scored per date over eligible names (core.cross_sectional_zscore).
+#
+# Model variants (same walk-forward, folds, embargo, hyperparameters):
+R4_VARIANTS = {
+    # name: (target, extra blocks on top of core + round-2 fundamentals, EDGAR sectors)
+    "sn30_resmom": ("target_sn_30", ("resmom",)),
+    "sn30_sue": ("target_sn_30", ("sue",)),
+    "sn30_lvq": ("target_sn_30", ("lvq",)),
+    "sn30_all": ("target_sn_30", ("resmom", "sue", "lvq")),
+    "base_all": ("target_raw_30", ("resmom", "sue", "lvq")),     # comparison
+}
+R4_CANDIDATES = ("sn30_resmom", "sn30_sue", "sn30_lvq", "sn30_all")
+R4_INCUMBENT = "sn30_fund"
+# Constructions (round-3 definitions): floor p50/$25M, K=50 and K=30.
+R4_CONSTRUCTIONS = ("flo50_k50", "flo50_k30")
+N_TRIALS_R4 = N_TRIALS_R3 + len(R4_VARIANTS) * len(R4_CONSTRUCTIONS)   # 43 + 10 = 53
+# Selection: recipe = the R4 candidate with the highest walk-forward mean IC
+# (vs 30-session raw return) if it beats the incumbent sn30_fund by
+# >= SWITCH_MIN_IC_GAIN with a higher NW t; otherwise the incumbent (round 4
+# then adds nothing and the round-3 verdict stands). Construction = the higher
+# Sharpe of R4_CONSTRUCTIONS among those with max DD >= MAX_DD_FLOOR (else the
+# higher Sharpe). Gate a/b/c as before with N = N_TRIALS_R4.
+
+
+def choose_variant_r4(signal: dict) -> str:
+    inc = signal[R4_INCUMBENT]
+    ok = [(v, signal[v]) for v in R4_CANDIDATES if v in signal
+          and signal[v]["mean_ic"] >= inc["mean_ic"] + SWITCH_MIN_IC_GAIN and signal[v]["nw_t"] > inc["nw_t"]]
+    return max(ok, key=lambda x: x[1]["mean_ic"])[0] if ok else R4_INCUMBENT
+
+
+def choose_construction_r4(perf: dict) -> str:
+    ok = {k: v for k, v in perf.items() if k in R4_CONSTRUCTIONS and v["max_dd"] >= MAX_DD_FLOOR}
+    pool = ok or {k: v for k, v in perf.items() if k in R4_CONSTRUCTIONS}
+    return max(pool, key=lambda k: pool[k]["sharpe"])
+
+# Round 4 amendment (committed while dataset_r4 was still being built, before
+# any round-4 model was trained or evaluated): an LGBM-only check of the
+# all-blocks recipe, as one more candidate. Trial count updated accordingly.
+R4_VARIANTS["sn30_all_lgbm"] = ("target_sn_30", ("resmom", "sue", "lvq"))
+R4_MODELS = {"sn30_all_lgbm": ("lgbm",)}
+R4_CANDIDATES = R4_CANDIDATES + ("sn30_all_lgbm",)
+N_TRIALS_R4 = N_TRIALS_R3 + len(R4_VARIANTS) * len(R4_CONSTRUCTIONS)   # 43 + 12 = 55

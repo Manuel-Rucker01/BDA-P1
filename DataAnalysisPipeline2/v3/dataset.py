@@ -306,11 +306,22 @@ class FundamentalsBlock:
     * The block returns no sector (sectors come from ``edgar_sector_map``)."""
 
     def __init__(self, fund_asof: pd.DataFrame, cik_map: pd.DataFrame, sectors: pd.DataFrame | None = None,
-                 donor_col: str | None = "eligible", impute: bool = True):
+                 donor_col: str | None = "eligible", impute: bool = True, extra_events: pd.DataFrame | None = None):
         from . import fundamentals as fu
         self.fu, self.fund_asof, self.cik_map, self.sectors = fu, fund_asof, cik_map, sectors
         self.columns = list(fu.FEATURE_COLUMNS)
         self.donor_col, self.impute = donor_col, impute
+        # optional extra EDGAR event table (cik, asof_date, <cols>, report_date), e.g.
+        # signals.sue_events: joined as of the same availability dates, imputed jointly
+        self.extra_events = None
+        if extra_events is not None:
+            ev = extra_events.copy()
+            ev["asof_date"] = pd.to_datetime(ev["asof_date"]).astype("datetime64[ns]")
+            ev["report_date"] = pd.to_datetime(ev["report_date"]).astype("datetime64[ns]")
+            ev["cik"] = ev["cik"].astype("int64")
+            self.extra_events = ev.sort_values("asof_date")
+            self.extra_cols = [c for c in ev.columns if c not in ("cik", "asof_date", "report_date")]
+            self.columns += self.extra_cols + ["days_since_report"]
 
     @classmethod
     def from_store(cls, fund_dir: str | None = None, **kw) -> "FundamentalsBlock":
@@ -321,7 +332,21 @@ class FundamentalsBlock:
     def raw(self, df: pd.DataFrame) -> pd.DataFrame:
         px = pd.DataFrame({"ticker": df["ticker"].map(_base_symbol).to_numpy(), "Date": df["Date"].to_numpy(),
                            "_close": df["close_raw"].fillna(df["company_close"]).to_numpy()}, index=df.index)
-        return self.fu.fundamental_features(px, self.fund_asof, self.cik_map, None, close_col="_close")
+        f = self.fu.fundamental_features(px, self.fund_asof, self.cik_map, None, close_col="_close")
+        if self.extra_events is None:
+            return f
+        k = pd.DataFrame({"_row": np.arange(len(f)), "cik": f["cik"].to_numpy(),
+                          "Date": pd.to_datetime(f["Date"]).astype("datetime64[ns]").to_numpy()})
+        k = k[k["cik"].notna()].astype({"cik": "int64"}).sort_values("Date")
+        j = pd.merge_asof(k, self.extra_events, left_on="Date", right_on="asof_date", by="cik",
+                          direction="backward", allow_exact_matches=True)
+        for c in self.extra_cols:
+            f[c] = np.nan
+            f.iloc[j["_row"].to_numpy(), f.columns.get_loc(c)] = j[c].to_numpy(dtype=float)
+        f["days_since_report"] = np.nan
+        f.iloc[j["_row"].to_numpy(), f.columns.get_loc("days_since_report")] = \
+            (j["Date"] - j["report_date"]).dt.days.to_numpy(dtype=float)
+        return f
 
     def __call__(self, df: pd.DataFrame) -> tuple[pd.DataFrame, None]:
         f = self.raw(df)[self.columns].astype(float)
