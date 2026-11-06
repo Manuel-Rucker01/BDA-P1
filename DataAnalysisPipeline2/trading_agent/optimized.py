@@ -303,8 +303,12 @@ def optimized_book(preds: pd.DataFrame, bars: pd.DataFrame, *, aum: float, ic: f
     if n < min_names:
         raise OptimizerUnavailable(f"only {n} names in the optimized book (< {min_names})")
 
-    # scale the fully-invested book to the target exposure (caps only get looser)
-    w = w * float(target_exposure)
+    # scale the fully-invested book to the target exposure, then make the caps
+    # exact (the optimizer's budget polish can leave a name a hair above them;
+    # the excess stays in cash)
+    adv = np.asarray(inputs["adv"], float)
+    cap = np.minimum(sp["name_cap"], np.where(np.isfinite(adv) & (adv > 0), sp["liq_frac"] * adv / float(aum), 0.0))
+    w = np.minimum(w * float(target_exposure), cap)
     weights = {str(t): float(x) for t, x in zip(inputs["tickers"], w) if x > 0}
     names = meta["sector_names"]
     other = len(names) - 1 if "Other" not in names else names.index("Other")

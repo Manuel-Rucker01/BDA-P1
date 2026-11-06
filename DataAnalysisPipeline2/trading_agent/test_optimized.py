@@ -53,7 +53,7 @@ def test_optimized_book_respects_constraints(live):
     assert v.min() >= 0.0
     assert v.sum() <= TARGET + 1e-9 and v.sum() == pytest.approx(TARGET, abs=3e-3)
     cap = np.minimum(sp["name_cap"], sp["liq_frac"] * inp["adv"] / 1e6)
-    assert np.all(v <= cap + 1e-6)
+    assert np.all(v <= cap + 1e-12)
     b = inp["mcap"] / inp["mcap"].sum()
     for s in np.unique(inp["sector"]):
         m = inp["sector"] == s

@@ -1446,6 +1446,10 @@ class BDATradingAgent:
                   f"exp. cost {diag['exp_cost'] * 1e4:.1f} bp | turnover {diag['turnover_oneway']:.1%} | "
                   f"solve {diag['solve_seconds']:.1f}s ({diag['iters']} it)")
             print(f"[Agent] optimized_v3 sectors: {diag['sector_weights']}")
+            print(f"[Agent] optimized_v3 vs cap-weighted universe: ex-ante TE {diag['ex_ante_te_ann_vs_cw']:.1%} "
+                  f"beta {diag['ex_ante_beta_vs_cw']:.2f} | style exposure {diag['style_exposure']} | "
+                  f"prev held {diag['n_prev_held']} | dropped < min weight {diag['n_dropped_small']} "
+                  f"({diag['dropped_small_weight']:.2%})")
             return w, diag
         except Exception as e:
             reason = f"{type(e).__name__}: {e}"
