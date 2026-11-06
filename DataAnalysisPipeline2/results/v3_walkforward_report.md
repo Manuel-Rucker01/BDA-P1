@@ -882,3 +882,5 @@ New free information only. Registered in `v3/gate.py` (`R8_*`, `N_TRIALS_R8`, `c
 * **Variants** (sn30_fund recipe, same folds): `sn30_ins`, `sn30_si`, `sn30_altall`, and `stack_r8` (round-6 stack + the best of the three as a sixth input).
 * **Books:** `mv_abs_all` at $100M for each → 4 trials, **N = 89**.
 * **Selection:** highest IR vs SPY with max DD ≥ −35%. **Gate:** R7 criteria (a1–a3, b1–b3 with N = 89, c1 on the 2026 fold, IR vs SPY > 0).
+
+*Addendum (data availability, before evaluation):* the latest published SEC insider data set is 2026Q1, so insider features are set to **missing** (z = 0 for every name — no information, no leak) for decision dates after the last filing date in the data (≈ 2026-03-31). The insider variants therefore carry no insider information in 2026Q2–Q4, including the gate-c window. Pulling ~150 days of individual Form 4 XML filings (~300k requests at ≤ 10 req/s) was judged out of scope.
