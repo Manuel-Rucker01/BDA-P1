@@ -872,3 +872,13 @@ Two caveats for the user's decision (not gate outcomes):
   EDGAR fundamentals, IC ≈ 0.07, ~no large-cap skill) does not do it after costs. Next steps would be new
   information (analyst revisions via the ready adapter, alternative data) rather than further model or
   construction search, which would keep raising N.
+
+## Round 8 — pre-registration (committed before any round-8 evaluation)
+
+New free information only. Registered in `v3/gate.py` (`R8_*`, `N_TRIALS_R8`, `choose_config_r8`); thresholds and the Round 7 gate criteria (incl. IR vs SPY > 0) unchanged.
+
+* **Insider block** — SEC Insider Transactions Data Sets (Forms 3/4/5, 2018Q1 →), open-market purchases (P) and sales (S), keyed by issuer CIK, **available the business day after the filing date** (never the transaction date): buy/sell counts over 30/90/180 days, log dollar values over 90/180, net-buy ratio 90/180, distinct buyers 90, officer/director purchase flag 90, cluster buy (≥ 3 insiders in 30 days).
+* **Short-interest block** — FINRA bi-monthly short interest (exchange-listed + OTC), **available settlement date + 8 business days**: SI / shares outstanding, days to cover, 1-period change, age.
+* **Variants** (sn30_fund recipe, same folds): `sn30_ins`, `sn30_si`, `sn30_altall`, and `stack_r8` (round-6 stack + the best of the three as a sixth input).
+* **Books:** `mv_abs_all` at $100M for each → 4 trials, **N = 89**.
+* **Selection:** highest IR vs SPY with max DD ≥ −35%. **Gate:** R7 criteria (a1–a3, b1–b3 with N = 89, c1 on the 2026 fold, IR vs SPY > 0).

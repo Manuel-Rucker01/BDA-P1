@@ -461,3 +461,55 @@ def choose_config_r7(perf: dict) -> str:
     ok = {k: perf[k] for k in keys if k in perf and perf[k]["max_dd"] >= MAX_DD_FLOOR}
     pool = ok or {k: perf[k] for k in keys if k in perf}
     return max(pool, key=lambda k: pool[k]["ir_spy"])
+
+
+# --------------------------------------------------------------------------- #
+# Round 8 (new free information: SEC insider transactions, FINRA short
+# interest) -- pre-registered 2026-11-06 after merging main 8d287c3, BEFORE any
+# round-8 feature IC, model or backtest was computed. Thresholds and the R7
+# gate criteria (incl. IR vs SPY > 0) unchanged.
+# --------------------------------------------------------------------------- #
+# Blocks (v3/altdata.py), all evaluated on weekly decision dates t:
+#  insider -- SEC "Insider Transactions Data Sets" (Forms 3/4/5, 2018Q1 on),
+#    non-derivative transactions with TRANS_CODE P (open-market purchase) or S
+#    (open-market sale), keyed by ISSUERCIK, available from the business day
+#    AFTER the filing date (never the transaction date). Windows by
+#    availability date over (t - W calendar days, t]:
+#      ins_buy_n_W, ins_sell_n_W (W = 30, 90, 180): number of distinct
+#        (insider, filing) with a P / S line;
+#      ins_buy_val_90/180, ins_sell_val_90/180: log1p(dollar value / 1e3);
+#      ins_net_ratio_90/180: (buy$ - sell$) / (buy$ + sell$), 0 if none;
+#      ins_n_buyers_90: distinct insiders buying; ins_od_buy_90: any officer or
+#        director purchase; ins_cluster_30: >= 3 distinct insiders buying.
+#    Joined through the same ticker->CIK map (no CIK -> all zeros = "no
+#    activity"; leak probe re-run).
+#  si -- FINRA bi-monthly short-interest files (exchange-listed + OTC), keyed by
+#    symbol on the settlement date's listing, available settlement date + 8
+#    business days; latest available record:
+#      si_ratio = short interest / shares outstanding (shares = EDGAR mcap /
+#        raw close, the model's mcap incl. hot-deck), si_dtc = FINRA days to
+#        cover, si_chg = (SI - previous SI) / previous SI, si_age = days since
+#        availability.
+# Model variants (sn30_fund recipe: core + EDGAR fundamentals, sector-neutral
+# 30-session target; same folds/embargo/hyperparameters):
+#   sn30_ins, sn30_si, sn30_altall (both blocks);
+#   stack_r8: the round-6 PIT ridge stack with the best of the three (highest
+#   walk-forward mean IC) added as a sixth input.
+# Book: mv_abs_all at R5_PRIMARY_AUM for each of the 4 signals (IC estimated
+# from the same signal on the traded universe) -> 4 new trials.
+R8_VARIANTS = {"sn30_ins": ("insider",), "sn30_si": ("si",), "sn30_altall": ("insider", "si")}
+R8_STACK = "stack_r8"
+R8_SIGNALS = tuple(R8_VARIANTS) + (R8_STACK,)
+N_TRIALS_R8 = N_TRIALS_R7 + len(R8_SIGNALS)                          # 85 + 4 = 89
+# Selection: highest IR vs SPY with max DD >= -35% among the 4 mv_abs_all books
+# (else highest IR vs SPY). Gate = R7 criteria for that book (a1-a3 on the
+# signal's weekly IC over v3-eligible names; b1; b2; b3 with N = N_TRIALS_R8;
+# c1 on the 2026 walk-forward fold over the gate-c window; r5 IR vs SPY > 0).
+# Information (no trials): standalone feature ICs (all names with a label,
+# v3-eligible, top-1000), IC decay, walk-forward IC increments.
+
+
+def choose_config_r8(perf: dict) -> str:
+    ok = {k: v for k, v in perf.items() if k in R8_SIGNALS and v["max_dd"] >= MAX_DD_FLOOR}
+    pool = ok or {k: v for k, v in perf.items() if k in R8_SIGNALS}
+    return max(pool, key=lambda k: pool[k]["ir_spy"])
