@@ -131,6 +131,11 @@ def run(write: bool = True) -> str:
          f"After symbol-reuse cleaning (`load_prices(clean=True)`): {len(clean):,} rows, "
          f"{clean['ticker'].nunique():,} ticker ids.",
          "", "## Rows, tickers and integrity per year", "", md_table(st), "",
+         f"Non-positive adjusted prices come from broken Alpaca adjustment factors on "
+         f"{raw.loc[raw['company_close'] <= 0, 'ticker'].nunique()} tickers "
+         f"({', '.join(sorted(raw.loc[raw['company_close'] <= 0, 'ticker'].unique())[:10])}): adjusted closes go "
+         "negative/zero while `close_raw` is fine; `load_prices(clean=True)` drops those rows. "
+         "`high_lt_low` rows are the same tickers (negative prices invert High/Low).", "",
          "Zero-volume bars are filler Alpaca emits for some symbols on days without trades "
          "(halts, between two companies using the same symbol); `load_prices(clean=True)` drops them.", ""]
     lab = ev["label"].value_counts()
@@ -142,7 +147,10 @@ def run(write: bool = True) -> str:
           "unchanged), the ratio is a typical split ratio and volume is not elevated; "
           "`adjustment_glitch` = the raw close barely moved but the adjusted close did; "
           "`real_move` = everything else (volume ratio vs the prior 20 sessions shown — real "
-          "moves usually trade at many times normal volume).", ""]
+          "moves usually trade at many times normal volume). `split_on_record_but_adjusted_move` = a "
+          "split is on record within 3 days but the adjusted series still jumps by a different ratio "
+          "than the raw one — Alpaca applied the split factor on the wrong day or with the wrong ratio; "
+          "these are data errors (a few dozen bars) that downstream code should winsorise or drop.", ""]
     rng = np.random.default_rng(0)
     for name in lab.index:
         sub = ev[ev["label"] == name]

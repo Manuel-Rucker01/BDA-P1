@@ -113,18 +113,21 @@ def test_reuse_multi_security_short_gap_and_price_break():
     d = pd.bdate_range("2020-01-01", periods=100).strftime("%Y-%m-%d")
     # single security: a 10-day halt is NOT a new listing
     halt = pd.concat([_px("HLT", d[:50], 10.0), _px("HLT", d[60:], 10.0)])
-    # multi security, 10-day gap -> new listing
-    multi_gap = pd.concat([_px("MGP", d[:50], 10.0), _px("MGP", d[60:], 10.0)])
+    # multi security, 10-day gap + price level x2.5 -> new listing; same gap, same level -> not
+    multi_gap = pd.concat([_px("MGP", d[:50], 10.0), _px("MGP", d[60:], 25.0),
+                           _px("THN", d[:50], 10.0), _px("THN", d[60:], 10.5)])
     # multi security, no gap but price level jump x10 (AMTD-like) -> split at the jump
     brk = _px("BRK", d, np.r_[np.full(50, 1000.0), np.full(50, 12.0)])
     cls = _cls([("HLT", "HLT", "active", "alpaca_assets", "common"),
                 ("MGP", "MGP", "active", "alpaca_assets", "common"),
                 ("MGP_DELISTED", "MGP", "inactive", "alpaca_assets", "common"),
+                ("THN", "THN", "active", "alpaca_assets", "common"),
+                ("THN", "THN", "inactive", "alpaca_assets", "common"),
                 ("BRK", "BRK", "active", "alpaca_assets", "common"),
                 ("BRK", "BRK", "inactive", "alpaca_assets", "common")])
     seg = U.detect_symbol_reuse(pd.concat([halt, multi_gap, brk]), cls)
     n = seg.groupby("symbol")["n_seg"].first()
-    assert n["HLT"] == 1 and n["MGP"] == 2 and n["BRK"] == 2
+    assert n["HLT"] == 1 and n["MGP"] == 2 and n["THN"] == 1 and n["BRK"] == 2
     assert seg.loc[seg["ticker"] == "BRK", "split_reason"].item() == "price_break"
     assert seg.loc[seg["ticker"] == "BRK~1", "end"].item() == d[49]
 
@@ -140,6 +143,30 @@ def test_reuse_segment_class_follows_active_vs_inactive_security():
     assert seg.loc["FB", "cls"] == "etf" and not seg.loc["FB", "keep"]
     out = U.apply_segments(px)
     assert set(out["ticker"]) == {"FB~1"} and len(out) == 200
+
+
+def test_duplicate_histories_alias_and_partial():
+    d = pd.bdate_range("2020-01-01", periods=100).strftime("%Y-%m-%d")
+    rng = np.random.default_rng(3)
+    px = 10 * np.exp(np.cumsum(rng.normal(0, 0.02, 100)))
+    vol = rng.integers(1e5, 1e6, 100).astype(float)
+    mk = lambda t, idx: pd.DataFrame({"ticker": t, "Date": d[idx], "company_close": px[idx],
+                                      "company_volume": vol[idx], "trade_count": 100.0})
+    other = mk("OTHR", slice(0, 100)).assign(company_close=px * 1.5)  # different security
+    df = pd.concat([mk("XYZ", slice(0, 100)), mk("SQ", slice(0, 80)),          # renamed: SQ is an alias
+                    mk("BIG", slice(0, 100)).assign(ticker="BIG"),            # same bars as XYZ too
+                    mk("PART", slice(50, 100)).assign(company_close=lambda x: np.where(
+                        x["Date"] < d[75], x["company_close"] * 3, x["company_close"])),  # 25 shared rows
+                    other], ignore_index=True)
+    df = df[df["ticker"] != "BIG"]
+    pairs, rows = U.detect_duplicates(df)
+    p = pairs.set_index("alias")
+    assert p.loc["SQ", "canonical"] == "XYZ" and p.loc["SQ", "mode"] == "alias"
+    assert p.loc["PART", "mode"] == "rows" and len(rows) == 25
+    assert "OTHR" not in set(pairs["alias"]) | set(pairs["canonical"])
+    out = U.apply_duplicates(df)
+    assert "SQ" not in set(out["ticker"]) and (out["ticker"] == "PART").sum() == 25
+    assert (out["ticker"] == "XYZ").sum() == 100
 
 
 # --------------------------------------------------------------- eligibility

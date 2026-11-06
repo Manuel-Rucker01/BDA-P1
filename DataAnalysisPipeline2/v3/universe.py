@@ -580,7 +580,8 @@ def build_classification(assets: pd.DataFrame | None = None, ca: pd.DataFrame | 
             c, r = "other", f"unnamed;{sreason}"  # 5-letter, no name: cannot tell
         elif evid == "merged_into_fund":
             c, r = "fund", "unnamed;ca:merged_into_fund"
-        elif etf_like(corr, allc.at[i, "ann_vol"]) and evid not in ("acquired_company", "worthless_removal"):
+        elif (pd.notna(corr) and corr >= ETF_CORR_THRESHOLD) or (
+                etf_like(corr, allc.at[i, "ann_vol"]) and evid not in ("acquired_company", "worthless_removal")):
             c, r = "etf", (f"unnamed;etf_like corr={corr:.3f} vs {allc.at[i, 'etf_match']} "
                            f"vol={allc.at[i, 'ann_vol']:.0%}")
         elif pd.isna(corr):
@@ -615,7 +616,9 @@ def load_classification() -> pd.DataFrame:
 # 6. Symbol reuse
 # =========================================================================== #
 REUSE_GAP_DAYS = 90          # calendar days without a traded bar -> new listing
-REUSE_GAP_DAYS_MULTI = 7     # ... when Alpaca knows >1 security under the symbol
+REUSE_GAP_DAYS_MULTI = 30    # ... when Alpaca knows >1 security under the symbol
+REUSE_GAP_DAYS_MULTI_JUMP = 7  # ... or > 7 days if the price level also changed > 2x
+GAP_JUMP_LOG = np.log(2)
 PRICE_BREAK_LOG = np.log(3)  # one-day |log return| treated as a company switch (multi only)
 CURRENT_DAYS = 10            # segment ending within N days of the store end is "current"
 
@@ -628,8 +631,9 @@ def detect_symbol_reuse(prices: pd.DataFrame, classification: pd.DataFrame | Non
       * only traded bars count (volume > 0): Alpaca glues reused symbols with
         zero-volume filler bars;
       * a new segment starts after a gap > 90 calendar days between traded
-        bars, or > 7 days when the symbol is *multi* -- Alpaca lists more than
-        one security under it (active+inactive duplicates or ``SYM_DELISTED``);
+        bars; when the symbol is *multi* -- Alpaca lists more than one security
+        under it (active+inactive duplicates or ``SYM_DELISTED``) -- after a gap
+        > 30 days, or > 7 days if the price level also changed by > 2x;
       * a multi symbol with a single segment is split at its largest one-day
         move if |log return| > ln 3 (a different company's price level);
       * segment ids: the latest segment keeps the symbol, earlier ones become
@@ -655,7 +659,12 @@ def detect_symbol_reuse(prices: pd.DataFrame, classification: pd.DataFrame | Non
         c = g["company_close"].to_numpy(dtype=float)
         multi = sym in multi_syms
         gap = np.r_[0, np.diff(d.values).astype("timedelta64[D]").astype(int)]
-        cut = gap > (REUSE_GAP_DAYS_MULTI if multi else REUSE_GAP_DAYS)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            jump = np.abs(np.r_[0, np.diff(np.log(np.where(c > 0, c, np.nan)))])
+        if multi:
+            cut = (gap > REUSE_GAP_DAYS_MULTI) | ((gap > REUSE_GAP_DAYS_MULTI_JUMP) & (jump > GAP_JUMP_LOG))
+        else:
+            cut = gap > REUSE_GAP_DAYS
         why = np.where(cut, "gap", "").astype(object)
         if multi and not cut.any() and len(c) > 1:
             lr = np.abs(np.diff(np.log(np.where(c > 0, c, np.nan))))
@@ -699,6 +708,75 @@ def _segment_class(rows: pd.DataFrame | None, current: bool, is_last: bool) -> t
     if len(cls) == 1:
         return cls[0], "past->inactive_securities"
     return "ambiguous", "past_securities_disagree:" + "/".join(sorted(map(str, cls)))
+
+
+DUP_MIN_SHARED = 20     # identical traded bars needed to call two symbols the same security
+DUP_ALIAS_FRAC = 0.9    # shared / bars of the shorter series above which it is a pure alias
+
+
+def detect_duplicates(prices: pd.DataFrame, write: bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Symbols carrying the *same* security's bars.
+
+    Alpaca re-keys a renamed company's history to its new symbol, but the old
+    symbol -- when nobody reused it -- still returns the same bars (SQ/XYZ,
+    SIVB/SIVBQ). Within one request the API returns it once; across requests
+    both come back. Two symbols sharing >= 20 traded bars with identical
+    (Date, close, volume, trade_count) are the same security on those dates.
+    The canonical one has more bars (tie: later last date, then name); the
+    other is an ``alias`` (dropped entirely) when the shared bars cover > 90%
+    of it, otherwise only the shared rows are dropped (``rows``).
+    Returns (pairs, rows_to_drop[ticker, Date])."""
+    key = ["Date", "company_close", "company_volume", "trade_count"]
+    d = prices.loc[prices["company_volume"] > 0, ["ticker"] + key]
+    sh = d[d.groupby(key)["ticker"].transform("size") > 1]
+    pr = sh.merge(sh, on=key)
+    pr = pr[pr["ticker_x"] < pr["ticker_y"]]
+    cnt = pr.groupby(["ticker_x", "ticker_y"]).size().rename("shared").reset_index()
+    cnt = cnt[cnt["shared"] >= DUP_MIN_SHARED]
+    n = d.groupby("ticker").size()
+    last = d.groupby("ticker")["Date"].max()
+    rows = []
+    for _, r in cnt.sort_values("shared", ascending=False).iterrows():
+        x, y = r["ticker_x"], r["ticker_y"]
+        kx, ky = (n[x], last[x], x), (n[y], last[y], y)
+        keep, drop = (x, y) if kx > ky else (y, x)
+        frac = r["shared"] / min(n[x], n[y])
+        rows.append({"canonical": keep, "alias": drop, "shared": int(r["shared"]), "n_canonical": int(n[keep]),
+                     "n_alias": int(n[drop]), "frac": float(frac),
+                     "mode": "alias" if r["shared"] / n[drop] > DUP_ALIAS_FRAC else "rows"})
+    pairs = pd.DataFrame(rows, columns=["canonical", "alias", "shared", "n_canonical", "n_alias", "frac", "mode"])
+    rp = pairs[pairs["mode"] == "rows"]
+    if len(rp):
+        m = pr.merge(rp[["canonical", "alias"]], left_on=["ticker_x", "ticker_y"], right_on=["canonical", "alias"],
+                     how="inner")
+        m2 = pr.merge(rp[["canonical", "alias"]], left_on=["ticker_y", "ticker_x"], right_on=["canonical", "alias"],
+                      how="inner")
+        drop_rows = pd.concat([m[["alias", "Date"]], m2[["alias", "Date"]]]).rename(columns={"alias": "ticker"})
+    else:
+        drop_rows = pd.DataFrame(columns=["ticker", "Date"])
+    drop_rows = drop_rows.drop_duplicates()
+    if write:
+        pairs.to_parquet(os.path.join(data_dir("universe"), "duplicates.parquet"), index=False)
+        drop_rows.to_parquet(os.path.join(data_dir("universe"), "duplicate_rows.parquet"), index=False)
+        _SEG_CACHE.clear()
+    return pairs, drop_rows
+
+
+def apply_duplicates(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop alias symbols and duplicated rows (see ``detect_duplicates``)."""
+    ud = data_dir("universe")
+    p = os.path.join(ud, "duplicates.parquet")
+    if not os.path.exists(p) or not len(df):
+        return df
+    pairs = pd.read_parquet(p)
+    df = df[~df["ticker"].isin(set(pairs.loc[pairs["mode"] == "alias", "alias"]))]
+    rp = os.path.join(ud, "duplicate_rows.parquet")
+    if os.path.exists(rp):
+        dr = pd.read_parquet(rp)
+        if len(dr):
+            m = df[["ticker", "Date"]].merge(dr.assign(_d=1), on=["ticker", "Date"], how="left")["_d"]
+            df = df[m.isna().to_numpy()]
+    return df
 
 
 _SEG_CACHE: dict = {}
@@ -811,8 +889,12 @@ def write_report(sample_n: int = 8, seed: int = 0) -> str:
           "## Classification counts (NASDAQ/NYSE/AMEX + unknown-exchange candidates)", "",
           md_table(pd.crosstab(listed["cls"], listed["source"] + ":" + listed["status"].fillna("?"),
                                margins=True)), "",
-          f"Other exchanges (ARCA, BATS, OTC, TXSE) are excluded wholesale: "
-          f"{int((cl['cls'] == 'non_listed_exchange').sum()):,} asset rows.", "",
+          f"Other exchanges (ARCA, BATS, OTC, TXSE) are excluded: "
+          f"{int((cl['cls'] == 'non_listed_exchange').sum()):,} asset rows. Exception: "
+          f"{int((cl['reason'] == 'exchange_now_OTC;sip_bars_while_listed').sum()):,} securities Alpaca now "
+          "reports as OTC whose name classifies as common *and* that have SIP bars — companies delisted "
+          "to the OTC market; SIP only carries exchange-listed trading, so their bars are the listed "
+          "period. They are included (reason `exchange_now_OTC;sip_bars_while_listed`).", "",
           "Rules (first match wins, `universe.classify_name`): exchange filter → decisive symbol "
           "patterns (`.WS`, `.U`, `.RT`, `.PR*`, `-P`, `.WI`, CUSIP-like, NASDAQ 5th letter W/U/R/X) → "
           "name keywords (ETF/ETN sponsors and wording; preferred/depositary/cumulative/perpetual; "
@@ -839,7 +921,8 @@ def write_report(sample_n: int = 8, seed: int = 0) -> str:
           f"Rule used: corr >= {ETF_CORR_THRESHOLD} or (corr >= {ETF_CORR_LOW_VOL} and annualised vol < "
           f"{ETF_MAX_ANN_VOL:.0%}). ETFs the rule misses are mostly illiquid (median weekly dollar volume "
           "~10x below stocks), so the $2M ADV eligibility filter removes most of the residue. Overrides: acquiree of a cash merger / worthless "
-          "removal (Alpaca corporate actions) → company; acquiree of a stock merger into an ETF/fund → "
+          "removal (Alpaca corporate actions) → company, unless corr >= 0.95 (ETF reorganisations also "
+          "appear as mergers); acquiree of a stock merger into an ETF/fund → "
           "fund. Result for unnamed rows:", "",
           md_table(un.groupby(["source", "cls"]).size().rename("rows")), ""]
     for c in ("common", "etf"):
@@ -854,8 +937,9 @@ def write_report(sample_n: int = 8, seed: int = 0) -> str:
         L += ["## Symbol reuse", "",
               "Rule (`universe.detect_symbol_reuse`): only traded bars count (Alpaca glues reused "
               "symbols with zero-volume filler bars); a new segment starts after > 90 calendar days "
-              "without a traded bar, or > 7 days when Alpaca lists more than one security under the "
-              "symbol (active+inactive duplicates or `SYM_DELISTED`); such a multi-security symbol "
+              "without a traded bar; when Alpaca lists more than one security under the symbol "
+              "(active+inactive duplicates or `SYM_DELISTED`) after > 30 days, or > 7 days with a > 2x "
+              "price-level change; such a multi-security symbol "
               "without a gap is split at a one-day move > ln 3 (price-level break). The latest segment "
               "keeps the symbol, earlier ones become `SYM~1`, `SYM~2`… Segment class: the current "
               "segment takes the active security's class, past segments the class shared by the "
@@ -873,6 +957,21 @@ def write_report(sample_n: int = 8, seed: int = 0) -> str:
         exs = ex[ex["symbol"].isin(ex["symbol"].drop_duplicates().head(14))]
         L += ["Examples:", "", md_table(exs[["ticker", "start", "end", "n_bars", "gap_before_days",
                                              "split_reason", "multi_security", "cls", "keep"]], index=False), ""]
+    dp = os.path.join(ud, "duplicates.parquet")
+    if os.path.exists(dp):
+        dup = pd.read_parquet(dp)
+        L += ["## Duplicate histories (same security under two symbols)", "",
+              "Alpaca re-keys a renamed company's history to its new symbol, but the old symbol (when "
+              "nobody reused it) still returns the same bars (SQ/XYZ, SIVB/SIVBQ); inside one request the "
+              "API returns the series once, across requests twice. Two symbols sharing >= 20 traded bars "
+              "with identical (Date, close, volume, trade_count) are the same security. The one with more "
+              "bars (tie: later last date) is canonical; the other is dropped entirely when the shared bars "
+              "cover > 90% of it (`alias`), otherwise only the shared rows are dropped (`rows`). Applied by "
+              "`load_prices(clean=True)` before the reuse segmentation.", "",
+              f"* pairs: {len(dup):,} ({', '.join(f'{k} {v}' for k, v in dup['mode'].value_counts().items())}); "
+              f"rows dropped: {int(dup.loc[dup['mode'] == 'alias', 'n_alias'].sum()):,} (aliases) + "
+              f"{len(pd.read_parquet(os.path.join(ud, 'duplicate_rows.parquet'))):,} (partial).", "",
+              md_table(dup.head(15).round(3), index=False), ""]
     p = os.path.join(ud, "eligible_counts.parquet")
     if os.path.exists(p):
         ec = pd.read_parquet(p)
@@ -886,7 +985,7 @@ def write_report(sample_n: int = 8, seed: int = 0) -> str:
         L += ["## Universe size under `eligible(min_price=3, min_adv_usd=2e6, min_bars=120)`", "",
               "Per session on the cleaned store (price = raw close, ADV = 20-session mean of "
               "close×volume, history counted from 2016-01-01 so 2016 ramps up):", "",
-              md_table(yr.round(0)), "", "Per-date counts: `eligible_counts.parquet`.", ""]
+              md_table(yr.round(0).astype(int)), "", "Per-date counts: `eligible_counts.parquet`.", ""]
     txt = "\n".join(L)
     with open(os.path.join(ud, "universe_report.md"), "w") as f:
         f.write(txt)
@@ -909,8 +1008,9 @@ if __name__ == "__main__":
         build_classification()
     elif a.step == "reuse":
         from .prices import load_prices
-        detect_symbol_reuse(load_prices(clean=False, columns=["company_close", "company_volume"],
-                                        with_raw=False))
+        px = load_prices(clean=False, columns=["company_close", "company_volume", "trade_count"], with_raw=False)
+        detect_duplicates(px)
+        detect_symbol_reuse(apply_duplicates(px))
     elif a.step == "eligibility":
         eligible_counts()
     else:

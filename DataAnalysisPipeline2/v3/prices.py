@@ -348,12 +348,15 @@ def load_prices(start: str | None = None, end: str | None = None, tickers=None,
                 clean: bool = True, with_raw: bool = True, columns: list[str] | None = None) -> pd.DataFrame:
     """Load the store for [start, end] (inclusive 'YYYY-MM-DD').
 
-    ``clean=True`` (default) applies the symbol-reuse segmentation
+    ``clean=True`` (default) drops duplicate histories (the same security
+    under an old and a new symbol, ``universe.detect_duplicates``), applies
+    the symbol-reuse segmentation
     (``<data>/universe/segments.parquet``): reused symbols are split into
     distinct ids (``SYM`` for the latest company, ``SYM~1``, ``SYM~2``... for
     earlier ones), excluded segments are dropped, and zero-volume filler bars
     (no trades) are removed. ``tickers`` may use either plain symbols or
-    segment ids. ``with_raw`` keeps ``close_raw`` and adds
+    segment ids. Rows with a non-positive adjusted close (broken Alpaca
+    adjustment factors) are dropped too. ``with_raw`` keeps ``close_raw`` and adds
     ``adj_factor = company_close / close_raw``.
     """
     years = stored_years()
@@ -364,14 +367,16 @@ def load_prices(start: str | None = None, end: str | None = None, tickers=None,
     base = sorted({_base_symbol(t) for t in tickers}) if tickers is not None else None
     cols = None
     if columns is not None:
-        cols = list(dict.fromkeys(["ticker", "Date", "company_volume"] + list(columns)
+        cols = list(dict.fromkeys(["ticker", "Date", "company_volume", "company_close"] + list(columns)
                                   + (["company_close", "close_raw"] if with_raw else [])))
     frames = [_read_year(y, base, start, end, cols) for y in years]
     df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=STORE_COLUMNS)
     if clean and len(df):
-        df = df[df["company_volume"] > 0]
-        from .universe import apply_segments
-        df = apply_segments(df)
+        # zero-volume filler bars, and non-positive adjusted closes (a handful of
+        # tickers have broken Alpaca adjustment factors; see quality_report.md)
+        df = df[(df["company_volume"] > 0) & (df["company_close"] > 0)]
+        from .universe import apply_duplicates, apply_segments
+        df = apply_segments(apply_duplicates(df))
         if tickers is not None:
             want = set(tickers)
             df = df[df["ticker"].isin(want) | (df["ticker"].map(_base_symbol).isin(want)
