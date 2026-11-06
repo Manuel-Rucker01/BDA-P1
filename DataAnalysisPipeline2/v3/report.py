@@ -133,7 +133,8 @@ def write_markdown(res: dict, g: dict) -> None:
              f"OOS prediction strictly before it, traded at that close; daily mark-to-market; delisted "
              f"holdings frozen at their last close and sold at the next rebalance; {bt.COST_BPS:.0f} bps "
              f"per side on traded notional; {bt.BORROW_BPS_YR / 100:.0f}%/yr borrow on shorts; cash at 0%; "
-             f"daily stock returns clipped to {bt.RET_CLIP}. Period: first rebalance Feb 2019 → "
+             f"daily stock returns clipped to {bt.RET_CLIP} only where the adjusted and raw returns disagree "
+             f"(corporate-action / adjustment-error days; genuine moves count in full). Period: first rebalance Feb 2019 → "
              f"{dmeta['calendar_end']}. EW benchmark = all eligible names, monthly, no costs; SPY = Alpaca "
              f"SIP adjusted.\n")
     folds = pd.DataFrame([{"test year": f["year"], "train dates": f"{f['train_range'][0]} → {f['train_range'][1]}",
@@ -228,6 +229,28 @@ def write_markdown(res: dict, g: dict) -> None:
              "v3's number is on the v3-eligible universe (~3.2k names in 2026). The legacy-universe column "
              "scores the same v3 model on the names that also have a KG embedding.\n")
 
+    # ------------------------------------------------------ choice / artefact
+    L.append("## Chosen recipe and construction\n")
+    L.append(f"* Recipe: `{v}` — the pre-registered rule keeps `base` unless a variant beats its mean IC by >= "
+             f"{gate.SWITCH_MIN_IC_GAIN} with a higher NW t: `sn30` has +{g['sig_all']['sn30']['mean_ic'] - g['sig_all']['base']['mean_ic']:.4f} "
+             f"IC but a lower t ({g['sig_all']['sn30']['nw_t']:.2f} vs {g['sig_all']['base']['nw_t']:.2f}); `h21` is lower on both.")
+    L.append(f"* Construction: `{c}`. No construction had max drawdown >= {gate.MAX_DD_FLOOR:.0%} "
+             f"(all long-only books lost 38–40% in the Feb–Mar 2020 crash), so the rule fell back to the highest "
+             f"Sharpe. Among the broad books, `lo30` (Sharpe {V[v]['perf']['lo30']['all']['sharpe']:.2f}, IR vs EW "
+             f"{V[v]['perf']['lo30']['all']['ir_ew']:.2f}) is the closest alternative.")
+    L.append("* **Artefact:** not produced — the gate failed, so `best_model_v3.pkl` was not built (the builder "
+             "`python -m DataAnalysisPipeline2.v3.artefact --variant base --construction <c>` is ready and tested). "
+             "The feature_version-3 live path in `trading_agent/bot.py` is implemented and tested end-to-end on "
+             "synthetic data (`trading_agent/test_feature_v3_inference.py`: live features, z-scored inputs and "
+             "predictions equal the offline chunked dataset) but stays dormant until a v3 artefact is promoted.\n")
+    L.append("## Runtime and memory (Apple M5, 10 cores, 16 GB)\n")
+    L.append(f"* Dataset build (15.1M price rows → daily features/labels for 11.7k ticker ids, chunked by 800 "
+             f"tickers, float32 Parquet, 2.4 GB): {dmeta['seconds'] / 60:.1f} min, peak RSS 4.3 GB. Weekly frame "
+             f"(1.55M rows × 32 z-features): 20 s, 3.1 GB.")
+    secs = {x: wf[x]["seconds"] for x in wf}
+    L.append(f"* Walk-forward (8 folds × 3 GBDTs, 8 threads): " + ", ".join(f"{x} {s / 60:.1f} min" for x, s in secs.items())
+             + "; peak RSS ≤ 4.3 GB. Evaluation (5 variants × 4 books + benchmarks): ~1 min; holdout refit: ~1 min.\n")
+
     # -------------------------------------------------------------- caveats
     L.append("## Caveats\n")
     L.append("\n".join([
@@ -243,7 +266,26 @@ def write_markdown(res: dict, g: dict) -> None:
         "* **Execution**: trades at the rebalance close at 10 bps; no market impact model (books hold 30–80 names of "
         "eligible stocks with >= $2M ADV).",
         "* **Price data**: Alpaca SIP adjusted bars; ~62 residual adjustment-error jumps remain in the store — labels "
-        "and daily backtest returns are winsorized/clipped.",
+        "are winsorized; backtest returns are clipped only on days where adjusted and raw returns disagree.",
+        "* **Post-hoc engine fix (disclosed).** The first evaluation pass clipped *every* daily return at +300%. "
+        "Inspecting the long/short book showed this hid genuine short squeezes (QMMM +1,737% on 2025-09-09, raw and "
+        "adjusted agreeing) — a bias in favour of shorts. The clip was restricted to adjustment-disagreement days "
+        "(test `test_clip_only_adjustment_disagreements`) and everything was re-run. Gate thresholds and selection "
+        "rules were not touched; the change only lowered the L/S results (base L/S cum. return 2,582% → 1,315%), "
+        "long-only books are unchanged.",
+        "* **The long/short book is not investable as simulated.** Weights are reset only monthly, so a short that "
+        "squeezes 17x grows to >50% of NAV intra-month: the book loses 94% on 2025-09-09 (QMMM) and its vol "
+        "(~300%), Sharpe and drawdown (−96%) are dominated by a handful of meme squeezes. The short leg is the "
+        "most volatile, lowest-ranked micro-caps — exactly the names with prohibitive borrow fees and recalls. "
+        "A real L/S implementation needs per-name stop/resize rules, borrow data (ETB/fee) and a volatility "
+        "filter on the short leg; its numbers here should not be read as an achievable return.",
+        "* **Universe residue**: the WS1 universe still contains (i) SPAC shells and pending-merger targets "
+        "(near-zero volatility, ~$10 trust value) that inverse-vol weighting favours, and (ii) at least one "
+        "duplicate security under two symbols whose adjusted closes differ by a constant factor (ATNF/FRMM, "
+        "x10), which `detect_duplicates` misses because it matches on adjusted closes. Both should be fixed "
+        "in WS1 (flag SPACs from SEC SIC 6770 once EDGAR is available; match duplicates on raw close + volume).",
+        "* **2021 fold early-stopped at the 50-tree floor** for all three models (its validation window was the "
+        "2020 crash/rebound); 2020 is the one negative-IC year (momentum/low-vol crash).",
         "* **Benchmark EW** is gross of costs (a conservative bar for gate b).",
         "* **2026** is a partial year (labels end 30 sessions before the last bar, so the last ~6 weekly dates have no IC; "
         "the backtest runs to the last bar).",

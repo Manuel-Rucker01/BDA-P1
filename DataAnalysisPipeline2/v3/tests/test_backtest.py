@@ -23,6 +23,18 @@ def test_returns_matrix_delisting_and_listing():
     assert np.isnan(r.loc[D[1], "C"])              # no return before the first bar
 
 
+def test_clip_only_adjustment_disagreements():
+    idx = D[:3]
+    adj = pd.DataFrame({"MEME": [10.0, 200.0, 100.0], "GLITCH": [1.0, 101.0, 101.0],
+                        "SPLIT": [5.0, 5.0, 5.0]}, index=idx)
+    raw = pd.DataFrame({"MEME": [10.0, 200.0, 100.0], "GLITCH": [1.0, 1.01, 1.01],
+                        "SPLIT": [10.0, 5.0, 5.0]}, index=idx)       # 2:1 split on day 1
+    r = bt.daily_returns_matrix(adj, raw=raw)
+    assert np.isclose(r.loc[D[1], "MEME"], 19.0)                    # genuine +1,900% counts in full
+    assert np.isclose(r.loc[D[1], "GLITCH"], bt.RET_CLIP[1])        # adjustment error: clipped
+    assert np.isclose(r.loc[D[1], "SPLIT"], 0.0)                    # adjusted return used on a split
+
+
 def test_simulate_long_only_costs_and_drift():
     r = bt.daily_returns_matrix(_closes())
     ret, log = bt.simulate({D[0]: {"A": 0.5, "B": 0.5}, D[3]: {"A": 1.0}}, r, D[0],

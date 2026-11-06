@@ -76,13 +76,26 @@ def build_book(preds: pd.DataFrame, spec: dict) -> dict:
 # --------------------------------------------------------------------------- #
 # Engine
 # --------------------------------------------------------------------------- #
-def daily_returns_matrix(closes: pd.DataFrame, clip=RET_CLIP) -> pd.DataFrame:
+def daily_returns_matrix(closes: pd.DataFrame, clip=RET_CLIP, raw: pd.DataFrame | None = None,
+                         agree_tol: float = 0.5) -> pd.DataFrame:
     """dates x tickers adjusted closes (NaN = no bar) -> close-to-close returns
     on forward-filled closes (0 while halted / after the last bar; NaN before
-    the first bar), clipped."""
+    the first bar).
+
+    Clipping to ``clip`` targets adjustment errors only: with ``raw``
+    (unadjusted closes, same shape) a return is clipped only where the
+    adjusted and raw returns disagree by more than ``agree_tol`` (a corporate
+    action or an adjustment glitch); genuine moves -- e.g. a +1,700% meme
+    squeeze, which hurts shorts -- count in full (floored at -100%). Without
+    ``raw`` every return is clipped."""
     ff = closes.ffill()
     r = ff / ff.shift(1) - 1.0
-    return r.clip(*clip)
+    if raw is None:
+        return r.clip(*clip)
+    rf = raw.reindex_like(closes).ffill()
+    rr = rf / rf.shift(1) - 1.0
+    suspect = ((r - rr).abs() > agree_tol) | rr.isna()
+    return r.where(~suspect, r.clip(*clip)).clip(lower=-1.0)
 
 
 def simulate(weights_by_date: dict, rets: pd.DataFrame, start: str, end: str | None = None,

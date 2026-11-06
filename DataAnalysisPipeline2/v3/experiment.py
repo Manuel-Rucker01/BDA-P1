@@ -27,7 +27,7 @@ EVAL_COLS = ["ticker", "Date", "Sector", "sector_source", "company_close", "retu
 
 
 def eval_dir(*p) -> str:
-    return ds.v3_dir("eval", *p)
+    return os.path.join(ds.v3_dir("eval"), *p)   # data_dir would mkdir the file name
 
 
 # --------------------------------------------------------------------------- #
@@ -39,11 +39,12 @@ def returns_matrix(tickers, start: str = "2018-12-01") -> pd.DataFrame:
     years = range(int(start[:4]), 2027)
     frames = []
     for y in years:
-        d = ds.load_daily(years=[y], columns=["ticker", "Date", "company_close"])
+        d = ds.load_daily(years=[y], columns=["ticker", "Date", "company_close", "close_raw"])
         frames.append(d[d["ticker"].isin(tickers) & (d["Date"] >= start)])
     px = pd.concat(frames, ignore_index=True)
     wide = px.pivot(index="Date", columns="ticker", values="company_close").sort_index()
-    return bt.daily_returns_matrix(wide.astype(float))
+    raw = px.pivot(index="Date", columns="ticker", values="close_raw").sort_index()
+    return bt.daily_returns_matrix(wide.astype(float), raw=raw.astype(float))
 
 
 def spy_returns() -> pd.Series:
