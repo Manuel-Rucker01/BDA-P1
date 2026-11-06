@@ -468,3 +468,183 @@ deploy a v3 artefact.** Evidence:
 The decisive missing experiment is a 2019–2026 walk-forward of the *v2 recipe* itself on this
 survivorship-free store (same folds/books): only that can say whether v2's recent edge is a regime artefact.
 It needs the v2 training pipeline, which is not in this branch.
+
+## Round 5 — risk model & optimizer
+
+This round changes portfolio construction only. It adds a point-in-time factor risk model, a per-name transaction-cost model, and a cost-aware mean-variance optimizer, all evaluated on the incumbent `sn30_fund` walk-forward OOS predictions (no retraining). The configs, λ/TE/cost settings, alpha scaling, selection rule, trial count (N = 55 + 16 = 71) and a new primary criterion (IR vs SPY > 0, with a bootstrap 95% CI) were committed to `v3/gate.py` (`R5_*`) in commit `af19d25`, before any round-5 backtest or bias statistic existed. The runner was committed in `5033717`, also before any result. Code: `v3/risk.py`, `v3/costs.py`, `v3/optimizer.py`, `v3/round5.py`. Tests: `v3/tests/test_{risk,costs,optimizer,round5}.py`.
+
+### What was built
+
+* **Risk model (`risk.py`)**, estimated on every decision date from data up to that close:
+  * Factors: 8 styles (beta 252d, size = log cleaned mcap, value = B/P+E/P, momentum 12-1, reversal 1m, volatility 60d ⊥ beta/size, liquidity = log ADV/mcap ⊥ size, quality = GP/A+ROA) plus 12 EDGAR FF12 industries. Styles are winsorised, have cap-weighted mean 0 and EW sd 1.
+  * Factor returns: daily WLS with √mcap weights.
+  * Factor covariance: EWMA (half-life 90) with Newey-West (2 lags).
+  * Specific variance: EWMA (half-life 90), with USE4 Bayesian shrinkage to the sector cap-weighted mean.
+  * USE4 volatility-regime adjustment.
+  * Market cap: EDGAR close × shares filed. Names without their own EDGAR record, foreign private issuers (20-F/40-F: share count ≠ ADS count) and >20× outliers instead get a same-date ADV/price fit. Examples of bad raw EDGAR values: HXL at $5·10¹⁵, TSM at 5× its true value.
+  * Speed: the full 2016–2026 panel (8.4k ids × 2.7k sessions) fits in ~80 s.
+  * Point-in-time behaviour is tested: changing future returns leaves the model unchanged.
+* **Cost model (`costs.py`)**:
+  * Half-spread: 0.5 × the 63-day mean Corwin-Schultz estimate. The price/ADV proxy is used when fewer than 20 estimates exist.
+  * Impact: k·σ₆₀·√(trade/ADV₂₀) with k = 0.2.
+  * Borrow: 0.25% / 1% / 5% a year by market cap.
+  * In the optimizer this is exactly c|Δw| + d|Δw|^{3/2} with d = kσ√(AUM/ADV).
+  * The backtest prices every trade with the same model, at NAV-scaled AUM.
+* **Optimizer (`optimizer.py`)**:
+  * Algorithm: ADMM in the OSQP form. Box, linear (budget/sector/beta/style), cost-prox, TE-ball and short-budget blocks each have a closed-form projection or prox. The x-update uses a Woodbury solve on diag + rank-(K+m), so no N×N matrix is ever formed.
+  * Accuracy: matches SLSQP on random problems to 2·10⁻⁷ in objective.
+  * Speed: a 2,865-name problem solves in 0.6–1.8 s. All ~2,100 rebalance solves in the backtests converged; none hit the iteration cap.
+  * Alpha: α = IC_t·σ_spec·z (Grinold). IC_t is the trailing mature weekly IC shrunk to a 0.03 prior (26 pseudo-weeks).
+  * The live entry point is `optimize_portfolio`. It takes any monotone score, so v2 `pred_rank` works as well as v3 `pred`.
+
+### Verdict (round 5)
+
+**FAIL — not promoted.** The selected config, under the pre-registered rule (highest IR vs SPY with max DD ≥ −35%, at $100M), is `mv_abs_all`: absolute mean-variance, long-only, full v3 universe, λ = 10, 5% name cap.
+
+| # | criterion | value | threshold | result |
+|---|---|---|---|---|
+| a1 | mean weekly IC > 0 | 0.0653 | > 0 | PASS |
+| a2 | Newey-West t of IC | 4.8123 | > 2.0 | PASS |
+| a3 | years with IC > 0 | 7 | >= 6 of 8 | PASS |
+| b1 | Sharpe(chosen) vs Sharpe(EW universe) | 0.9708 | > 0.477 | PASS |
+| b2 | max drawdown | -0.3057 | >= -0.35 | PASS |
+| b3 | Deflated Sharpe prob (N=71) | 0.8565 | >= 0.9 | FAIL |
+| c1 | holdout IC 2026-07-15..2026-09-23 | 0.1426 | >= 0.12 | PASS |
+| r5 | **IR vs SPY** (95% CI −0.84 .. 0.43) | −0.170 | > 0 | **FAIL** |
+
+`mv_abs_all` summary:
+* Sharpe 0.97, 95% CI [0.29, 1.71]. Sharpe − SPY Sharpe is +0.08 [−0.36, 0.53]. IR vs EW is 0.21 [−0.42, 0.81].
+* PSR(0) 0.996; DSR 0.857 against SR* = 0.58 (N = 71). This is the highest Sharpe and DSR of any v3 book so far, but it still falls short of 0.90.
+* It earns its Sharpe by holding a **−1 sd beta tilt** at 15% vol, not by beating the index: CAGR 14.6% vs SPY 16.1%.
+
+### Results per config (Feb 2019 → 2026-11-04, monthly unless noted; costs from `costs.py`)
+
+| config | AUM | CAGR | vol | Sharpe | maxDD | maxDD ex Feb–Apr 2020 | IR vs SPY [95% CI] | TE vs SPY | IR vs CW | realised TE vs CW (ex-ante) | active ret vs CW | cost drag/yr | turnover/reb | avg names |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| mv_abs_all | $100M | 14.6% | 15.2% | 0.97 | -30.6% | -18.3% | -0.17 [-0.84, 0.43] | 11.8% | -0.10 | 12.4% (12.6%) | -1.2% | 1.58% | 15% | 81 |
+| mv_abs_all | $1M | 13.8% | 15.5% | 0.91 | -32.5% | -18.8% | -0.22 [-0.94, 0.38] | 11.9% | -0.14 | 12.6% (12.7%) | -1.8% | 1.55% | 17% | 74 |
+| te4_all | $100M | 11.5% | 20.7% | 0.63 | -36.7% | -29.7% | -0.56 [-1.27, 0.09] | 6.5% | -0.51 | 5.6% (3.9%) | -2.9% | 1.13% | 13% | 125 |
+| te4_all | $1M | 11.5% | 20.8% | 0.63 | -37.2% | -31.0% | -0.57 [-1.27, 0.09] | 6.6% | -0.52 | 5.7% (4.0%) | -2.9% | 1.16% | 14% | 118 |
+| te4_top1000 | $100M | 12.2% | 20.5% | 0.66 | -35.1% | -32.5% | -0.52 [-1.19, 0.13] | 6.1% | -0.51 | 5.5% (3.9%) | -2.8% | 1.10% | 13% | 94 |
+| te4_top1000 | $1M | 12.4% | 20.6% | 0.67 | -36.0% | -32.3% | -0.48 [-1.14, 0.17] | 6.2% | -0.46 | 5.6% (3.9%) | -2.6% | 1.12% | 15% | 91 |
+| te6_top1000 | $100M | 11.3% | 20.8% | 0.62 | -33.5% | -33.0% | -0.49 [-1.16, 0.20] | 7.8% | -0.48 | 7.2% (5.5%) | -3.5% | 1.34% | 15% | 64 |
+| te6_top1000 | $1M | 11.7% | 20.9% | 0.63 | -34.5% | -33.4% | -0.45 [-1.11, 0.22] | 7.9% | -0.43 | 7.3% (5.6%) | -3.2% | 1.41% | 18% | 59 |
+| te4_top500 | $100M | 13.3% | 20.3% | 0.72 | -34.2% | -31.2% | -0.39 [-1.03, 0.22] | 5.8% | -0.46 | 5.3% (3.9%) | -2.5% | 1.01% | 13% | 79 |
+| te4_top500 | $1M | 13.5% | 20.4% | 0.72 | -34.9% | -30.7% | -0.34 [-0.99, 0.26] | 5.9% | -0.41 | 5.5% (3.9%) | -2.2% | 1.04% | 14% | 75 |
+| te4n_top1000 (style-neutral) | $100M | 12.1% | 20.3% | 0.67 | -33.9% | -32.9% | -0.56 [-1.23, 0.10] | 5.8% | -0.56 | 5.1% (3.8%) | -2.9% | 1.16% | 14% | 84 |
+| te4n_top1000 (style-neutral) | $1M | 12.5% | 20.4% | 0.68 | -34.3% | -32.9% | -0.48 [-1.18, 0.19] | 5.9% | -0.48 | 5.2% (3.9%) | -2.5% | 1.17% | 15% | 77 |
+| te4_top1000_wk (weekly) | $100M | 10.4% | 20.5% | 0.58 | -36.2% | -32.9% | -0.77 [-1.40, -0.08] | 6.2% | -0.81 | 5.5% (3.9%) | -4.4% | 2.28% | 7% | 93 |
+| te4_top1000_wk (weekly) | $1M | 10.6% | 20.5% | 0.59 | -35.9% | -33.0% | -0.73 [-1.37, -0.06] | 6.2% | -0.78 | 5.5% (4.0%) | -4.3% | 2.33% | 7% | 87 |
+| ls130_top1000 (130/30) | $100M | 10.8% | 22.0% | 0.58 | -37.9% | -34.7% | -0.48 [-1.12, 0.16] | 8.6% | -0.45 | 8.3% (5.9%) | -3.8% | 2.63% | 27% | 158 (+50 short) |
+| ls130_top1000 (130/30) | $1M | 11.4% | 22.1% | 0.60 | -38.9% | -35.2% | -0.40 [-1.05, 0.26] | 8.7% | -0.37 | 8.5% (5.9%) | -3.1% | 2.65% | 30% | 149 (+48 short) |
+
+| benchmark (monthly, no costs) | CAGR | vol | Sharpe | maxDD | maxDD ex Feb–Apr 2020 | IR vs SPY |
+|---|---|---|---|---|---|---|
+| CW all eligible | 15.1% | 19.6% | 0.81 | -33.9% | -27.7% | -0.26 |
+| CW top-1000 | 15.6% | 19.4% | 0.84 | -33.1% | -27.3% | -0.12 |
+| CW top-500 | 16.3% | 19.4% | 0.88 | -32.1% | -27.3% | 0.08 |
+| SPY | 16.1% | 18.9% | 0.89 | -33.8% | -24.5% | |
+| EW eligible | 8.8% | 23.5% | 0.48 | -42.0% | -32.7% | -0.50 |
+
+How to read the table:
+* "CW" is the cap-weighted universe of each config (the active configs' benchmark).
+* Turnover is one-way per rebalance; it is low because the cost term makes the optimizer trade only when a month of alpha pays for the trade.
+* Active return vs CW is net of costs. Adding back the cost drag gives the gross active return: about −1.5…−1.7%/yr for the TE books and +0.4%/yr for `mv_abs_all`.
+* Weekly rebalancing doubles the cost drag (2.3%/yr) for the same TE and is the worst config.
+
+Per year, $100M (return / Sharpe):
+
+| book | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 |
+|---|---|---|---|---|---|---|---|---|
+| mv_abs_all | 22% / 2.3 | 33% / 1.1 | 22% / 1.5 | -9% / -0.5 | 6% / 0.6 | 16% / 1.7 | 14% / 1.0 | 20% / 1.9 |
+| te4_all | 18% / 1.4 | 29% / 0.9 | 14% / 0.9 | -20% / -0.7 | 18% / 1.3 | 12% / 0.9 | 11% / 0.6 | 19% / 1.3 |
+| te4_top1000 | 20% / 1.5 | 27% / 0.9 | 17% / 1.1 | -22% / -0.8 | 18% / 1.2 | 14% / 1.1 | 14% / 0.7 | 20% / 1.4 |
+| te6_top1000 | 18% / 1.4 | 35% / 1.0 | 15% / 0.9 | -22% / -0.8 | 16% / 1.1 | 10% / 0.8 | 11% / 0.6 | 19% / 1.2 |
+| te4_top500 | 22% / 1.7 | 25% / 0.8 | 21% / 1.3 | -21% / -0.8 | 23% / 1.6 | 15% / 1.1 | 15% / 0.8 | 16% / 1.1 |
+| te4n_top1000 | 20% / 1.6 | 26% / 0.8 | 16% / 1.0 | -24% / -0.9 | 20% / 1.4 | 16% / 1.2 | 14% / 0.8 | 19% / 1.3 |
+| te4_top1000_wk | 18% / 1.4 | 21% / 0.7 | 13% / 0.8 | -23% / -0.8 | 17% / 1.2 | 14% / 1.1 | 15% / 0.8 | 17% / 1.2 |
+| ls130_top1000 | 14% / 1.1 | 24% / 0.8 | 16% / 0.9 | -23% / -0.7 | 19% / 1.3 | 7% / 0.6 | 15% / 0.8 | 25% / 1.6 |
+| CW top-1000 | 22% / 1.7 | 24% / 0.8 | 23% / 1.5 | -22% / -0.8 | 28% / 1.9 | 26% / 1.9 | 20% / 1.0 | 14% / 1.0 |
+| SPY | 24% / 1.9 | 18% / 0.7 | 29% / 2.0 | -18% / -0.7 | 26% / 1.9 | 25% / 1.8 | 18% / 0.9 | 16% / 1.2 |
+
+### Why it fails: the signal has (almost) no skill in large caps
+
+Weekly IC of `sn30_fund` vs the 30-session return, measured inside each universe:
+
+| universe | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 | all | NW t |
+|---|---|---|---|---|---|---|---|---|---|---|
+| all eligible (~3k) | 0.067 | -0.013 | 0.121 | 0.072 | 0.095 | 0.080 | 0.025 | 0.082 | **0.065** | 4.81 |
+| top-1000 by mcap | 0.034 | -0.023 | 0.033 | 0.024 | 0.035 | -0.002 | -0.019 | 0.064 | **0.017** | 1.28 |
+| top-500 by mcap | 0.018 | -0.028 | 0.009 | 0.024 | 0.027 | -0.038 | -0.029 | 0.049 | **0.002** | 0.18 |
+
+The ranking's IC of ≈0.065 lives in small and mid caps. Among the 500 largest names it is zero.
+
+The pre-registered alpha used one universe-agnostic trailing IC (0.03–0.08). As a result it **overstated large-cap alpha by 4–30×**. The optimizer then spent its TE budget on noise:
+* Every benchmark-relative book has a negative gross active return vs its cap-weighted benchmark.
+* Style neutrality (`te4n`) does not help, so the losses are not a hidden style bet.
+* The full-universe TE book (`te4_all`) cannot reach the small-cap alpha either. Its benchmark is >90% large-cap by weight, a 4% TE budget plus the 10%-of-ADV liquidity cap leaves small-cap bets tiny, and costs there are highest.
+
+The one book with a positive gross active return is the absolute MV book. It is a minimum-variance/low-beta book: active beta −1.0 sd every year, small-cap/quality tilts. It wins on Sharpe (0.97 vs SPY 0.89) but not on return or IR. That matches the round-3 diagnosis of a low-vol tilt, now done properly with a risk model, and it is the best risk-adjusted v3 book to date.
+
+Mean active style exposures (sd units, vs the cap-weighted universe):
+* `te4_top1000`: −0.1…−0.4 value, +0.1…+0.6 quality, −0.2 size. These are small and are the alpha's implicit tilts.
+* `te4n_top1000`: |·| ≤ 0.1 by construction.
+* `ls130_top1000`: up to −0.6 value and +1.0 quality.
+* `mv_abs_all`: beta −0.84…−1.28 and volatility +0.1…+0.5 every year. The residual-vol tilt is positive because low beta is achieved through low-correlation, not low-total-vol, names.
+
+### Risk-model validation (bias statistics)
+
+Each monthly rebalance uses the model at the decision date. Realised fixed-weight returns run until the next rebalance. Bias = sd of r / σ̂: 1 is unbiased, and the 95% band for 21 days × 94 months is roughly ±0.03. "Random" means 10 draws per month of 50 names with Dirichlet weights; "random L/S" means 50 long / 50 short, equal-weighted, from the top-1000.
+
+| portfolio | daily (all) | monthly (all) | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| CW all eligible | 1.09 | 0.93 | 0.85 | 1.65 | 0.97 | 1.17 | 0.82 | 0.97 | 1.10 | 0.93 |
+| CW top-500 | 1.09 | 0.92 | 0.85 | 1.66 | 0.97 | 1.17 | 0.81 | 0.98 | 1.11 | 0.93 |
+| EW all eligible | 1.07 | 1.00 | 0.85 | 1.63 | 1.00 | 1.07 | 0.93 | 0.97 | 1.02 | 0.88 |
+| random (all) | 1.06 | 0.97 | 0.86 | 1.56 | 0.99 | 1.05 | 0.94 | 0.99 | 1.01 | 0.90 |
+| random (top-1000) | 1.08 | 0.96 | 0.84 | 1.63 | 0.98 | 1.13 | 0.91 | 0.93 | 1.07 | 0.90 |
+| random L/S (top-1000) | 1.00 | 0.99 | 0.95 | 1.14 | 1.02 | 0.98 | 0.98 | 0.98 | 0.96 | 0.99 |
+| te4_top1000 (total) | 1.12 | 0.99 | 0.80 | 1.68 | 1.04 | 1.21 | 0.83 | 0.95 | 1.17 | 0.94 |
+| **te4_top1000 (active)** | **1.38** | **1.35** | 1.12 | 1.73 | 1.48 | 1.27 | 1.22 | 1.38 | 1.36 | 1.41 |
+| mv_abs_all (total) | 1.19 | 1.12 | 0.88 | 2.11 | 0.95 | 1.11 | 0.87 | 0.91 | 1.14 | 0.97 |
+| mv_abs_all (vs CW) | 1.08 | 0.97 | 1.05 | 1.00 | 1.23 | 1.14 | 0.88 | 1.15 | 0.99 | 1.21 |
+| ls130_top1000 (total) | 1.15 | 1.03 | 0.83 | 1.72 | 1.13 | 1.31 | 0.83 | 0.98 | 1.17 | 0.94 |
+| **ls130_top1000 (active)** | **1.40** | **1.38** | 1.18 | 1.56 | 1.60 | 1.47 | 1.29 | 1.29 | 1.33 | 1.43 |
+
+What the bias statistics show:
+* **Calibrated for non-optimised portfolios.** Bias is 0.97–1.09 overall, 1.00 for random long/short, and 0.8–1.2 in every year except 2020. In 2020 the COVID shock arrived faster than the VRA (half-life 42) could react: bias 1.6.
+* **Optimised active risk is under-predicted by ~1.4×.** Realised TE is 5.5% for a 4% ex-ante target, and 8.3% for a 6% target. This is the classic optimisation bias (error maximisation): the optimizer concentrates in directions whose risk the sample covariance under-states. It is not a calibration error for generic portfolios, as the random L/S row shows. The USE4 remedy is an eigenfactor risk adjustment, or equivalently a TE target scaled down by ~1.4. Neither was pre-registered, so neither is applied here.
+
+### Universe coverage
+
+* **Exchanges.** The v3 eligible universe is NYSE + NASDAQ + AMEX: 2,918 names in Jun 2019 and 3,143 in Oct 2026. By count and share of eligible market cap:
+  * NYSE: 1,357 names / 56% of cap (2019); 1,612 / 44% (2026).
+  * NASDAQ: 1,256 / 40% (2019); 1,488 / 56% (2026).
+  * AMEX: 15–39 names, ≈0.1%.
+  * A handful of OTC-relisted names, plus 3% of 2019 cap in names that later delisted (exchange unknown to today's Alpaca asset list).
+* **Production comparison.** Production v2 trades only ~1.9k NASDAQ names with KG embeddings, so it covers 40–56% of the investable cap and none of NYSE.
+* **S&P 500** (current constituents, Wikipedia list read 2026-11-06; file `$BDA_DATA_V3/v3model/r5/sp500_constituents_2026-11-06.txt`):
+  * 498 of 503 are v3-eligible on 2026-11-04.
+  * Missing: CBOE, DOW, FDXF, HONA, VYLR. FDXF, HONA and VYLR are recent spin-offs/new listings below the 120-bar rule; CBOE and DOW have no eligible history under those symbols in the v3 store.
+  * Cap-weighted coverage is ≈100%, since the five missing names are all small index weights.
+  * The cleaned-mcap top-500 overlaps the S&P 500 on 401 names. The difference is ADRs and foreign filers, which v3 includes, plus mcap noise.
+* **Evaluation.** The optimizer was evaluated on all, top-1000 and top-500. The large-cap books are investable at $100M: the 10%-of-ADV cap barely binds and results at $1M and $100M differ by <0.1 Sharpe. However, the signal has no measurable edge in large caps (IC table above).
+
+### Recommendation (round 5)
+
+**Do not promote; keep `v2final_nonews` in production. `optimized_v3` was not wired into `portfolio.py`/`bot.py`,** because no config passed the gate. The infrastructure is ready if a future signal clears it:
+* `optimizer.optimize_portfolio` accepts v2 `pred_rank` or v3 `pred`.
+* `risk.live_panel` builds the risk-model panel from `market_data.fetch_daily_bars` output plus the EDGAR files. Not yet covered by a test.
+
+What round 5 established:
+1. The construction problem is solved to an institutional standard. The risk model is calibrated (bias ≈1 outside crashes), costs are explicit, and the optimizer is fast and exact. Its best book (absolute MV) reaches Sharpe 0.97 and DSR 0.86, the closest any v3 book has come to the bar.
+2. What stops the system beating SPY is the **signal**, not the book. Its skill is confined to small and mid caps (top-500 IC 0.002, t 0.2). Those are exactly the names a cap-weighted benchmark and a TE budget barely touch, and where trading costs are highest. No benchmark-relative large-cap book can add value with it.
+3. Two methodological flaws were found after the fact. They are disclosed and were **not** used to re-run any config:
+   * The trailing IC should be estimated **per universe**. A top-500 IC of ~0 would have set alpha ≈ 0 and the TE books would have hugged the benchmark.
+   * The Corwin-Schultz half-spread is biased upward for large caps on daily bars: median 24–34 bp in the top-500 vs ~1.5 bp from the price/ADV proxy. Costs are therefore conservative by roughly 0.5–1%/yr. This does not change the verdict: the TE books' gross active returns, before any cost, are negative.
+
+Next steps (each would be a new pre-registered round with N counted):
+* A large-cap-specific model, trained and evaluated on the top-1000.
+* A small/mid-cap mandate benchmarked to a CW small/mid-cap index, where the IC lives.
+* Per-universe IC and an eigenfactor risk adjustment in the optimizer.
+* Quoted-spread data instead of Corwin-Schultz for large caps.

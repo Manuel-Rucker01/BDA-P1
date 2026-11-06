@@ -73,3 +73,7 @@ def test_run_config_costs_and_constraints(monkeypatch):
     assert big["turnover_oneway"].iloc[1:].mean() < lg["turnover_oneway"].iloc[1:].mean()
     cw = r5.run_config("cw_all", 1e8, prep=prep)
     assert (cw["log"]["cost"] == 0).all()
+    top = r5.run_config("cw_top500", 1e8, prep=prep)        # universe subset path
+    assert (top["log"]["n_names"] <= 500).all()
+    monkeypatch.setitem(r5.CW_SPECS, "cw_top20", {"kind": "cw", "universe": "top20", "rebalance": "monthly"})
+    assert (r5.run_config("cw_top20", 1e8, prep=prep)["log"]["n_names"] == 20).all()

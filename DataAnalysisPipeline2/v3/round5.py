@@ -239,8 +239,9 @@ def run_config(name: str, aum: float, prep: dict | None = None, log=print) -> di
             borrow = np.zeros(n)
             borrow[mc] = cs.borrow_rate(m.mcap)
             a = tgt_u - b
-            ex_vol = m.vol(tgt_u) * np.sqrt(PPY)
-            ex_te = m.vol(a) * np.sqrt(PPY)
+            mu = m.subset(um)
+            ex_vol = mu.vol(tgt_u) * np.sqrt(PPY)
+            ex_te = mu.vol(a) * np.sqrt(PPY)
             row = {"Date": d, "decision": dd, "turnover_oneway": float(np.abs(dw).sum() / 2), "cost": cost,
                    "gross": float(np.abs(tgt).sum()), "net": float(tgt.sum()), "n_names": int((tgt != 0).sum()),
                    "n_short": int((tgt < 0).sum()), "ex_ante_vol": ex_vol, "ex_ante_te": ex_te,
