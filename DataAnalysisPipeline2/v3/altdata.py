@@ -194,9 +194,13 @@ def load_insider_events() -> pd.DataFrame:
     return ev
 
 
-def load_si() -> pd.DataFrame:
+def load_si(refresh_cache: bool = False) -> pd.DataFrame:
+    """Parsed FINRA records (cached); ``refresh_cache`` re-parses when raw files
+    were added since the cache was written."""
     p = os.path.join(data_dir("finra_si"), "si.parquet")
-    if os.path.exists(p):
+    raw = glob.glob(os.path.join(data_dir("finra_si", "raw"), "shrt*.csv"))
+    stale = refresh_cache and os.path.exists(p) and raw and max(map(os.path.getmtime, raw)) > os.path.getmtime(p)
+    if os.path.exists(p) and not stale:
         return pd.read_parquet(p)
     si = pd.concat([parse_si_csv(f) for f in sorted(glob.glob(os.path.join(data_dir("finra_si", "raw"),
                                                                             "shrt*.csv")))], ignore_index=True)
