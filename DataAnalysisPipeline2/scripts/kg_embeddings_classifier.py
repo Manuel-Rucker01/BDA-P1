@@ -1653,6 +1653,8 @@ def make_walk_forward_folds(merged_df, n_folds=N_FOLDS, embargo_days=EMBARGO_DAY
 
 
 _REG_MIX = ("RandomForest", "CatBoost", "XGBoost", "LightGBM")
+REFIT_LAST_FOLDS = 3
+REFIT_ITERATION_RULE = f"median of the last {REFIT_LAST_FOLDS} CV folds' early-stopping best iterations"
 _RANK_MIX = ("CatBoost_Rank", "XGBoost_Rank", "LightGBM_Rank")
 
 
@@ -1681,7 +1683,11 @@ def refit_v2_artefacts(fold_df, feature_sets, y_rank, merged_df, pca,
     for m in deployed:
         est = base[m]
         its = _BEST_ITERS.get((feat, m))
-        n = int(np.median(its)) if its else None
+        # Rule: median of the LAST 3 CV folds' early-stopping iterations. The
+        # earliest folds have little training data and a mismatched validation
+        # window (best iteration ~1), which made the all-fold median under-fit
+        # the final refit by an order of magnitude.
+        n = int(np.median(its[-REFIT_LAST_FOLDS:])) if its else None
         if n:
             if m.startswith("CatBoost"):
                 est.set_params(iterations=n)
@@ -1733,6 +1739,7 @@ def refit_v2_artefacts(fold_df, feature_sets, y_rank, merged_df, pca,
         "label": "master_dataset.target_30d_rank (30 sessions)",
         "refit": "all labelled rows in [TRAIN_START_DATE, TRAIN_END_DATE]",
         "refit_iterations": refit_iters,
+        "refit_iteration_rule": REFIT_ITERATION_RULE,
         "n_training_rows": int(len(X)),
         "n_training_tickers": int(merged_df["ticker"].nunique()),
         "cv_mean_ic": {k: float(v) for k, v in cv.items()},
