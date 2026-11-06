@@ -417,3 +417,47 @@ def choose_variant_r6(signal: dict) -> str:
 R6_TOP_N = 1000
 R6_LC_VARIANT = "lc_sn30_fund"
 R6_CONDITIONAL_TRIALS = 1
+
+
+# --------------------------------------------------------------------------- #
+# Round 7 -- pre-registered 2026-11-06 (after merging main ae1e580) BEFORE any
+# round-7 backtest. Thresholds and the Round 5 gate criteria unchanged.
+# --------------------------------------------------------------------------- #
+# Signals (existing walk-forward OOS predictions, no retraining):
+#   "v2rec_tr": the v2-recipe full-universe model (round 6, v2rec_full), scored
+#               ONLY on v3-eligible names (re-ranked per date among them);
+#   "stack":    the round-6 PIT ridge stack (v3-eligible names).
+# Constructions (Round 5 machinery, prep and risk models unchanged unless noted):
+#   mv_abs_all at both R5_AUMS, with the trailing IC (R5_COMMON rule) estimated
+#   from the SAME signal on the traded (v3-eligible) universe;
+#   lo30 = long_only_v3 K=30 (<= 5/sector EDGAR, <= 6%, 0.98), monthly, 10 bps.
+#   "mv_abs_all_eig": mv_abs_all on v2rec_tr with an eigenfactor risk adjustment
+#   of every factor covariance (Menchero/USE4: M = 200 Monte Carlo draws of
+#   T = 260 observations -- the effective sample of the 90-day EWMA --, bias
+#   v_k = sqrt(mean true/estimated eigen-variance), scale gamma_k =
+#   1.2 (v_k - 1) + 1, F_adj = U diag(gamma^2 d) U'), both AUMs.
+R7_SIGNALS = ("v2rec_tr", "stack")
+R7_CONFIGS = [(s, c, a) for s in R7_SIGNALS for c, a in (("mv_abs_all", 100e6), ("mv_abs_all", 1e6), ("lo30", None))] \
+    + [("v2rec_tr", "mv_abs_all_eig", 100e6), ("v2rec_tr", "mv_abs_all_eig", 1e6)]
+EIG_SIMS, EIG_T, EIG_SCALE = 200, 260, 1.2
+N_TRIALS_R7 = N_TRIALS_R5 + R6_NEW_TRIALS + len(R7_CONFIGS)          # 71 + 6 + 8 = 85
+# Selection: among the R7 configs at R5_PRIMARY_AUM plus the lo30 books, the
+# highest full-period IR vs SPY among those with max DD >= MAX_DD_FLOOR; else the
+# highest IR vs SPY (Round 5 rule). Gate = Round 5 criteria for that config:
+# a1-a3 on the chosen signal's weekly IC vs the 30-session return over
+# v3-eligible names; b1 Sharpe > EW-universe Sharpe; b2 max DD >= -35%;
+# b3 DSR >= 0.90 with N = N_TRIALS_R7 (all trials' Sharpe ratios); c1 >= 0.12
+# with c = mean weekly IC on the gate-c window (2026-07-15..09-23, v3-eligible)
+# of the signal's 2026 walk-forward fold (trained only through 2025-10, i.e.
+# stricter than the <= 2026-05-29 rule); r5 IR vs SPY > 0 with a 95% bootstrap CI.
+
+
+def r7_key(sig: str, conf: str, aum) -> str:
+    return f"{sig}/{conf}" + (f"_{int(aum / 1e6)}m" if aum else "")
+
+
+def choose_config_r7(perf: dict) -> str:
+    keys = [r7_key(s, c, a) for s, c, a in R7_CONFIGS if a in (None, R5_PRIMARY_AUM)]
+    ok = {k: perf[k] for k in keys if k in perf and perf[k]["max_dd"] >= MAX_DD_FLOOR}
+    pool = ok or {k: perf[k] for k in keys if k in perf}
+    return max(pool, key=lambda k: pool[k]["ir_spy"])

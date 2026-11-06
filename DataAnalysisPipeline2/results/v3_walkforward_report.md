@@ -797,3 +797,13 @@ Gate rows for `v2rec_full/lo30` (information; c = IC of the 2026 fold, trained o
 * **Data, not models, is the binding constraint:** every model peaks at long horizons and has ~no large-cap
   skill; analyst revisions (adapter ready, needs a key + months of snapshots) and better large-cap
   information are the most promising additions.
+
+## Round 7 — pre-registration (committed before any round-7 evaluation)
+
+Registered in `v3/gate.py` (`R7_*`, `N_TRIALS_R7`, `choose_config_r7`); thresholds and the Round 5 gate criteria unchanged.
+
+* **Signals** (existing walk-forward OOS predictions, no retraining): `v2rec_tr` = the round-6 v2-recipe full-universe model scored only on v3-eligible names (re-ranked per date); `stack` = the round-6 PIT ridge stack.
+* **Constructions:** Round 5's `mv_abs_all` at $100M and $1M with the trailing IC estimated from the same signal on the traded (v3-eligible) universe; the K=30 `long_only_v3` book (`lo30`); and `mv_abs_all_eig` (v2rec_tr only, both AUMs) — the risk model's factor covariance eigenfactor-adjusted (Menchero/USE4: 200 simulations of T = 260, scale 1.2), because Round 5 found optimized active risk under-predicted ~1.4×.
+* **Trials:** 8 new → **N = 85** (71 through Round 5 + 6 in Round 6 + 8).
+* **Selection:** highest IR vs SPY with max DD ≥ −35% among the configs at $100M plus the `lo30` books (else highest IR vs SPY).
+* **Gate (Round 5 criteria):** a1–a3 on the signal's weekly IC over v3-eligible names; b1 Sharpe > EW; b2 max DD ≥ −35%; b3 DSR ≥ 0.90 (N = 85); c1 ≥ 0.12 on the gate-c window using the signal's 2026 walk-forward fold (trained only through 2025-10); r5 IR vs SPY > 0 (bootstrap 95% CI).
