@@ -182,9 +182,11 @@ def expected_max_sharpe(n_trials: int, var_trials_sr: float) -> float:
     return float(np.sqrt(var_trials_sr) * ((1.0 - g) * z1 + g * z2))
 
 
-def deflated_sharpe(r, trial_srs_pp) -> dict:
+def deflated_sharpe(r, trial_srs_pp, n_trials: int | None = None) -> dict:
     """DSR of daily returns ``r`` given the per-period Sharpe ratios of ALL
-    trials (configurations) evaluated, including this one."""
+    trials (configurations) evaluated, including this one. ``n_trials`` overrides
+    the count when some trials' Sharpe ratios are not available (their dispersion
+    is then estimated from the ones given)."""
     r = np.asarray(r, dtype=float)
     n = len(r)
     sd = r.std(ddof=1)
@@ -192,7 +194,7 @@ def deflated_sharpe(r, trial_srs_pp) -> dict:
     sk = float(stats.skew(r, bias=False))
     ku = float(stats.kurtosis(r, fisher=False, bias=False))
     trial_srs_pp = np.asarray([x for x in trial_srs_pp if np.isfinite(x)], dtype=float)
-    n_trials = len(trial_srs_pp)
+    n_trials = int(n_trials) if n_trials is not None else len(trial_srs_pp)
     var_t = float(trial_srs_pp.var(ddof=1)) if n_trials > 1 else 0.0
     sr_star = expected_max_sharpe(n_trials, var_t)
     return {"sr_pp": float(sr), "sr_ann": float(sr * np.sqrt(PPY)), "n": n, "skew": sk, "kurt": ku,

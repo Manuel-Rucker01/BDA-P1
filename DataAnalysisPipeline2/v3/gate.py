@@ -247,6 +247,101 @@ N_TRIALS_R4 = N_TRIALS_R3 + len(R4_VARIANTS) * len(R4_CONSTRUCTIONS)   # 43 + 12
 
 
 # --------------------------------------------------------------------------- #
+# Round 5 (risk model + cost model + cost-aware mean-variance optimizer) --
+# pre-registered 2026-11-06 BEFORE any round-5 backtest or bias statistic was
+# computed. Thresholds above unchanged; one criterion added (r5, below).
+# --------------------------------------------------------------------------- #
+# Signal: the incumbent round-2 OOS predictions ``sn30_fund`` (gate a and c are
+# therefore unchanged: sn30_fund weekly IC and holdout IC). No retraining.
+#
+# Risk model (v3/risk.py, fixed before any result): 8 styles (beta, size,
+#   value, momentum 12-1, reversal 1m, volatility, liquidity, quality) + EDGAR
+#   FF12 industries; daily WLS (sqrt mcap) factor returns; factor covariance
+#   EWMA half-life 90 + Newey-West 2 lags; specific variance EWMA half-life 90,
+#   Bayesian shrinkage to the sector cap-weighted mean (q = 0.1); VRA on
+#   (half-life 42). Estimated on each decision date from data up to that date.
+# Cost model (v3/costs.py): half-spread = 0.5 x 63-session mean Corwin-Schultz
+#   estimate (price/ADV proxy when < 20 estimates), clipped to [1, 150] bp;
+#   impact = k sigma_60d sqrt(trade/ADV20), k = 0.2; borrow 0.25%/1%/5% by mcap
+#   (>= $10B / >= $1B / below). The SAME model prices the trades in the backtest.
+# Alpha (v3/optimizer.grinold_alpha): alpha_i = IC_t x sigma_spec,i x z_i over
+#   the horizon (z = normal score of pred over the config's universe; sigma_spec
+#   from the risk model; 30-session label pro-rated to the 21-session horizon).
+#   IC_t = (n x trailing mean weekly IC + 26 x 0.03) / (n + 26), floored at 0,
+#   over the last 104 weekly decision dates whose 30-session label had fully
+#   matured by the decision date (n of them); 0.03 is a generic prior, not
+#   estimated from this walk-forward.
+# Timing / accounting: monthly rebalance on the first session of each month
+#   with the latest weekly prediction strictly before it (risk model, costs,
+#   universe as of that prediction date), traded at the rebalance close; weekly
+#   variant: the session after each weekly decision date. Daily mark-to-market,
+#   delisted names frozen at their last close and sold at the next rebalance (as
+#   v3/backtest.py). Per-name costs from costs.py at the book's AUM (NAV-scaled);
+#   borrow accrued daily on shorts. Feb 2019 -> 2026-11-04.
+# Universes (PIT, on the decision date, names with a prediction and risk-model
+#   coverage): ``all`` = every v3-eligible name; ``top1000`` / ``top500`` = the
+#   largest 1000 / 500 by market cap (cleaned EDGAR cap; ADV/price fit for names
+#   without an own EDGAR cap, foreign private issuers and >20x outliers).
+#   Benchmark of the active configs = cap-weighted universe.
+# Common settings: horizon 21 sessions, cost multiplier 1 (one month of alpha
+#   pays for a trade once), liquidity cap w_i <= 10% x ADV20 / AUM, post-hoc
+#   cardinality threshold 0.1% (smaller positions are zeroed and the problem
+#   re-solved once).
+R5_RECIPE = "sn30_fund"
+R5_AUMS = (100e6, 1e6)
+R5_PRIMARY_AUM = 100e6
+R5_COMMON = {"horizon": 21, "label_h": 30, "cost_mult": 1.0, "impact_k": 0.2, "liq_frac": 0.10,
+             "min_weight": 0.001, "ic_prior": 0.03, "ic_prior_weeks": 26, "ic_window": 104}
+R5_CONFIGS = {
+    # (i) absolute mean-variance long-only, full universe
+    "mv_abs_all": {"kind": "absolute", "universe": "all", "lam": 10.0, "name_cap": 0.05, "sector_band": 0.10,
+                   "rebalance": "monthly"},
+    # (ii) benchmark-relative long-only (TE cap vs the cap-weighted universe)
+    "te4_all": {"kind": "active", "universe": "all", "te": 0.04, "lam": 1.0, "active_cap": 0.03,
+                "sector_band": 0.05, "beta_band": 0.05, "rebalance": "monthly"},
+    "te4_top1000": {"kind": "active", "universe": "top1000", "te": 0.04, "lam": 1.0, "active_cap": 0.03,
+                    "sector_band": 0.05, "beta_band": 0.05, "rebalance": "monthly"},
+    "te6_top1000": {"kind": "active", "universe": "top1000", "te": 0.06, "lam": 1.0, "active_cap": 0.03,
+                    "sector_band": 0.05, "beta_band": 0.05, "rebalance": "monthly"},
+    "te4_top500": {"kind": "active", "universe": "top500", "te": 0.04, "lam": 1.0, "active_cap": 0.03,
+                   "sector_band": 0.05, "beta_band": 0.05, "rebalance": "monthly"},
+    # style-neutral: |active exposure| <= 0.10 sd on every style factor
+    "te4n_top1000": {"kind": "active", "universe": "top1000", "te": 0.04, "lam": 1.0, "active_cap": 0.03,
+                     "sector_band": 0.05, "beta_band": 0.05, "style_band": 0.10, "rebalance": "monthly"},
+    "te4_top1000_wk": {"kind": "active", "universe": "top1000", "te": 0.04, "lam": 1.0, "active_cap": 0.03,
+                       "sector_band": 0.05, "beta_band": 0.05, "rebalance": "weekly"},
+    # (iii) 130/30: shorts only in the round-3 safe-short pool, <= 1% each, 30% total
+    "ls130_top1000": {"kind": "130_30", "universe": "top1000", "te": 0.06, "lam": 1.0, "active_cap": 0.03,
+                      "sector_band": 0.05, "beta_band": 0.05, "short_budget": 0.30, "short_cap": 0.01,
+                      "rebalance": "monthly"},
+}
+# Every config is backtested at both AUMs (the optimizer sees the AUM through
+# the impact and liquidity terms) -> 16 new trials.
+N_TRIALS_R5 = N_TRIALS_R4 + len(R5_CONFIGS) * len(R5_AUMS)    # 55 + 16 = 71
+# Selection: among R5_CONFIGS at R5_PRIMARY_AUM, the highest full-period IR vs
+# SPY among configs with max drawdown >= MAX_DD_FLOOR; if none qualifies, the
+# highest IR vs SPY. Gate = a1-a3 and c1 (sn30_fund, unchanged) + b1 Sharpe >
+# EW-universe Sharpe + b2 max DD >= MAX_DD_FLOOR + b3 DSR >= B_MIN_DSR with
+# N = N_TRIALS_R5 + r5 (primary round-5 criterion): IR vs SPY > R5_MIN_IR_SPY,
+# reported with a stationary-bootstrap 95% CI (2,000 resamples, block 21).
+R5_MIN_IR_SPY = 0.0
+
+
+def choose_config_r5(perf: dict) -> str:
+    """``perf``: config -> {'ir_spy', 'max_dd'} at R5_PRIMARY_AUM."""
+    ok = {k: v for k, v in perf.items() if k in R5_CONFIGS and v["max_dd"] >= MAX_DD_FLOOR}
+    pool = ok or {k: v for k, v in perf.items() if k in R5_CONFIGS}
+    return max(pool, key=lambda k: pool[k]["ir_spy"])
+
+
+def evaluate_gate_r5(sig_all: dict, years_ic: dict, perf: dict, ew_sharpe: float, dsr: float,
+                     holdout_ic: float, ir_spy: float, ir_spy_ci: tuple) -> list[dict]:
+    rows = evaluate_gate(sig_all, years_ic, perf, ew_sharpe, dsr, holdout_ic)
+    rows[5]["criterion"] = f"Deflated Sharpe prob (N={N_TRIALS_R5})"
+    rows.append({"id": "r5", "criterion": f"IR vs SPY (95% CI {ir_spy_ci[0]:.2f} .. {ir_spy_ci[1]:.2f})",
+                 "value": ir_spy, "threshold": f"> {R5_MIN_IR_SPY}", "pass": bool(ir_spy > R5_MIN_IR_SPY)})
+    return rows
+
 # Round 6 (signal side: multi-horizon, stacking, v2-recipe walk-forward) --
 # pre-registered 2026-11-06 BEFORE any round-6 label, model or backtest was
 # computed. Round 5 (risk model / optimizer) is being run in parallel by another
@@ -307,3 +402,18 @@ def choose_variant_r6(signal: dict) -> str:
     ok = [(v, signal[v]) for v in R6_CANDIDATES if v in signal
           and signal[v]["mean_ic"] >= inc["mean_ic"] + SWITCH_MIN_IC_GAIN and signal[v]["nw_t"] > inc["nw_t"]]
     return max(ok, key=lambda x: x[1]["mean_ic"])[0] if ok else R6_INCUMBENT
+
+# Round 6 amendment (after merging Round 5, N_TRIALS_R5 = 71; committed before
+# any round-6 evaluation was run -- horizon/v2 models were still training):
+#  * information only (no trials): IC of every round-6 signal within the
+#    per-date top-1000 by market cap (EDGAR mcap, hot-deck where unmapped);
+#  * "lc_sn30_fund": large-cap specialist -- sn30_fund recipe trained, z-scored
+#    and target-ranked only within the per-date top-1000 by mcap; IC only, no
+#    book (0 trials);
+#  * if choose_variant_r6 selects a round-6 candidate, it is additionally run
+#    through the Round 5 optimizer config "mv_abs_all" (v3.round5) at the primary
+#    AUM, with the trailing IC estimated from that signal on the universe it
+#    trades: +1 trial (R6_CONDITIONAL_TRIALS), counted only if run.
+R6_TOP_N = 1000
+R6_LC_VARIANT = "lc_sn30_fund"
+R6_CONDITIONAL_TRIALS = 1
