@@ -212,6 +212,9 @@ VOL_FLOOR = 1e-3
 # these books are wide and the per-sector cap is STRICT (never relaxed).
 # long_only_v3: K names best-first, <= V3_MAX_PER_SECTOR per sector, inverse-vol
 # weights capped at V3_MAX_WEIGHT, total <= V3_TARGET_EXPOSURE (rest = cash).
+# Common stocks only: drop ETFs/funds/preferreds/... from the v2 KG universe
+# before ranking (bot.exclude_non_common). BDA_EXCLUDE_NON_COMMON=0 disables.
+EXCLUDE_NON_COMMON = bool(_env_num("EXCLUDE_NON_COMMON", 1, int))
 V3_K = _env_num("V3_K", 30, int)
 V3_MAX_PER_SECTOR = _env_num("V3_MAX_PER_SECTOR", 5, int)
 V3_MAX_WEIGHT = _env_num("V3_MAX_WEIGHT", 0.06)

@@ -684,6 +684,57 @@ def validate_v3_artifact_schema(model_data):
         raise ValueError(f"v3 artefact uses columns the v3 feature code does not produce: {unknown}")
 
 
+# Classes dropped by exclude_non_common. "trust" / "other" are kept on purpose:
+# royalty trusts trade like equity, and "other" mislabels e.g. CVCO ("When Issued").
+NON_COMMON_CLASSES = frozenset({"etf", "fund", "preferred", "warrant", "unit", "right", "note"})
+
+
+def exclude_non_common(tickers, assets=None, verbose=True):
+    """Drop ETFs/ETNs, funds, preferreds, warrants, units, rights, notes and
+    trusts from a candidate list, keeping common stocks only.
+
+    The v2 KG universe contains ~ETF tickers (e.g. VTWO, PSCM) that the
+    model happily ranks (low-vol "stocks"), so the book ended up holding index
+    funds. Classification uses the same name/symbol rules as the v3 universe
+    (``v3.universe.classify_name``) on Alpaca's active US-equity asset list
+    (read-only GET), or on ``assets`` (DataFrame with symbol/name/exchange)
+    when given. Fails OPEN: on any error the list is returned unchanged.
+    Returns ``(kept, removed)``."""
+    tickers = list(tickers)
+    try:
+        if assets is None:
+            from alpaca.trading.client import TradingClient
+            tc = TradingClient(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY,
+                               paper=config.ALPACA_PAPER_TRADING)
+            # Raw GET: get_all_assets() validates into pydantic models and
+            # rejects the whole list when Alpaca adds an exchange enum value.
+            raw = tc.get("/assets", {"status": "active", "asset_class": "us_equity"})
+            assets = pd.DataFrame([{"symbol": a.get("symbol"), "name": a.get("name") or "",
+                                    "exchange": a.get("exchange") or ""} for a in raw])
+        classify_name = _v3("universe").classify_name
+
+        def _cls(sym, name, exch):
+            c = classify_name(sym, name, exch)[0]
+            # NYSE Arca / BATS listings come back "non_listed_exchange" before
+            # the name is read; for this filter classify them by name (ITEQ).
+            return classify_name(sym, name, None)[0] if c == "non_listed_exchange" else c
+
+        cls = {sym: _cls(sym, name, exch)
+               for sym, name, exch in zip(assets["symbol"], assets["name"].fillna(""),
+                                          assets["exchange"].fillna(""))}
+        removed = sorted(t for t in tickers if cls.get(t) in NON_COMMON_CLASSES)
+    except Exception as e:  # never block a rebalance on the filter itself
+        if verbose:
+            print(f"[WARNING] Non-common-stock filter unavailable ({e}); universe unchanged.")
+        return tickers, []
+    drop = set(removed)
+    kept = [t for t in tickers if t not in drop]
+    if verbose:
+        print(f"[Filter] Removed {len(removed)} non-common-stock tickers (ETFs, funds, preferreds, ...)"
+              f"{': ' + ', '.join(removed[:15]) if removed else ''}{' ...' if len(removed) > 15 else ''}")
+    return kept, removed
+
+
 def v3_live_universe(classification_path=None, verbose=True):
     """Live v3 universe: currently listed (``status == active``) common stocks
     from the WS1 classification (``$BDA_DATA_V3/universe/classification.parquet``),

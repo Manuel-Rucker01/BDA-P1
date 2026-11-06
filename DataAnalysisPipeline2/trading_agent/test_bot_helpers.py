@@ -174,3 +174,30 @@ def test_build_regime_filtered_weights_enforces_side_and_gross_limits():
     assert exposure["short"] <= 0.20 + 1e-12
     assert exposure["long"] <= 0.70 + 1e-12
     assert max(abs(w) for w in weights.values()) <= 0.40 + 1e-12
+
+
+def test_exclude_non_common_drops_etfs_and_debt_keeps_stocks():
+    import pandas as pd
+    from DataAnalysisPipeline2.trading_agent.bot import exclude_non_common
+    assets = pd.DataFrame({
+        "symbol": ["VTWO", "SFST", "QQQX", "ACGLO", "JSM", "CVCO", "AAPL", "ITEQ"],
+        "name": ["Vanguard Scottsdale Funds Vanguard Russell 2000 ETF",
+                 "Southern First Bancshares, Inc. Common Stock",
+                 "Nuveen NASDAQ 100 Dynamic Overwrite Fund Shares of Beneficial Interest",
+                 "Arch Capital Group Ltd. Depositary Shares Each Representing 1/1,000th Interest "
+                 "in a Share of 5.45% Non-Cumulative Preferred Shares, Series F",
+                 "Navient LLC 6% Senior Notes due December 15, 2043",
+                 "Cavco Industries, Inc. Common Stock When Issued",
+                 "Apple Inc. Common Stock",
+                 "Amplify BlueStar Israel Technology ETF"],
+        "exchange": ["NASDAQ"] * 7 + ["ARCA"]})
+    kept, removed = exclude_non_common(["VTWO", "SFST", "QQQX", "ACGLO", "JSM", "CVCO", "AAPL", "UNKNOWN", "ITEQ"],
+                                       assets=assets, verbose=False)
+    assert removed == ["ACGLO", "ITEQ", "JSM", "QQQX", "VTWO"]
+    assert kept == ["SFST", "CVCO", "AAPL", "UNKNOWN"]
+
+
+def test_exclude_non_common_fails_open():
+    from DataAnalysisPipeline2.trading_agent.bot import exclude_non_common
+    kept, removed = exclude_non_common(["A", "B"], assets="not a frame", verbose=False)
+    assert kept == ["A", "B"] and removed == []

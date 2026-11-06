@@ -195,6 +195,9 @@ def main():
         elif universe == "full":
             config.TICKERS = sorted(agent.company_embeddings.keys())
             print(f"[Filter] Full-universe mode: {len(config.TICKERS)} modelled tickers loaded.")
+        if agent.feature_version < 3 and getattr(config, "EXCLUDE_NON_COMMON", True):
+            from .bot import exclude_non_common
+            config.TICKERS, _ = exclude_non_common(config.TICKERS)
 
         # Validate that loaded tickers have structural embeddings in best_model.pkl
         valid_tickers = ([t for t in config.TICKERS if t in agent.company_embeddings]
