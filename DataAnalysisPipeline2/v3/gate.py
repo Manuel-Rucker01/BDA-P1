@@ -108,3 +108,63 @@ def choose_variant_r2(signal: dict) -> str:
     ok = [(v, signal[v]) for v in CANDIDATE_VARIANTS_R2 if v != PRIMARY_VARIANT_R2 and v in signal
           and signal[v]["mean_ic"] >= b["mean_ic"] + SWITCH_MIN_IC_GAIN and signal[v]["nw_t"] > b["nw_t"]]
     return max(ok, key=lambda x: x[1]["mean_ic"])[0] if ok else PRIMARY_VARIANT_R2
+
+
+# --------------------------------------------------------------------------- #
+# Round 3 (construction-level changes, no retraining) -- pre-registered
+# 2026-11-06 BEFORE any round-3 backtest was run. Thresholds unchanged.
+# --------------------------------------------------------------------------- #
+# Predictions: the round-2 walk-forward OOS predictions on disk; recipe
+# sn30_fund (gate a and c are therefore unchanged from round 2: a = sn30_fund
+# weekly IC, c = sn30_fund holdout IC). Costs, rebalance calendar (monthly,
+# first session, latest weekly prediction strictly before) and sectors (EDGAR
+# FF12 + proxy) as in round 2.
+#
+# Common definitions (all PIT, measured on the weekly decision date):
+#   mcap      = raw close x shares as filed (EDGAR as-of); names without an
+#               EDGAR record use the hot-deck value (same as the model input)
+#   adv       = 20-session mean dollar volume
+#   vol60     = std of the last 60 daily returns
+#   floor(p, a): eligible names with mcap >= per-date p-th percentile of mcap
+#               over eligible names AND adv >= a
+#   safe short pool: adv >= $25M, raw close >= $10, vol60 below the per-date
+#               90th percentile, return_5d <= +50%
+#   short mechanics (L/S configs): per-name short cap 2%; the short leg is
+#               re-scaled back to its target weights at every weekly decision
+#               date (costed); a short is covered (costed) the day its price is
+#               >= +50% above entry and stays flat until the next monthly
+#               rebalance; borrow 1%/yr if mcap >= $1B else 5%/yr.
+#   vol-target overlay on a book: exposure s = min(1, 0.15 / realised vol of the
+#               book's daily returns over the trailing window, annualised),
+#               re-set at every weekly decision date, applied from the next
+#               session, cost 10 bps x |delta s| x book gross; rest in cash;
+#               trend variant additionally caps s at 0.5 while SPY's close is
+#               below its 200-session moving average on the re-set date.
+R3_RECIPE = "sn30_fund"
+R3_CONFIGS = {
+    # name: spec (interpreted by v3/round3.py)
+    "flo30_k30": {"kind": "floor_long", "mcap_pct": 30, "adv_min": 10e6, "k": 30, "max_per_sector": 5, "max_weight": 0.06},
+    "flo30_k50": {"kind": "floor_long", "mcap_pct": 30, "adv_min": 10e6, "k": 50, "max_per_sector": 7, "max_weight": 0.04},
+    "flo50_k30": {"kind": "floor_long", "mcap_pct": 50, "adv_min": 25e6, "k": 30, "max_per_sector": 5, "max_weight": 0.06},
+    "flo50_k50": {"kind": "floor_long", "mcap_pct": 50, "adv_min": 25e6, "k": 50, "max_per_sector": 7, "max_weight": 0.04},
+    "vt15_20d": {"kind": "vol_target", "book": "flo30_k50", "target": 0.15, "window": 20, "trend": False},
+    "vt15_60d": {"kind": "vol_target", "book": "flo30_k50", "target": 0.15, "window": 60, "trend": False},
+    "vt15_20d_trend": {"kind": "vol_target", "book": "flo30_k50", "target": 0.15, "window": 20, "trend": True},
+    "ls_safe": {"kind": "ls_safe", "n_long": 40, "n_short": 40, "gross": 1.6, "max_per_sector": 8, "max_weight": 0.02,
+                "sector_neutral": True},
+    "ls_130_30": {"kind": "ls_130_30", "long_book": "flo30_k50", "long": 1.3, "short": 0.3, "n_short": 20,
+                  "max_short_per_sector": 4, "short_cap": 0.02},
+}
+# Comparison on the round-1 `base` predictions (legacy sectors) -- counted as trials.
+R3_BASE_CONFIGS = ("flo30_k50", "vt15_20d")
+N_TRIALS_R3 = N_TRIALS_R2 + len(R3_CONFIGS) + len(R3_BASE_CONFIGS)   # 32 + 9 + 2 = 43
+# Selection: among R3_CONFIGS on R3_RECIPE, the highest full-period Sharpe among
+# configs with max drawdown >= MAX_DD_FLOOR; if none qualifies, the highest
+# Sharpe. The gate (a, b1-b3, c) is then applied to that config with
+# N = N_TRIALS_R3 for the Deflated Sharpe.
+
+
+def choose_config_r3(perf: dict) -> str:
+    ok = {k: v for k, v in perf.items() if k in R3_CONFIGS and v["max_dd"] >= MAX_DD_FLOOR}
+    pool = ok or {k: v for k, v in perf.items() if k in R3_CONFIGS}
+    return max(pool, key=lambda k: pool[k]["sharpe"])
