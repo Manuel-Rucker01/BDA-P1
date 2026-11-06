@@ -268,10 +268,47 @@ def stage_a(panel: pd.DataFrame, calendar=None, labels: bool = True) -> pd.DataF
     return out
 
 
+class FundamentalsBlock:
+    """Optional PIT fundamentals feature block (WS2; off until EDGAR data exists).
+
+    Wraps ``fundamentals.fundamental_features`` (backward as-of join on the
+    filing-availability date; market cap = raw close x shares as filed). Adds
+    ``fundamentals.FEATURE_COLUMNS`` and, where EDGAR provides one, a sector
+    that overrides the metadata/proxy sector (``sector_source = 'edgar'``).
+    Pass instances via ``blocks=`` to ``build_dataset`` / ``compute_v3_features``
+    and train with ``feature_columns(blocks)``."""
+
+    def __init__(self, fund_asof: pd.DataFrame, cik_map: pd.DataFrame, sectors: pd.DataFrame | None = None):
+        from . import fundamentals as fu
+        self.fu, self.fund_asof, self.cik_map, self.sectors = fu, fund_asof, cik_map, sectors
+        self.columns = list(fu.FEATURE_COLUMNS)
+
+    def __call__(self, df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series | None]:
+        px = df[["ticker", "Date"]].assign(_close=df["close_raw"].fillna(df["company_close"]))
+        f = self.fu.fundamental_features(px, self.fund_asof, self.cik_map, self.sectors, close_col="_close")
+        return f[self.columns], f["sector"]
+
+
+def feature_columns(blocks=()) -> list[str]:
+    """Model feature list: the core columns plus every optional block's."""
+    return FEATURE_COLUMNS + [c for b in blocks for c in b.columns]
+
+
 def stage_b(df: pd.DataFrame, known: pd.Series, assignments: pd.DataFrame,
-            targets: bool = True) -> pd.DataFrame:
-    """Cross-sectional part (needs the full cross-section of each date)."""
+            targets: bool = True, blocks=()) -> pd.DataFrame:
+    """Cross-sectional part (needs the full cross-section of each date).
+    ``blocks``: optional feature blocks (callables returning (features aligned
+    to ``df``, sector or None)), e.g. ``FundamentalsBlock``."""
     df["Sector"], df["sector_source"] = effective_sector(df, known, assignments)
+    for block in blocks:
+        feats, sec = block(df)
+        for c in feats.columns:
+            df[c] = pd.to_numeric(feats[c], errors="coerce").to_numpy(dtype=float)
+        if sec is not None:
+            sec = pd.Series(np.asarray(sec, dtype=object), index=df.index)
+            ok = sec.notna() & (sec.astype(str).str.len() > 0)
+            df.loc[ok, "Sector"] = sec[ok].astype(str)
+            df.loc[ok, "sector_source"] = "edgar"
     core.add_cross_sectional_features(df, "eligible")
     if targets and f"fwd_ret_{HORIZONS[0]}" in df.columns:
         add_targets(df)
@@ -279,7 +316,7 @@ def stage_b(df: pd.DataFrame, known: pd.Series, assignments: pd.DataFrame,
 
 
 def compute_v3_features(panel: pd.DataFrame, meta: pd.DataFrame | None, labels: bool = False,
-                        decision_date: str | None = None) -> pd.DataFrame:
+                        decision_date: str | None = None, blocks=()) -> pd.DataFrame:
     """All v3 features for a self-contained panel (every ticker's history in
     ``panel``). ``panel`` needs ticker, Date, company_close, company_volume and
     ``close_raw`` (raw printed close for the $3 rule; falls back to the
@@ -290,7 +327,7 @@ def compute_v3_features(panel: pd.DataFrame, meta: pd.DataFrame | None, labels: 
     known = known_sector_map(meta)
     months = [decision_date[:7]] if decision_date else None
     assign = proxy_sector_assignments(a[["ticker", "Date", "daily_return", "eligible"]], known, cal, months)
-    return stage_b(a, known, assign, targets=labels)
+    return stage_b(a, known, assign, targets=labels, blocks=blocks)
 
 
 def decision_rows(features: pd.DataFrame, decision_date: str | None = None) -> pd.DataFrame:
@@ -327,7 +364,7 @@ def load_sector_meta(refresh: bool = False) -> pd.DataFrame:
 
 
 def build_dataset(prices: pd.DataFrame | None = None, meta: pd.DataFrame | None = None,
-                  out_dir: str | None = None, chunk_size: int = 800, log=print) -> dict:
+                  out_dir: str | None = None, chunk_size: int = 800, log=print, blocks=()) -> dict:
     """Build the daily v3 dataset under ``out_dir`` (default ``<data>/v3model/dataset``):
 
     ``stage_a/c#####.parquet`` (per ticker chunk), ``proxy_sectors.parquet``,
@@ -379,7 +416,7 @@ def build_dataset(prices: pd.DataFrame | None = None, meta: pd.DataFrame | None 
     for y in years:
         tab = dset.to_table(filter=(pads.field("Date") >= f"{y}-01-01") & (pads.field("Date") <= f"{y}-12-31"))
         df = tab.to_pandas()
-        df = stage_b(df, known, assign[assign["month"].str[:4] == y], targets=True)
+        df = stage_b(df, known, assign[assign["month"].str[:4] == y], targets=True, blocks=blocks)
         df = _f32(df.sort_values(["Date", "ticker"]).reset_index(drop=True))
         df.to_parquet(os.path.join(out_dir, "daily", f"year={y}.parquet"), index=False)
         el = df[df["eligible"]]
@@ -388,7 +425,7 @@ def build_dataset(prices: pd.DataFrame | None = None, meta: pd.DataFrame | None 
         log(f"[dataset] year {y}: {len(df):,} rows, {len(el):,} eligible ({time.time() - t0:.0f}s)")
         del df, el, tab
         gc.collect()
-    info = {"feature_version": FEATURE_VERSION, "feature_columns": FEATURE_COLUMNS,
+    info = {"feature_version": FEATURE_VERSION, "feature_columns": feature_columns(blocks),
             "horizons": list(HORIZONS), "label_clip": list(LABEL_CLIP),
             "eligibility_rule": ELIGIBILITY_RULE, "proxy_window": PROXY_WINDOW,
             "proxy_min_obs": PROXY_MIN_OBS, "calendar_start": str(cal[0]), "calendar_end": str(cal[-1]),

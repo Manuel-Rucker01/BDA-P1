@@ -163,3 +163,25 @@ def test_core_population_argument():
     # a column name works too
     alt2 = core.compute_features(panel.assign(p=pop), meta, population="p")
     pd.testing.assert_series_equal(alt["rank_return_5d"], alt2["rank_return_5d"])
+
+
+# ------------------------------------------------- optional feature blocks
+def test_fundamentals_block_is_pit_and_overrides_sector():
+    panel, meta = make_panel(n_per_sector=3, n_sessions=200)
+    asof = pd.DataFrame([{"cik": 1, "asof_date": "2024-06-03", "last_filed": "2024-05-31",
+                          "revenue_ttm": 1e9, "revenue_ttm_prev": 8e8, "net_income_ttm": 1e8,
+                          "net_income_ttm_prev": 5e7, "gross_profit_ttm": 4e8, "cfo_ttm": 1.2e8,
+                          "assets": 2e9, "liabilities": 1e9, "equity": 1e9, "shares": 1e8, "wdil_yoy": 0.01}])
+    cik_map = pd.DataFrame({"ticker": ["S0_0"], "cik": [1]})
+    sectors = pd.DataFrame({"cik": [1], "ff12": [6], "sector_name": ["Business Equipment"]})
+    block = ds.FundamentalsBlock(asof, cik_map, sectors)
+    f = ds.compute_v3_features(panel, meta, blocks=[block])
+    s = f[f["ticker"] == "S0_0"].set_index("Date")
+    assert s.loc[s.index < "2024-06-03", "ep"].isna().all()          # nothing before availability
+    after = s[s.index >= "2024-06-03"]
+    assert after["ep"].notna().all() and (after["sector_source"] == "edgar").all()
+    assert (after["Sector"] == "Business Equipment").all()
+    raw = panel[(panel["ticker"] == "S0_0") & (panel["Date"] == after.index[0])]["close_raw"].iloc[0]
+    assert np.isclose(after["ep"].iloc[0], 1e8 / (raw * 1e8))         # E/P on the raw close
+    assert ds.feature_columns([block])[-len(block.columns):] == block.columns
+    assert f.loc[f["ticker"] == "S1_0", "ep"].isna().all()             # unmapped -> NaN
