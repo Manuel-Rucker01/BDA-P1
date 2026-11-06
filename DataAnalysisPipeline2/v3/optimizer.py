@@ -205,7 +205,7 @@ class _Ops:
         return x
 
 
-def solve(pb: Problem, *, max_iter: int = 6000, eps_abs: float = 1e-7, eps_rel: float = 1e-5,
+def solve(pb: Problem, *, max_iter: int = 20000, eps_abs: float = 1e-7, eps_rel: float = 1e-5,
           rho0: float = 0.1, relax: float = 1.6, adapt_every: int = 25, warm: dict | None = None) -> Result:
     """ADMM solve of ``pb`` (see module docstring). ``warm`` = ``Result.info['state']``
     of a previous solve of a problem with the same shape (warm start)."""
