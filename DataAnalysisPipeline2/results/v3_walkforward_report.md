@@ -301,3 +301,54 @@ Suggested next steps (each would be a new, pre-registered round with N counted):
 book with a market-cap/liquidity floor (to stop the book tilting into micro-caps that EW and SPY
 don't hold), a beta/vol-targeted overlay, and an L/S version with a volatility filter and borrow
 data on the short leg. Until one clears DSR, keep v2final in production.
+
+## Round 3 — construction changes on the round-2 predictions
+
+Construction-level changes only (no retraining), on the round-2 `sn30_fund` OOS predictions, plus two configs on round-1 `base` for comparison. Configs, parameters, selection rule and trial count were committed in `v3/gate.py` (`R3_CONFIGS`, `R3_BASE_CONFIGS`, `N_TRIALS_R3 = 43`, `choose_config_r3`) before any round-3 backtest ran; thresholds unchanged. Engine: `v3/round3.py` (tests `v3/tests/test_round3.py`).
+
+### Verdict (round 3)
+
+**FAIL — not promoted**. Selected config (highest Sharpe with max DD ≥ −35%): `flo50_k50` — floor mcap≥p50 & ADV≥$25M, long-only K=50. Gate a and c are the `sn30_fund` signal and holdout (unchanged).
+
+| # | criterion | value | threshold | result |
+|---|---|---|---|---|
+| a1 | mean weekly IC > 0 | 0.0653 | > 0 | PASS |
+| a2 | Newey-West t of IC | 4.8123 | > 2.0 | PASS |
+| a3 | years with IC > 0 | 7 | >= 6 of 8 | PASS |
+| b1 | Sharpe(chosen) vs Sharpe(EW universe) | 0.5809 | > 0.477 | PASS |
+| b2 | max drawdown | -0.3445 | >= -0.35 | PASS |
+| b3 | Deflated Sharpe prob (N=43) | 0.4375 | >= 0.9 | FAIL |
+| c1 | holdout IC 2026-07-15..2026-09-23 | 0.1426 | >= 0.12 | PASS |
+
+`flo50_k50`: Sharpe 0.58 [95% CI -0.03, 1.31], Sharpe − EW Sharpe 0.10 [-0.31, 0.52], IR vs EW -0.04 [-0.75, 0.68]; PSR(0) 0.946, DSR 0.437 with SR* = 0.64 (N = 43).
+
+### All configs (Feb 2019 → 2026-11-04, 10 bps/side, borrow 1%/5% by size for shorts)
+
+| preds | config | description | CAGR | vol | Sharpe | maxDD | maxDD ex Feb–Apr 2020 | IR vs SPY | IR vs EW | turnover/reb | avg exposure | names | stops | capacity (5% ADV) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| sn30_fund | flo30_k30 | floor mcap≥p30 & ADV≥$10M, long-only K=30 | 8.6% | 19.2% | 0.53 | -34.4% | -28.9% | -0.64 | -0.08 | 65% | 1.00 | 30 | 0 | $573M |
+| sn30_fund | flo30_k50 | floor mcap≥p30 & ADV≥$10M, long-only K=50 | 9.2% | 18.5% | 0.57 | -34.0% | -29.3% | -0.64 | -0.05 | 61% | 1.00 | 50 | 0 | $912M |
+| sn30_fund | flo50_k30 | floor mcap≥p50 & ADV≥$25M, long-only K=30 | 8.8% | 19.2% | 0.53 | -34.9% | -28.9% | -0.62 | -0.07 | 65% | 1.00 | 30 | 0 | $587M |
+| sn30_fund | flo50_k50 | floor mcap≥p50 & ADV≥$25M, long-only K=50 | 9.4% | 18.4% | 0.58 | -34.4% | -29.1% | -0.63 | -0.04 | 60% | 1.00 | 50 | 0 | $918M |
+| sn30_fund | vt15_20d | flo30_k50 + 15% vol target (20d) | 6.8% | 13.1% | 0.57 | -26.2% | -26.2% | -0.76 | -0.23 | 61% | 0.90 | 50 | 0 | $912M |
+| sn30_fund | vt15_60d | flo30_k50 + 15% vol target (60d) | 6.0% | 13.9% | 0.49 | -25.6% | -25.6% | -0.87 | -0.28 | 61% | 0.89 | 50 | 0 | $912M |
+| sn30_fund | vt15_20d_trend | flo30_k50 + 15% vol target (20d) + SPY 200d trend cap 0.5 | 6.2% | 12.2% | 0.56 | -23.7% | -23.7% | -0.79 | -0.27 | 61% | 0.87 | 50 | 0 | $912M |
+| sn30_fund | ls_safe | safe L/S 40/40 sector-neutral, gross 1.6, 2%/name | -6.8% | 12.7% | -0.49 | -55.4% | -53.7% | -0.93 | -0.58 | 79% | 1.00 | 71 | 98 | $660M |
+| sn30_fund | ls_130_30 | 130/30 (flo30_k50 longs ×1.3, 20 safe shorts 0.3) | 6.4% | 21.8% | 0.39 | -38.5% | -27.5% | -0.51 | -0.13 | 106% | 1.00 | 70 | 65 | $531M |
+| base | flo30_k50 | floor mcap≥p30 & ADV≥$10M, long-only K=50 | 10.2% | 19.6% | 0.59 | -38.0% | -27.9% | -0.64 | 0.04 | 80% | 1.00 | 50 | 0 | $1,057M |
+| base | vt15_20d | flo30_k50 + 15% vol target (20d) | 7.9% | 13.6% | 0.62 | -22.9% | -22.9% | -0.75 | -0.18 | 80% | 0.89 | 50 | 0 | $1,057M |
+| - | EW universe | benchmark | 8.8% | 23.5% | 0.48 | -42.0% | -32.7% | -0.50 |  |  |  |  |  |  |
+| - | SPY | benchmark | 16.1% | 18.9% | 0.89 | -33.8% | -24.5% |  | 0.50 |  |  |  |  |  |
+
+Round-2 reference (`sn30_fund`, no floor): long-only K=50 Sharpe 0.56, CAGR 9.0%, max DD −34.0%, IR vs EW −0.07. Capacity = median over rebalances of the AUM at which the median position equals 5% of its 20-day ADV (one-day participation). Avg exposure < 1 for the vol-target overlays.
+
+### Findings
+
+* **Size/liquidity floors** change almost nothing (Sharpe 0.53–0.58 vs 0.56; drawdown −34…−35%): the model's top-ranked names were already mostly mid/large and liquid. Floored K=50 books can absorb roughly $0.9bn at 5% of one day's ADV per position (K=30: ~$0.6bn); the floor costs nothing in Sharpe.
+* **Vol targeting** does what it says on risk — max drawdown falls to −24…−26% and the COVID crash disappears from the worst drawdown — but it cuts return proportionally more (CAGR 6–7%), so IR vs SPY/EW gets worse. The trend filter adds nothing on top of the 20-day target.
+* **Safe L/S** loses money (Sharpe −0.49): once the short leg is restricted to liquid, ≥ $10, non-extreme-vol names with stops and weekly re-sizing, the model's bottom ranks do not underperform enough to pay for the long leg's beta-neutral cost and borrow. The round-1/2 L/S "edge" came from shorting squeeze-prone micro-caps — not harvestable. The 130/30 is worse than long-only (Sharpe 0.39, max DD −38.5%).
+* **base vs sn30_fund** on the same constructions: practically identical (Sharpe 0.59/0.62 vs 0.57); the fundamentals do not change the portfolio outcome.
+
+### Recommendation (round 3)
+
+**Do not promote, and stop iterating on constructions for this signal.** None of 9 pre-registered constructions turns the ranking into a long-only book whose Sharpe is distinguishable from the best of 43 trials (DSR 0.44), and every long-only book has negative IR versus both SPY and the EW universe. The ranking IC is real (≈0.065, t≈5) but its long-side payoff after costs is roughly the EW universe with less volatility — a low-vol/quality tilt — not alpha over cheap beta. No construction-only change is worth wiring into `portfolio.py`/`bot.py`; the floor is harmless and guarantees liquidity, so if a book is ever wired for v3, use the p50/$25M floor. (Whether the floors help the production v2 ranking cannot be tested here — its 2019–2026 OOS predictions do not exist; on the v3 `base` ranking they do not.) Keep v2final in production. Further work should target the signal (e.g. longer-horizon fundamentals factors, residual-momentum, earnings-revision features) rather than the book.

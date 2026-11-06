@@ -509,9 +509,139 @@ don't hold), a beta/vol-targeted overlay, and an L/S version with a volatility f
 data on the short leg. Until one clears DSR, keep v2final in production."""
 
 
+# =========================================================================== #
+# Round 3: construction-level changes
+# =========================================================================== #
+R3_MARK = "\n## Round 3 — construction changes on the round-2 predictions"
+R3_LABELS = {
+    "flo30_k30": "floor mcap≥p30 & ADV≥$10M, long-only K=30",
+    "flo30_k50": "floor mcap≥p30 & ADV≥$10M, long-only K=50",
+    "flo50_k30": "floor mcap≥p50 & ADV≥$25M, long-only K=30",
+    "flo50_k50": "floor mcap≥p50 & ADV≥$25M, long-only K=50",
+    "vt15_20d": "flo30_k50 + 15% vol target (20d)",
+    "vt15_60d": "flo30_k50 + 15% vol target (60d)",
+    "vt15_20d_trend": "flo30_k50 + 15% vol target (20d) + SPY 200d trend cap 0.5",
+    "ls_safe": "safe L/S 40/40 sector-neutral, gross 1.6, 2%/name",
+    "ls_130_30": "130/30 (flo30_k50 longs ×1.3, 20 safe shorts 0.3)",
+}
+
+
+def build_r3(log=print) -> dict:
+    r2 = json.load(open(ex.eval_dir("results_r2.json")))
+    r3 = json.load(open(ex.eval_dir("results_r3.json")))
+    trials = dict(r2["trials"])
+    trials.update({f"r3:{k}": v for k, v in r3["trials"].items()})
+    assert len(trials) == gate.N_TRIALS_R3, f"expected {gate.N_TRIALS_R3} trials, got {len(trials)}"
+    perf = {k.split("/")[1]: v["all"] for k, v in r3["configs"].items() if k.startswith(gate.R3_RECIPE + "/")}
+    chosen = gate.choose_config_r3(perf)
+    r = pd.read_parquet(ex.eval_dir(f"r3_{gate.R3_RECIPE}_{chosen}_daily.parquet"))["ret"]
+    ew = pd.read_parquet(ex.eval_dir("ew_universe_daily.parquet"))["ret"].reindex(r.index).fillna(0.0)
+    dsr = ev.deflated_sharpe(r.to_numpy(), list(trials.values()))
+    boot = {"sharpe": ev.bootstrap_ci({"r": r}, lambda a: ev.sharpe(a)),
+            "sharpe_minus_ew": ev.bootstrap_ci({"r": r, "e": ew}, lambda a, b: ev.sharpe(a) - ev.sharpe(b)),
+            "ir_ew": ev.bootstrap_ci({"r": r, "e": ew}, lambda a, b: ev.info_ratio(a, b))}
+    V2 = r2["variants"][gate.R3_RECIPE]["signal"]["fwd_ret_30"]
+    sig = {"mean_ic": V2["all"]["mean_ic"], "nw_t": V2["all"]["nw_t"]}
+    years_ic = {y: V2[y]["mean_ic"] for y in gate.A_YEARS if y in V2}
+    hold = json.load(open(ex.eval_dir(f"holdout_{gate.R3_RECIPE}.json")))
+    rows = gate.evaluate_gate(sig, years_ic, perf[chosen], r2["benchmarks"]["ew_universe"]["all"]["sharpe"],
+                              dsr["dsr"], hold["mean_ic"])
+    rows[5]["criterion"] = f"Deflated Sharpe prob (N={gate.N_TRIALS_R3})"
+    out = {"config": chosen, "gate": rows, "passed": all(x["pass"] for x in rows), "dsr": dsr, "boot": boot}
+    json.dump(out, open(ex.eval_dir("gate_r3.json"), "w"), indent=1, default=float)
+    log(f"[report r3] chosen={chosen} passed={out['passed']} DSR={dsr['dsr']:.3f}")
+    write_r3(r2, r3, out)
+    return out
+
+
+def write_r3(r2: dict, r3: dict, g: dict) -> None:
+    c = g["config"]
+    L = [R3_MARK + "\n"]
+    L.append("Construction-level changes only (no retraining), on the round-2 `sn30_fund` OOS predictions, plus "
+             "two configs on round-1 `base` for comparison. Configs, parameters, selection rule and trial count "
+             "were committed in `v3/gate.py` (`R3_CONFIGS`, `R3_BASE_CONFIGS`, `N_TRIALS_R3 = 43`, "
+             "`choose_config_r3`) before any round-3 backtest ran; thresholds unchanged. Engine: "
+             "`v3/round3.py` (tests `v3/tests/test_round3.py`).\n")
+    verdict = "**PASS**" if g["passed"] else "**FAIL — not promoted**"
+    L.append(f"### Verdict (round 3)\n\n{verdict}. Selected config (highest Sharpe with max DD ≥ −35%): "
+             f"`{c}` — {R3_LABELS[c]}. Gate a and c are the `sn30_fund` signal and holdout (unchanged).\n")
+    gt = pd.DataFrame([{"#": x["id"], "criterion": x["criterion"],
+                        "value": (_f(x["value"], 4) if isinstance(x["value"], float) else x["value"]),
+                        "threshold": x["threshold"], "result": "PASS" if x["pass"] else "FAIL"} for x in g["gate"]])
+    L.append(md_table(gt, index=False) + "\n")
+    b, d = g["boot"], g["dsr"]
+    L.append(f"`{c}`: Sharpe {_f(b['sharpe']['point'])} [95% CI {_f(b['sharpe']['lo'])}, {_f(b['sharpe']['hi'])}], "
+             f"Sharpe − EW Sharpe {_f(b['sharpe_minus_ew']['point'])} [{_f(b['sharpe_minus_ew']['lo'])}, "
+             f"{_f(b['sharpe_minus_ew']['hi'])}], IR vs EW {_f(b['ir_ew']['point'])} [{_f(b['ir_ew']['lo'])}, "
+             f"{_f(b['ir_ew']['hi'])}]; PSR(0) {_f(d['psr0'], 3)}, DSR {_f(d['dsr'], 3)} with SR* = "
+             f"{_f(d['sr_star_ann'])} (N = {d['n_trials']}).\n")
+    L.append("### All configs (Feb 2019 → 2026-11-04, 10 bps/side, borrow 1%/5% by size for shorts)\n")
+    rows = []
+    for k, v in r3["configs"].items():
+        m = v["all"]
+        var, name = k.split("/")
+        rows.append({"preds": var, "config": name, "description": R3_LABELS[name],
+                     "CAGR": _pct(m["cagr"]), "vol": _pct(m["vol"]), "Sharpe": _f(m["sharpe"]),
+                     "maxDD": "ruin" if m["max_dd"] < -1 else _pct(m["max_dd"]),
+                     "maxDD ex Feb–Apr 2020": "ruin" if m["max_dd_ex_covid"] < -1 else _pct(m["max_dd_ex_covid"]),
+                     "IR vs SPY": _f(m["ir_spy"]), "IR vs EW": _f(m["ir_ew"]),
+                     "turnover/reb": _pct(m.get("turnover_m", float("nan")), 0),
+                     "avg exposure": _f(m.get("mean_exposure", 1.0)),
+                     "names": f"{m['avg_names']:.0f}", "stops": m["n_stops"],
+                     "capacity (5% ADV)": f"${m['capacity_usd'] / 1e6:,.0f}M"})
+    bench = [("EW universe", r2["benchmarks"]["ew_universe"]["all"]), ("SPY", r2["benchmarks"]["spy"]["all"])]
+    ewr = pd.read_parquet(ex.eval_dir("ew_universe_daily.parquet"))["ret"]
+    from .round3 import _dd_ex
+    spy = ex.spy_returns().reindex(ewr.index).fillna(0.0)
+    for name, m, ser in [("EW universe", bench[0][1], ewr), ("SPY", bench[1][1], spy)]:
+        rows.append({"preds": "-", "config": name, "description": "benchmark", "CAGR": _pct(m["cagr"]),
+                     "vol": _pct(m["vol"]), "Sharpe": _f(m["sharpe"]), "maxDD": _pct(m["max_dd"]),
+                     "maxDD ex Feb–Apr 2020": _pct(_dd_ex(ser)), "IR vs SPY": _f(m["ir_spy"]),
+                     "IR vs EW": _f(m["ir_ew"]), "turnover/reb": "", "avg exposure": "", "names": "", "stops": "",
+                     "capacity (5% ADV)": ""})
+    L.append(md_table(pd.DataFrame(rows), index=False) + "\n")
+    L.append("Round-2 reference (`sn30_fund`, no floor): long-only K=50 Sharpe 0.56, CAGR 9.0%, max DD −34.0%, "
+             "IR vs EW −0.07. Capacity = median over rebalances of the AUM at which the median position equals "
+             "5% of its 20-day ADV (one-day participation). Avg exposure < 1 for the vol-target overlays.\n")
+    L.append("### Findings\n")
+    L.append("\n".join([
+        "* **Size/liquidity floors** change almost nothing (Sharpe 0.53–0.58 vs 0.56; drawdown −34…−35%): the "
+        "model's top-ranked names were already mostly mid/large and liquid. Floored K=50 books can absorb "
+        "roughly $0.9bn at 5% of one day's ADV per position (K=30: ~$0.6bn); the floor costs nothing in Sharpe.",
+        "* **Vol targeting** does what it says on risk — max drawdown falls to −24…−26% and the COVID crash "
+        "disappears from the worst drawdown — but it cuts return proportionally more (CAGR 6–7%), so IR vs "
+        "SPY/EW gets worse. The trend filter adds nothing on top of the 20-day target.",
+        "* **Safe L/S** loses money (Sharpe −0.49): once the short leg is restricted to liquid, ≥ $10, "
+        "non-extreme-vol names with stops and weekly re-sizing, the model's bottom ranks do not underperform "
+        "enough to pay for the long leg's beta-neutral cost and borrow. The round-1/2 L/S \"edge\" came from "
+        "shorting squeeze-prone micro-caps — not harvestable. The 130/30 is worse than long-only (Sharpe 0.39, "
+        "max DD −38.5%).",
+        "* **base vs sn30_fund** on the same constructions: practically identical (Sharpe 0.59/0.62 vs 0.57); "
+        "the fundamentals do not change the portfolio outcome.",
+    ]) + "\n")
+    L.append("### Recommendation (round 3)\n")
+    L.append("**Do not promote, and stop iterating on constructions for this signal.** None of 9 pre-registered "
+             "constructions turns the ranking into a long-only book whose Sharpe is distinguishable from the "
+             f"best of {gate.N_TRIALS_R3} trials (DSR {_f(d['dsr'], 2)}), and every long-only book has negative "
+             "IR versus both SPY and the EW universe. The ranking IC is real (≈0.065, t≈5) but its long-side "
+             "payoff after costs is roughly the EW universe with less volatility — a low-vol/quality tilt — "
+             "not alpha over cheap beta. No construction-only change is worth wiring into "
+             "`portfolio.py`/`bot.py`; the floor is harmless and guarantees liquidity, so if a book is ever "
+             "wired for v3, use the p50/$25M floor. (Whether the floors help the production v2 ranking cannot be tested "
+             "here — its 2019–2026 OOS predictions do not exist; on the v3 `base` ranking they do not.) Keep "
+             "v2final in production. Further work should target the signal (e.g. longer-horizon fundamentals "
+             "factors, residual-momentum, earnings-revision features) rather than the book.\n")
+    REPORT_TEXT = open(REPORT).read()
+    if R3_MARK in REPORT_TEXT:
+        REPORT_TEXT = REPORT_TEXT[:REPORT_TEXT.index(R3_MARK)]
+    open(REPORT, "w").write(REPORT_TEXT.rstrip() + "\n" + "\n".join(L))
+
+
 if __name__ == "__main__":
     import sys
-    if "--r2" in sys.argv:
+    if "--r3" in sys.argv:
+        build_r3()
+    elif "--r2" in sys.argv:
         lp = ex.eval_dir("leak_probe.json")
         build_r2(json.load(open(lp)) if os.path.exists(lp) else None)
     else:
