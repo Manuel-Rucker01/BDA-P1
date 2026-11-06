@@ -35,7 +35,9 @@ def main():
              "'regime_filtered' (Long/Short, shorts disabled in bull markets), "
              "'long_only_v3' (broad long-only: BDA_V3_K names, strict BDA_V3_MAX_PER_SECTOR cap, "
              "inverse-vol capped at BDA_V3_MAX_WEIGHT) or 'long_short_neutral' (dollar-neutral "
-             "BDA_LS_N_LONG/BDA_LS_N_SHORT at BDA_LS_GROSS gross, ETB shorts only, sector-neutral)"
+             "BDA_LS_N_LONG/BDA_LS_N_SHORT at BDA_LS_GROSS gross, ETB shorts only, sector-neutral) or "
+             "'optimized_v3' (experimental, off by default: Round-5/7 cost-aware mean-variance book, "
+             "spec mv_abs_all; falls back to long_only_v3 when fundamentals/risk model/solver fail)"
     )
     parser.add_argument(
         "--top-pct",
@@ -170,6 +172,11 @@ def main():
     elif args.strategy == "long_only_v3":
         print(f"[Strategy] long_only_v3: K={config.V3_K} | <= {config.V3_MAX_PER_SECTOR}/sector "
               f"(strict) | <= {config.V3_MAX_WEIGHT:.2%}/name | exposure <= {config.V3_TARGET_EXPOSURE:.2f}")
+    elif args.strategy == "optimized_v3":
+        print(f"[Strategy] optimized_v3 (EXPERIMENTAL, fails the promotion gate): mv_abs_all | "
+              f"AUM ${config.OPT_AUM:,.0f} | IC {config.OPT_IC} | exposure {config.OPT_TARGET_EXPOSURE:.2f} | "
+              f"min weight {config.OPT_MIN_WEIGHT:.2%} | {config.OPT_HISTORY_DAYS} days of history | "
+              f"fallback long_only_v3")
     elif args.strategy == "long_short_neutral":
         print(f"[Strategy] long_short_neutral: {config.LS_N_LONG} long / {config.LS_N_SHORT} short | "
               f"gross={config.LS_GROSS} | <= {config.LS_MAX_WEIGHT:.2%}/name | "
@@ -207,6 +214,9 @@ def main():
             config.TICKERS = valid_tickers
             print(f"[Filter] Active universe size: {len(config.TICKERS)} tickers.")
         
+        if args.strategy == "optimized_v3":
+            agent.risk_history_days = int(config.OPT_HISTORY_DAYS)
+
         # 2. Check S&P 500 trend regime
         is_bull = agent.check_market_regime(force_regime=args.force_regime,
                                              strategy=args.strategy)
@@ -244,6 +254,11 @@ def main():
                 side = "LONG" if w > 0 else "SHORT"
                 print(f"{t:<8} | {w * 100:>23.2f}% ({side})")
         print("-" * 35)
+
+        import json as _json
+        construction = getattr(agent, "last_construction", None)
+        if construction:
+            print("CONSTRUCTION_JSON: " + _json.dumps(construction, default=str))
 
         # 6. Execute differential rebalance
         if args.recommend_only:
@@ -329,7 +344,11 @@ def main():
 
         # Machine-readable outcome + exit code for schedulers:
         # 0 ok (executed / dry-run), 2 halted, 3 partial (some orders failed), 1 error.
-        import json as _json
+        if construction:
+            exec_status = {**exec_status, "construction": construction.get("construction"),
+                           "requested_strategy": construction.get("requested")}
+            if construction.get("fallback_reason"):
+                exec_status["fallback_reason"] = construction["fallback_reason"][:200]
         st = exec_status.get("status")
         print("RESULT_JSON: " + _json.dumps({k: v for k, v in exec_status.items() if k != "failures"}))
         if st == "halted":

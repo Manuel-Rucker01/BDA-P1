@@ -545,6 +545,15 @@ def offline_panel(start: str, end: str | None = None, log=print) -> Panel:
     return panel_from_long(df, foreign=fpi)
 
 
+# fundamentals_asof columns the risk model reads (size via shares; value = B/P, E/P;
+# quality = GP/A, ROA; foreign filers via last_form) and the ones
+# ``fundamental_features`` merely carries along (NaN-filled when absent).
+LIVE_FUND_COLS = ["cik", "asof_date", "last_filed", "last_form", "net_income_ttm", "gross_profit_ttm", "assets",
+                  "equity", "shares"]
+LIVE_FUND_OPTIONAL = ["revenue_ttm", "revenue_ttm_prev", "net_income_ttm_prev", "cfo_ttm", "liabilities",
+                      "wdil_yoy"]
+
+
 def live_panel(bars: pd.DataFrame, fund_dir: str | None = None, min_price: float = 3.0,
                min_adv_usd: float = 2e6, min_bars: int = 120) -> Panel:
     """Panel for the live agent from ``market_data.fetch_daily_bars`` output
@@ -565,6 +574,9 @@ def live_panel(bars: pd.DataFrame, fund_dir: str | None = None, min_price: float
     cm = pd.read_parquet(os.path.join(fund_dir, "cik_map.parquet"))
     fa = pd.read_parquet(os.path.join(fund_dir, "fundamentals_asof.parquet"))
     secs = pd.read_parquet(os.path.join(fund_dir, "sectors.parquet"))
+    for c in LIVE_FUND_OPTIONAL:      # a trimmed snapshot keeps only what the risk model uses
+        if c not in fa:
+            fa[c] = np.nan
     ff = fu.fundamental_features(b[["ticker", "Date", "company_close"]], fa, cm, secs)
     for c in ("bp", "ep", "gpa", "roa", "log_mcap"):
         b[c] = ff[c].to_numpy()
