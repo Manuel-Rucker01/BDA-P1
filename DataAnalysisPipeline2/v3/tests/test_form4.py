@@ -139,3 +139,29 @@ def test_ingest_day_survives_unavailable_index(monkeypatch, tmp_path):
     c = f4.SECClient(session=_S([403] * 5), limiter=f4.Limiter(1e6), sleep=lambda s: None, retries=5)
     assert f4.ingest_day("2026-05-25", c, None, log=lambda *a: None) == -3
     assert not list(tmp_path.iterdir())                            # nothing cached -> retried later
+
+
+def test_ingest_day_retries_only_failed_filings(monkeypatch, tmp_path):
+    monkeypatch.setattr(f4, "cache_dir", lambda: str(tmp_path))
+    idx_txt = ("CIK|Company Name|Form Type|Date Filed|File Name\n"
+               "1|A|4|20250103|edgar/data/1/0000000011-25-000001.txt\n"
+               "1|A|4|20250103|edgar/data/1/0000000011-25-000002.txt\n")
+    calls = {"n": 0, "fail": True}
+
+    class Sess:
+        def get(self, url, timeout=None):
+            calls["n"] += 1
+            if url.endswith(".idx"):
+                return _R(200, idx_txt)
+            if url.endswith("000002.txt") and calls["fail"]:
+                return _R(500)
+            return _R(200, XML.format(doc="4", d="true"))
+
+    c = f4.SECClient(session=Sess(), limiter=f4.Limiter(1e6), sleep=lambda s: None, retries=2)
+    assert f4.ingest_day("2025-01-03", c, None, workers=1, log=lambda *a: None) == 2
+    assert (tmp_path / "2025-01-03.failed.json").exists()
+    calls["fail"], before = False, calls["n"]
+    assert f4.ingest_day("2025-01-03", c, None, workers=1, log=lambda *a: None) == 4
+    assert calls["n"] - before == 1                                  # only the failed filing re-fetched
+    assert not (tmp_path / "2025-01-03.failed.json").exists()
+    assert f4.ingest_day("2025-01-03", c, None, log=lambda *a: None) == -1

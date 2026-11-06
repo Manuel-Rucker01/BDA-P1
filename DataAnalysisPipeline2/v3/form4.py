@@ -185,32 +185,58 @@ def universe_issuer_ciks() -> set:
 
 
 def ingest_day(date, client: SECClient, issuer_ciks: set | None, workers: int = 4, log=print) -> int:
-    """Fetch and parse every Form 4/5 of ``date``; writes ``YYYY-MM-DD.parquet``
-    (possibly empty) so a finished day is never re-fetched."""
+    """Fetch and parse every Form 4/5 of ``date`` into ``YYYY-MM-DD.parquet``.
+
+    A finished day is never re-fetched. Filings whose fetch failed persistently
+    are listed in ``YYYY-MM-DD.failed.json``; the next call for that day
+    retries only those and merges them in (the day counts as complete once the
+    list is empty)."""
+    import json
     d = pd.Timestamp(date).strftime("%Y-%m-%d")
     out = os.path.join(cache_dir(), f"{d}.parquet")
-    if os.path.exists(out):
+    failed_p = os.path.join(cache_dir(), f"{d}.failed.json")
+    if os.path.exists(out) and not os.path.exists(failed_p):
         return -1
-    try:
-        idx = daily_index(d, client)
-    except RuntimeError as e:             # persistent error: not cached, retried on the next refresh
-        log(f"[form4] {d}: index unavailable ({e}); will retry next refresh")
-        return -3
-    if idx is None:                       # weekend / holiday / not yet published
-        return -2
-    sel = select_filings(idx, issuer_ciks)
+    if os.path.exists(out):
+        sel = pd.DataFrame(json.load(open(failed_p)))
+        if len(sel):
+            sel["date_filed"] = pd.to_datetime(sel["date_filed"])
+        prev = pd.read_parquet(out)
+    else:
+        try:
+            idx = daily_index(d, client)
+        except RuntimeError as e:         # persistent error: not cached, retried on the next refresh
+            log(f"[form4] {d}: index unavailable ({e}); will retry next refresh")
+            return -3
+        if idx is None:                   # weekend / holiday / not yet published
+            return -2
+        sel = select_filings(idx, issuer_ciks)
+        prev = None
     from concurrent.futures import ThreadPoolExecutor
 
     def one(r):
-        txt = client.get(ARCHIVES + r.filename)
-        return parse_form4(txt, r.accession, r.date_filed) if txt else None
+        try:
+            txt = client.get(ARCHIVES + r.filename)
+        except RuntimeError:
+            return r, None
+        return r, (parse_form4(txt, r.accession, r.date_filed) if txt else pd.DataFrame(columns=EVENT_COLUMNS))
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        parts = [p for p in ex.map(one, sel.itertuples(index=False)) if p is not None and len(p)]
+        res = list(ex.map(one, sel.itertuples(index=False)))
+    parts = [p for _, p in res if p is not None and len(p)]
+    failed = [r for r, p in res if p is None]
+    if prev is not None and len(prev):
+        parts = [prev] + parts
     ev = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=EVENT_COLUMNS)
     ev.to_parquet(out + ".tmp", index=False)
     os.replace(out + ".tmp", out)
-    log(f"[form4] {d}: {len(sel):,} filings -> {len(ev):,} P/S lines ({client.n:,} requests so far)")
+    if failed:
+        json.dump([{"accession": r.accession, "filename": r.filename, "date_filed": str(r.date_filed),
+                    "form": r.form} for r in failed], open(failed_p, "w"))
+    elif os.path.exists(failed_p):
+        os.remove(failed_p)
+    log(f"[form4] {d}: {len(sel):,} filings -> {len(ev):,} P/S lines"
+        f"{f', {len(failed)} failed (retry next refresh)' if failed else ''} ({client.n:,} requests so far)")
     return len(ev)
 
 
