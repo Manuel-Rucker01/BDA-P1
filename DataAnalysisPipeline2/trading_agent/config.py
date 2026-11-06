@@ -138,6 +138,10 @@ MIN_ORDER_VALUE = _env_num("MIN_ORDER_VALUE", 5.0)
 # longest feature lookback (return_50d, 26-span MACD EMA) with warm-up; the old
 # 60-day window (~41 sessions) left return_50d permanently 0 in production.
 LIVE_HISTORY_DAYS = 250
+# feature_version-3 models: >= 120 bars for the eligibility rule, the 120-session
+# proxy-sector window ending before the decision month, and EMA/RSI warm-up
+# (~290 sessions) so live features equal the offline dataset's.
+LIVE_HISTORY_DAYS_V3 = 420
 # Refuse to rank the universe if fewer than this fraction of tickers returned
 # data (a data outage would otherwise yield an arbitrary top-K book).
 MIN_UNIVERSE_COVERAGE = 0.80

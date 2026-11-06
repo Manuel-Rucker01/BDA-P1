@@ -50,7 +50,7 @@ def _chunks(seq, size):
 # --------------------------------------------------------------------------- #
 # Alpaca (primary)
 # --------------------------------------------------------------------------- #
-def _alpaca_daily_bars(tickers, start, end, chunk_size=200, retries=5, verbose=True):
+def _alpaca_daily_bars(tickers, start, end, chunk_size=200, retries=5, verbose=True, adjustment="all"):
     from alpaca.data.enums import Adjustment
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
@@ -68,7 +68,8 @@ def _alpaca_daily_bars(tickers, start, end, chunk_size=200, retries=5, verbose=T
             try:
                 req = StockBarsRequest(
                     symbol_or_symbols=chunk, timeframe=TimeFrame.Day,
-                    start=start, end=end, feed="sip", adjustment=Adjustment.ALL,
+                    start=start, end=end, feed="sip",
+                    adjustment=Adjustment.RAW if adjustment == "raw" else Adjustment.ALL,
                 )
                 df = client.get_stock_bars(req).df
                 if df is not None and len(df):
@@ -150,13 +151,18 @@ def _yf_daily_bars(tickers, start, end, chunk_size=100, retries=3, verbose=True)
 # --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
-def fetch_daily_bars(tickers, lookback_days=250, provider="auto", verbose=True):
+def fetch_daily_bars(tickers, lookback_days=250, provider="auto", verbose=True, raw_close=False):
     """Daily OHLCV for ``tickers`` over the last ``lookback_days`` calendar days,
     through the last completed session close.
 
     Returns ``(df, failures)`` where ``failures`` lists tickers with no data.
     ``provider``: "auto" (Alpaca, then yfinance for whatever is missing),
     "alpaca", or "yfinance".
+
+    ``raw_close=True`` adds ``close_raw`` -- the unadjusted printed close from a
+    second Alpaca request set (``adjustment=raw``), needed by the v3 $3 price
+    rule. Tickers without a raw bar (e.g. yfinance fallback) get NaN, which the
+    eligibility rule replaces by the adjusted close.
     """
     tickers = list(dict.fromkeys(t for t in tickers if t))
     end = _last_completed_close_utc()
@@ -190,7 +196,19 @@ def fetch_daily_bars(tickers, lookback_days=250, provider="auto", verbose=True):
             .sort_values(["ticker", "Date"]).reset_index(drop=True))
     have = set(df["ticker"])
     failures = [t for t in tickers if t not in have]
-    return df[OUTPUT_COLUMNS], failures
+    if not raw_close:
+        return df[OUTPUT_COLUMNS], failures
+    raw = pd.DataFrame(columns=OUTPUT_COLUMNS)
+    if provider in ("auto", "alpaca") and len(df):
+        try:
+            raw = _alpaca_daily_bars(sorted(have), start, end, verbose=verbose, adjustment="raw")
+        except Exception as e:
+            if verbose:
+                print(f"[market_data] raw (unadjusted) closes unavailable ({e}); close_raw = NaN.")
+    raw = (raw.drop_duplicates(["ticker", "Date"], keep="first")
+              .rename(columns={"company_close": "close_raw"})[["ticker", "Date", "close_raw"]])
+    df = df[OUTPUT_COLUMNS].merge(raw, on=["ticker", "Date"], how="left")
+    return df, failures
 
 
 def fetch_benchmark_closes(symbol=None, lookback_days=380, verbose=True):

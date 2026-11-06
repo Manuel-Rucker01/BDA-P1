@@ -183,12 +183,22 @@ def main():
 
         # Full-universe expansion: after the model is loaded we know every
         # ticker the model can score, so we can now populate the trade list.
-        if universe == "full":
+        if agent.feature_version >= 3:
+            # v3 has no KG: every active common stock is a candidate; the PIT
+            # eligibility rule is applied on the decision date in run_inference.
+            # A --tickers-file (custom) list is honoured as given.
+            from .bot import v3_live_universe
+            if universe != "custom":
+                config.TICKERS = v3_live_universe()
+            print(f"[Filter] feature_version 3: {len(config.TICKERS)} candidate tickers "
+                  f"(no KG filter).")
+        elif universe == "full":
             config.TICKERS = sorted(agent.company_embeddings.keys())
             print(f"[Filter] Full-universe mode: {len(config.TICKERS)} modelled tickers loaded.")
 
         # Validate that loaded tickers have structural embeddings in best_model.pkl
-        valid_tickers = [t for t in config.TICKERS if t in agent.company_embeddings]
+        valid_tickers = ([t for t in config.TICKERS if t in agent.company_embeddings]
+                         if agent.feature_version < 3 else list(config.TICKERS))
         if len(valid_tickers) != len(config.TICKERS):
             print(f"[Filter] Removed {len(config.TICKERS) - len(valid_tickers)} tickers lacking structural model embeddings.")
             config.TICKERS = valid_tickers
