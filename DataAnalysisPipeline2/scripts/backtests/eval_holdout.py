@@ -321,6 +321,90 @@ def run_portfolios(sc, info, closes, reb, exits):
     return out
 
 
+def sector_ic(sc_lab, info, min_names=10):
+    """Within-sector IC (Spearman inside each sector with >= min_names, equal-
+    weight average over sectors, then over dates) and between-sector IC
+    (Spearman of sector-mean prediction vs sector-mean realised return)."""
+    d = sc_lab.merge(info[["ticker", "Date", "Sector"]], on=["ticker", "Date"], how="left")
+    d["Sector"] = d["Sector"].fillna("Unknown")
+    within, between = [], []
+    for _, g in d.dropna(subset=["ret", "pred"]).groupby("Date"):
+        ics = [spearmanr(s["pred"], s["ret"]).correlation
+               for _, s in g.groupby("Sector") if len(s) >= min_names]
+        ics = [x for x in ics if np.isfinite(x)]
+        if ics:
+            within.append(np.mean(ics))
+        sm = g.groupby("Sector")[["pred", "ret"]].mean()
+        if len(sm) >= 4:
+            between.append(spearmanr(sm["pred"], sm["ret"]).correlation)
+    within = np.array(within)
+    return {"ic_within_sector": float(within.mean()),
+            "ic_within_sector_t_nw29": newey_west_t(within, 29),
+            "ic_between_sector": float(np.nanmean(between))}
+
+
+STRICT_BOOKS = {
+    "STRICT30": dict(kind="long", k=30, max_per_sector=5, max_weight=0.06, target_exposure=0.98),
+    "STRICT50": dict(kind="long", k=50, max_per_sector=7, max_weight=0.04, target_exposure=0.98),
+    "LS": dict(kind="ls", n_long=40, n_short=40, gross=1.6, max_per_sector=8, max_weight=0.04),
+}
+
+
+def run_strict_books(sc, info, closes, reb, exits):
+    """trading_agent.portfolio books (strict sector caps, full-ranking walk) +
+    bottom-2-decile avoidance. Returns {name: (path, period_rows)}."""
+    from trading_agent.portfolio import long_only_book, long_short_book
+    out = {}
+    for bname, cfg in STRICT_BOOKS.items():
+        path, periods = [1.0], []
+        for d0, d1 in zip(reb, exits):
+            g = sc[sc["Date"] == d0].merge(info, on=["ticker", "Date"], how="left") \
+                .rename(columns={"pred": "pred_rank", "vol": "return_volatility_20d"})
+            if cfg["kind"] == "long":
+                w, diag = long_only_book(g, k=cfg["k"], max_per_sector=cfg["max_per_sector"],
+                                         max_weight=cfg["max_weight"],
+                                         target_exposure=cfg["target_exposure"])
+            else:
+                w, diag = long_short_book(g, n_long=cfg["n_long"], n_short=cfg["n_short"],
+                                          gross=cfg["gross"], max_per_sector=cfg["max_per_sector"],
+                                          max_weight=cfg["max_weight"], shortable=None,
+                                          sector_neutral=True)
+            seg = period_path(closes, w, d0, d1)
+            path += list(path[-1] * seg.values[1:])
+            sec = dict(zip(g["ticker"], g["Sector"].fillna("Unknown")))
+            row = {"rebalance": d0.date(), "exit": pd.Timestamp(d1).date(),
+                   "ret_pct": float(seg.values[-1] - 1) * 100,
+                   "n_long": sum(1 for x in w.values() if x > 0),
+                   "n_short": sum(1 for x in w.values() if x < 0),
+                   "n_sectors": len({sec.get(t) for t in w}),
+                   "gross": float(sum(abs(x) for x in w.values())),
+                   "notes": "; ".join(diag.get("notes", []))}
+            if cfg["kind"] == "ls":
+                lw = {t: x for t, x in w.items() if x > 0}
+                sw = {t: -x for t, x in w.items() if x < 0}
+                le, se = sum(lw.values()), sum(sw.values())
+                row["long_leg_ret_pct"] = float(period_path(closes, {t: x / le for t, x in lw.items()},
+                                                            d0, d1).values[-1] - 1) * 100 if le else np.nan
+                row["short_basket_ret_pct"] = float(period_path(closes, {t: x / se for t, x in sw.items()},
+                                                                d0, d1).values[-1] - 1) * 100 if se else np.nan
+            periods.append(row)
+        out[bname] = (path, periods)
+    # Bottom-decile avoidance: EW universe minus the model's bottom 2 deciles.
+    path, periods = [1.0], []
+    for d0, d1 in zip(reb, exits):
+        g = sc[sc["Date"] == d0]
+        keep = g.loc[g["pred"] > 0.2, "ticker"].tolist()
+        seg = period_path(closes, {t: 1.0 / len(keep) for t in keep}, d0, d1)
+        path += list(path[-1] * seg.values[1:])
+        periods.append({"rebalance": d0.date(), "exit": pd.Timestamp(d1).date(),
+                        "ret_pct": float(seg.values[-1] - 1) * 100, "n_long": len(keep),
+                        "n_short": 0, "n_sectors": int(info[(info["Date"] == d0) & info["ticker"].isin(keep)]
+                                                        ["Sector"].nunique()),
+                        "gross": 1.0, "notes": "EW excluding bottom 2 deciles"})
+    out["EW_ex_bottom20"] = (path, periods)
+    return out
+
+
 def ew_and_spy(common_by_date, closes, reb, exits, spy):
     ew, ew_per = [1.0], []
     for d0, d1 in zip(reb, exits):
@@ -359,7 +443,10 @@ def main():
     ap.add_argument("--out-name", default="holdout_eval")
     ap.add_argument("--news-v2", default=os.path.join(EXPLOITATION_DIR, "news_features_v2.parquet"),
                     help="news parquet for feature_version-2 news models")
+    ap.add_argument("--strict-for", default="production,v2_long,v2_long_news",
+                    help="comma list of model names that also get the trading_agent.portfolio books")
     args = ap.parse_args()
+    strict_for = {x.strip() for x in args.strict_for.split(",") if x.strip()}
 
     models = []
     for spec in args.model:
@@ -417,12 +504,27 @@ def main():
     common_by_date = {d: set(kdf.loc[kdf["Date"] == d, "ticker"]) for d in reb}
     spy = fetch_spy(args.start, closes.index[-1])
 
-    rows, per_rows = [], []
+    rows, per_rows, strict_rows, strict_per = [], [], [], []
     for M in models:
         sc = scored[M["name"]].merge(kdf, on=["ticker", "Date"])
         # Re-rank on the common population so every model ranks the same names.
         sc["pred"] = per_date_pct_rank(sc["pred"].values, sc["Date"].values)
-        m = cross_section_metrics(sc.merge(labels, on=["ticker", "Date"]))
+        sc_lab = sc.merge(labels, on=["ticker", "Date"])
+        m = cross_section_metrics(sc_lab)
+        m.update(sector_ic(sc_lab, info))
+        if M["name"] in strict_for:
+            for bname, (path, periods) in run_strict_books(sc, info, closes, reb, exits).items():
+                cum, sh, dd = path_stats(path)
+                srow = {"model": M["name"], "book": bname, "cum_pct": cum, "sharpe": sh, "maxdd_pct": dd,
+                        "ret_over_dd": cum / abs(dd) if dd < 0 else float("nan"),
+                        "avg_names": float(np.mean([p["n_long"] + p["n_short"] for p in periods])),
+                        "avg_sectors": float(np.mean([p["n_sectors"] for p in periods]))}
+                if bname == "LS":
+                    srow["long_leg_cum_pct"] = (np.prod([1 + p["long_leg_ret_pct"] / 100 for p in periods]) - 1) * 100
+                    srow["short_basket_cum_pct"] = (np.prod([1 + p["short_basket_ret_pct"] / 100 for p in periods]) - 1) * 100
+                strict_rows.append(srow)
+                for p in periods:
+                    strict_per.append({"model": M["name"], "book": bname, **p})
         m.update({"model": M["name"], "feature_path": "v2 live" if is_v2(M) else "v1 training",
                   "train_dates": f"{M['manifest'].get('training_date_min')}..{M['manifest'].get('training_date_max')}"})
         for cname, (path, periods) in run_portfolios(sc, info, closes, reb, exits).items():
@@ -442,7 +544,9 @@ def main():
     # Reference: plain 20d momentum on the same population (signal quality only).
     ref = kdf.merge(info[["ticker", "Date", "return_20d"]], on=["ticker", "Date"])
     ref["pred"] = per_date_pct_rank(ref["return_20d"].values, ref["Date"].values)
-    m = cross_section_metrics(ref.merge(labels, on=["ticker", "Date"]))
+    ref_lab = ref.merge(labels, on=["ticker", "Date"])
+    m = cross_section_metrics(ref_lab)
+    m.update(sector_ic(ref_lab, info))
     m.update({"model": "ref_momentum_20d", "feature_path": "-", "train_dates": "-"})
     rows.append(m)
 
@@ -465,7 +569,8 @@ def main():
 
     res = pd.DataFrame(rows)
     ic_cols = ["model", "feature_path", "train_dates", "n_dates", "ic_mean", "ic_sd", "ic_t_naive",
-               "ic_t_nw29", "ic_pos_frac", "d10_minus_d1_pct", "top10_excess_pct", "top20_excess_pct"]
+               "ic_t_nw29", "ic_pos_frac", "d10_minus_d1_pct", "top10_excess_pct", "top20_excess_pct",
+               "ic_within_sector", "ic_within_sector_t_nw29", "ic_between_sector"]
     port_cols = ["model"] + [f"{c}_{s}" for c in CONSTRUCTIONS
                              for s in ("cum_pct", "sharpe", "maxdd_pct", "ret_over_dd")]
     per = pd.DataFrame(per_rows)
@@ -504,7 +609,22 @@ def main():
         f.write(to_md(res[res["model"] != "ref_momentum_20d"][port_cols], ".3f"))
         f.write("\n\n## Benchmarks (same rebalance grid)\n\n")
         f.write(to_md(bench_df, ".3f"))
-        f.write("\n\n## Per-period returns\n\n")
+        if strict_rows:
+            sdf = pd.DataFrame(strict_rows)
+            spd = pd.DataFrame(strict_per)
+            sdf.to_csv(os.path.join(RESULTS_DIR, f"{args.out_name}_strict.csv"), index=False)
+            spd.to_csv(os.path.join(RESULTS_DIR, f"{args.out_name}_strict_periods.csv"), index=False)
+            f.write("\n\n## Strict-sector-cap books (trading_agent.portfolio)\n\n")
+            f.write("STRICT30 = long_only_book(k=30, max_per_sector=5, max_weight=6%, target 98%); "
+                    "STRICT50 = long_only_book(k=50, 7/sector, 4%, 98%); LS = long_short_book(40/40, gross 1.6, "
+                    "8/sector per leg, 4%/name, sector_neutral=True, NO borrow/shortable filter -- every name "
+                    "assumed shortable at zero cost); EW_ex_bottom20 = equal-weight common universe excluding the "
+                    "model's bottom 2 deciles. Same rebalance grid, daily mark-to-market, no costs. For LS, "
+                    "`short_basket` is the return of the shorted names (positive = loss on the short leg).\n\n")
+            f.write(to_md(sdf, ".3f"))
+            f.write("\n\n### Per period\n\n")
+            f.write(to_md(spd, ".2f"))
+        f.write("\n\n## Per-period returns (PROD/DIV20/DIV30, common.select_top_k)\n\n")
         f.write(to_md(per, ".2f"))
         f.write("\n\n## Mean per-date Spearman between model predictions (common population)\n\n")
         for k, v in pred_corr.items():

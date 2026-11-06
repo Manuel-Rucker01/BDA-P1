@@ -57,6 +57,7 @@ import torch.nn as nn
 import torch.optim as optim
 from rdflib import Graph, Namespace, URIRef
 from scipy.stats import binom, spearmanr
+from sklearn.base import clone
 from sklearn.decomposition import PCA
 from sklearn.ensemble import RandomForestRegressor, StackingRegressor
 from sklearn.linear_model import RidgeCV
@@ -1173,7 +1174,9 @@ def make_stacking_model(base_models):
     estimators = []
     for name in ("CatBoost", "XGBoost", "LightGBM"):
         if name in base_models:
-            estimators.append((name.lower(), base_models[name]))
+            # clone: the v2 path sets early_stopping_rounds on the XGBoost
+            # template before Stack is fitted, which would break Stack's inner fits
+            estimators.append((name.lower(), clone(base_models[name])))
     if len(estimators) < 2:
         return None
     return StackingRegressor(
