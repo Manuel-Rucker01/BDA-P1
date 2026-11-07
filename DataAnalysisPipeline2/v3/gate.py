@@ -612,6 +612,22 @@ def r9_bookable(ic: dict, ic_mapped: dict) -> list:
             and ic_mapped[v] >= ic_mapped[R9_BASE] + R9_MIN_MAPPED_GAIN]
 
 
+# Round 9 correction (registered after the pre-registered leak probe and BEFORE
+# any round-9 IC, screen or book was computed; one first-pass walk-forward,
+# sn30_r9_13f, had finished and was set aside unevaluated): the 13F block
+# separated "no EDGAR record" with AUC 0.90 (base 0.75; same with a ticker-held-
+# out split, so not memorisation). Cause: inst_io / inst_dio divide by shares
+# outstanding = EDGAR mcap / close, which for rows without a CIK is itself a
+# hot-deck value from a (weekly-changing) donor -- inst_dio of such rows is
+# donor noise and fingerprints "no EDGAR record" (13F without io/dio: 0.67).
+# Correction: the shares-dependent columns (R9_SHARES_COLS) are treated as
+# unobserved on rows without a CIK and hot-decked from CIK-mapped, block-mapped
+# donors; shares-free columns keep the block's own link as "mapped". Probes
+# re-run on the corrected frame before the walk-forwards. No trial was
+# evaluated, so N stays 95.
+R9_SHARES_COLS = ("inst_io", "inst_dio", "ftd_ratio", "ftd_ratio_3m")
+
+
 def choose_config_r9(perf: dict):
     pool_all = {k: v for k, v in perf.items() if k in R9_VARIANTS}
     if not pool_all:

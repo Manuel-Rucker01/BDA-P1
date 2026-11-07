@@ -74,8 +74,14 @@ def build_frame(log=print) -> pd.DataFrame:
     for blk, flag in MAPPED.items():
         w[flag] = w[flag].fillna(0.0)
     w[RAW_COLS] = w[NEW_COLS].to_numpy()
-    w[a9.INST_COLUMNS] = block_hotdeck(w, a9.INST_COLUMNS, w["inst_mapped"].to_numpy() > 0)
-    w[a9.FTD_COLUMNS] = block_hotdeck(w, a9.FTD_COLUMNS, w["ftd_mapped"].to_numpy() > 0)
+    cik = w["cik"].notna().to_numpy()
+    for blk, cols in a9.BLOCKS.items():
+        mapped = w[MAPPED[blk]].to_numpy() > 0
+        free = [c for c in cols if c not in gate.R9_SHARES_COLS]
+        shr = [c for c in cols if c in gate.R9_SHARES_COLS]
+        # round-9 correction: shares (EDGAR mcap / close) are imputed without a CIK
+        w[free] = block_hotdeck(w, free, mapped)
+        w[shr] = block_hotdeck(w, shr, mapped & cik)
     w[NEW_COLS + RAW_COLS] = core.cross_sectional_zscore(w, NEW_COLS + RAW_COLS)
     w.to_parquet(frame_path(), index=False)
     log(f"[r9] frame: {len(w):,} rows; 13F mapped {w['inst_mapped'].mean():.1%}, FTD mapped {w['ftd_mapped'].mean():.1%}")
@@ -89,9 +95,15 @@ def feats_for(name: str) -> list:
 # --------------------------------------------------------------------------- #
 # Leak probes (before any book)
 # --------------------------------------------------------------------------- #
-def leak_probe(log=print, end: str = "2022-12-31", seed: int = 0) -> dict:
-    """Held-out AUC (30% of dates) of LightGBM classifiers for (i) "no EDGAR
-    record" and (ii) "was delisted" (last weekly bar before R9_DELISTED_BEFORE)."""
+def leak_probe(log=print, end: str = "2022-12-31", seed: int = 0, split: str = "date") -> dict:
+    """Held-out AUC of LightGBM classifiers for (i) "no EDGAR record" and
+    (ii) "was delisted" (last weekly bar before R9_DELISTED_BEFORE).
+    ``split="date"``: 30% of dates held out (pre-registered, Round 8 design);
+    ``split="ticker"``: 30% of ticker ids held out (diagnostic added after the
+    date-split probe: block features that are constant within a quarter
+    fingerprint a ticker across train/test dates, and the probe target is a
+    per-ticker constant, so a date split measures memorisation of ticker
+    identity as well as information)."""
     from lightgbm import LGBMClassifier
     from sklearn.metrics import roc_auc_score
     w = pd.read_parquet(frame_path())
@@ -102,7 +114,11 @@ def leak_probe(log=print, end: str = "2022-12-31", seed: int = 0) -> dict:
                "delisted": (w["ticker"].map(last) < gate.R9_DELISTED_BEFORE).astype(int).to_numpy()}
     dates = np.array(sorted(w["Date"].unique()))
     rng = np.random.default_rng(seed)
-    te = w["Date"].isin(set(dates[rng.random(len(dates)) < 0.3])).to_numpy()
+    if split == "ticker":
+        tk = np.array(sorted(w["ticker"].unique()))
+        te = w["ticker"].isin(set(tk[rng.random(len(tk)) < 0.3])).to_numpy()
+    else:
+        te = w["Date"].isin(set(dates[rng.random(len(dates)) < 0.3])).to_numpy()
     base = r8.feats_for(gate.R9_BASE)
     raw13, rawf = [f"{c}_raw" for c in a9.INST_COLUMNS], [f"{c}_raw" for c in a9.FTD_COLUMNS]
     sets = {"base (core+fund+alt8_hd)": base,
@@ -123,7 +139,8 @@ def leak_probe(log=print, end: str = "2022-12-31", seed: int = 0) -> dict:
             m.fit(w.loc[~te, cols], y[~te])
             out[tname][sname] = float(roc_auc_score(y[te], m.predict_proba(w.loc[te, cols])[:, 1]))
             log(f"  [{tname}] {sname}: AUC {out[tname][sname]:.3f}")
-    json.dump(out, open(ex.eval_dir("r9_leak.json"), "w"), indent=1)
+    out["split"] = split
+    json.dump(out, open(ex.eval_dir("r9_leak.json" if split == "date" else f"r9_leak_{split}.json"), "w"), indent=1)
     return out
 
 
@@ -303,7 +320,7 @@ def apply_gate(log=print) -> dict:
 if __name__ == "__main__":
     import sys
     steps = {"features": lambda: a9.weekly_features(), "frame": build_frame, "coverage": coverage,
-             "probe": leak_probe, "wf": run_wf, "ics": signal_ics, "fics": feature_ics, "books": run_books,
+             "probe": leak_probe, "probe_tk": lambda: leak_probe(split="ticker"), "wf": run_wf, "ics": signal_ics, "fics": feature_ics, "books": run_books,
              "gate": apply_gate}
     for a in sys.argv[1:]:
         steps[a]()
