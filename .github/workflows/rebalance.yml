@@ -58,8 +58,13 @@ jobs:
       # Chosen on the 2019-2026 walk-forward (results/v3_walkforward_report.md):
       # K=30 Sharpe 0.69 / IR vs EW 0.23 vs K=50 0.58 / 0.02, and it spans ~10
       # sectors (the old top-K book held 2-3).
-      # Set vars.BDA_STRATEGY=top_k to go back to the concentrated top-K book.
-      BDA_STRATEGY: ${{ vars.BDA_STRATEGY || 'long_only_v3' }}
+      # Since 2026-11 (user opt-in, paper only) the default is optimized_v3: the
+      # Round-5 cost-aware mean-variance book (mv_abs_all) on the production signal,
+      # Sharpe ~0.87-0.97 / max DD ~-30% in the walk-forward vs ~0.69 for K=30. It does
+      # NOT pass the pre-registered gate (DSR < 0.90, IR vs SPY < 0). It falls back to
+      # long_only_v3 automatically if the fundamentals snapshot is stale or the solve fails.
+      # Set vars.BDA_STRATEGY=long_only_v3 (or top_k) to go back.
+      BDA_STRATEGY: ${{ vars.BDA_STRATEGY || 'optimized_v3' }}
       BDA_V3_K: ${{ vars.BDA_V3_K || '30' }}
       BDA_V3_MAX_PER_SECTOR: ${{ vars.BDA_V3_MAX_PER_SECTOR || '5' }}
       BDA_V3_MAX_WEIGHT: ${{ vars.BDA_V3_MAX_WEIGHT || '0.06' }}
