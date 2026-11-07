@@ -1080,3 +1080,96 @@ New free SEC information only. Registered in `v3/gate.py` (`R9_*`, `N_TRIALS_R9`
 * **Selection:** highest IR vs SPY with max DD ≥ −35% among the round-9 books; no book → nothing selected, verdict FAIL. **Gate:** R8 criteria — a1–a3 (signal IC), b1 Sharpe > EW, b2 max DD ≥ −35%, b3 DSR ≥ 0.90 at N = 95, c1 ≥ 0.12 on the gate-c window (2026 fold), r5 IR vs SPY > 0.
 
 *Correction (registered after the pre-registered leak probe, before any round-9 IC, screen or book):* the 13F block separated "no EDGAR record" with held-out AUC **0.90** (core+fund+alt8_hd 0.75; "was delisted" 0.92 vs 0.75; unchanged with a ticker-held-out split, so not memorisation; the mapping flags alone ≈ 0.51 — the CUSIP links are symmetric, 94–95% for survivors and delisted names alike). Cause: `inst_io` / `inst_dio` divide by shares outstanding = EDGAR mcap / close, which on rows without a CIK is itself a hot-deck value from a weekly-changing donor; `inst_dio` there is donor noise that fingerprints "no EDGAR record" (13F without io/dio: 0.67). Fix: the shares-dependent columns (`inst_io`, `inst_dio`, `ftd_ratio`, `ftd_ratio_3m`) are treated as unobserved on rows without a CIK and hot-decked from CIK- and block-mapped donors; the shares-free columns keep the block's own link. Probes re-run on the corrected frame before any walk-forward is evaluated. One first-pass walk-forward (`sn30_r9_13f`) had finished; it was set aside unevaluated (no IC computed), so **N stays 95**.
+
+## Round 9 — results
+
+**FAIL — nothing replaces production.** No variant passed the pre-registered incremental-IC screen, so no book was run; N = 95.
+
+### Data
+
+* **SEC Form 13F**: 42 bulk data sets (filing quarters 2016Q2–2023Q4 + eleven 3-month windows to Jun–Aug 2026), 246,918 filings; after the rules (original 13F-HR, filed by the 45-day deadline, one per filer and quarter) 3,849–8,694 filers per report quarter 2016Q1–2026Q2; 61.3M common-share positions in CUSIPs that ever appear in the FTD files. Every decision date through 2026-11-04 has its latest quarter (2026Q2, usable from 2026-08-17).
+* **Fails-to-deliver**: 257 half-month files 2016-01 → 2026-10a, 13.8M records, 43.5k CUSIPs / 44.4k symbols. Posting lag measured on 138 Last-Modified stamps 2021–2026: median 15 days, 98% ≤ 21 days.
+* **CUSIP → ticker** from the FTD (CUSIP, symbol) pairs, point in time: 238k ticker-quarters linked. Known noise: shares outstanding (EDGAR mcap / close) is class-ambiguous for multi-class issuers (e.g. BRK.B `inst_io` hits the clip at 2; ~5% of eligible rows have `inst_io` > 1.2) — the same denominator as Round 8's `si_ratio`; per-date winsorisation bounds its effect.
+
+Coverage (v3-eligible weekly rows): CUSIP-linked for 13F 94.4%, FTD record in the trailing year 95.4%; survivors vs delisted names: 13F 94.2% / 95.4%, FTD 95.1% / 96.9%; with vs without a CIK: 13F 94.3% / 94.8%.
+
+### Leak checks
+
+Held-out AUC, rows 2017–2022, corrected frame (`raw` = before any hot-deck, i.e. the uncorrected first-pass block):
+
+| features | no EDGAR (date split) | delisted (date split) | no EDGAR (ticker split) | delisted (ticker split) |
+|---|---|---|---|---|
+| base (core+fund+alt8_hd) | 0.747 | 0.751 | 0.745 | 0.752 |
+| +13F raw | 0.936 | 0.931 | 0.936 | 0.930 |
+| +13F hd | 0.809 | 0.809 | 0.795 | 0.800 |
+| +FTD raw | 0.762 | 0.768 | 0.759 | 0.767 |
+| +FTD hd | 0.786 | 0.786 | 0.784 | 0.788 |
+| +both hd | 0.831 | 0.829 | 0.819 | 0.822 |
+| 13F hd only | 0.709 | 0.713 | 0.690 | 0.696 |
+| FTD hd only | 0.626 | 0.623 | 0.629 | 0.626 |
+| 13F mapped flag only | 0.511 | 0.516 | 0.517 | 0.518 |
+| FTD mapped flag only | 0.513 | 0.517 | 0.520 | 0.521 |
+
+The uncorrected (`raw`) 13F block separated "no EDGAR record" at AUC 0.94 and "was delisted" at 0.93; a ticker-held-out split gave the same numbers, so it was information about the row, not memorised ticker identity. The mapping flags alone are ≈ 0.51 (links are symmetric: 94–95% for survivors, delisted names, CIK and no-CIK rows alike), so the CUSIP map is clean; the leak was the shares denominator — on rows without a CIK it is a hot-deck value from a weekly-changing donor, so `inst_dio` there is donor noise (13F block without io/dio: 0.67). After the registered correction the 13F block adds +0.06 AUC (0.75 → 0.81) and FTD +0.04 — the same order as the Round 8 insider hot-deck (+0.05), i.e. residual hot-deck signature plus the legitimate fact that thinly-held, high-fail stocks delist more (on CIK rows only, 13F shares-free features predict delisting at 0.73 vs 0.71 for size). The decisive check — the IC gain on rows with a CIK and a block link — is in the screen below.
+
+### Signals and the book screen (weekly OOS IC vs 30-session return, v3-eligible)
+
+| signal | IC 30d | NW t | Δ vs sn30_altall_hd | Δ on mapped-only rows | top-1000 IC (t) | holdout proxy | screen |
+|---|---|---|---|---|---|---|---|
+| sn30_altall_hd | 0.0734 | 5.10 |  |  | 0.0208 (1.54) | 0.1622 |  |
+| sn30_fund | 0.0653 | 4.81 |  |  | 0.0134 (1.02) | 0.1449 |  |
+| stack | 0.0694 | 5.20 |  |  | 0.0211 (1.83) | 0.1351 |  |
+| sn30_r9_13f | 0.0739 | 5.25 | 0.0004 | 0.0002 | 0.0200 (1.53) | 0.1603 | no book |
+| sn30_r9_ftd | 0.0745 | 5.18 | 0.0011 | 0.0004 | 0.0209 (1.56) | 0.1627 | no book |
+| sn30_r9_all | 0.0754 | 5.34 | 0.0020 | 0.0013 | 0.0213 (1.64) | 0.1578 | no book |
+
+Per-year IC:
+
+| index | sn30_altall_hd | sn30_fund | stack | sn30_r9_13f | sn30_r9_ftd | sn30_r9_all |
+|---|---|---|---|---|---|---|
+| 2019 | 0.061 | 0.067 | 0.072 | 0.066 | 0.063 | 0.065 |
+| 2020 | 0.007 | -0.013 | -0.017 | 0.011 | 0.008 | 0.010 |
+| 2021 | 0.137 | 0.121 | 0.135 | 0.141 | 0.141 | 0.146 |
+| 2022 | 0.086 | 0.072 | 0.076 | 0.080 | 0.086 | 0.086 |
+| 2023 | 0.088 | 0.095 | 0.095 | 0.086 | 0.086 | 0.086 |
+| 2024 | 0.088 | 0.080 | 0.079 | 0.086 | 0.089 | 0.088 |
+| 2025 | 0.040 | 0.025 | 0.036 | 0.040 | 0.042 | 0.042 |
+| 2026 | 0.086 | 0.082 | 0.084 | 0.086 | 0.087 | 0.086 |
+
+### Standalone feature ICs (raw features, weekly, vs 30-session return)
+
+| feature | IC all names | t | IC tradable | t  | IC top-1000 | coverage | decay 5d | decay 21d | decay 63d |
+|---|---|---|---|---|---|---|---|---|---|
+| inst_breadth | 0.0988 | 11.19 | 0.0550 | 5.84 | 0.0288 | 94% | 0.032 | 0.048 | 0.069 |
+| inst_dbreadth | 0.0181 | 2.99 | 0.0091 | 1.24 | 0.0101 | 94% | 0.009 | 0.009 | 0.014 |
+| inst_io | 0.0665 | 8.99 | 0.0245 | 4.58 | 0.0060 | 89% | 0.015 | 0.021 | 0.030 |
+| inst_dio | 0.0010 | 0.34 | -0.0044 | -1.76 | 0.0024 | 85% | -0.001 | -0.005 | -0.003 |
+| inst_new_n | 0.0795 | 10.71 | 0.0427 | 5.91 | 0.0236 | 94% | 0.027 | 0.039 | 0.053 |
+| inst_exit_n | 0.0743 | 10.23 | 0.0387 | 5.46 | 0.0181 | 94% | 0.022 | 0.034 | 0.047 |
+| ftd_ratio | -0.0599 | -6.45 | -0.0368 | -4.53 | -0.0060 | 94% | -0.019 | -0.030 | -0.049 |
+| ftd_ratio_3m | -0.0709 | -6.36 | -0.0435 | -4.39 | -0.0120 | 94% | -0.022 | -0.036 | -0.057 |
+| ftd_persist_3m | -0.0571 | -6.64 | -0.0338 | -4.62 | -0.0106 | 95% | -0.016 | -0.028 | -0.043 |
+
+Standalone, the new data are strong and clean in sign: breadth, new and exit counts (+0.04…+0.06 on tradable names; ≈ +0.02–0.03 in the top-1000 — larger than any round-8 feature there) and fails-to-deliver (−0.03…−0.04 tradable). But they are mostly size, liquidity, attention and short-interest proxies the model already has (log dollar volume, mcap, SI, insider selling): in the model the increments are +0.0004 (13F), +0.0011 (FTD) and +0.0020 (both) — on CIK- and block-mapped rows +0.0002 / +0.0004 / +0.0013 — far below the pre-registered +0.005 bar. Change measures (Chen–Hong–Stein Δbreadth +0.009, Δ institutional ownership ≈ 0) carry little.
+
+### Recommendation (round 9)
+
+**Do not replace production; nothing new to paper-trade.** No round-9 variant cleared the
+pre-registered +0.005 incremental-IC screen (best: 13F + FTD, +0.0020 overall and +0.0013 on mapped rows), so
+no book was run and the gate verdict is FAIL by construction. The incumbent best book (`sn30_altall_hd` through
+`mv_abs_all`, Sharpe 1.02, max DD −28.5%, CAGR 15.2% vs SPY 16.1%, IR vs SPY −0.13) is unchanged; at the new
+N = 95 its DSR is 0.861 (0.863 at N = 92) — still below 0.90.
+
+What round 9 established:
+* Free 13F breadth and fails-to-deliver data can be mapped point-in-time without a current-ticker list
+  (94–95% coverage, symmetric for survivors and delisted names), and standalone they are among the strongest
+  and most large-cap-relevant features tested (breadth IC +0.055 tradable / +0.029 top-1000).
+* They are largely redundant with what the signal already knows (size, liquidity, short interest, insider
+  selling): the model gains ≤ 0.002 IC. Quarterly-stale 13F information (45–135 days old) adds little to a
+  30-session ranking.
+* A second survivorship-type leak was caught before any evaluation: any feature normalised by the
+  hot-decked EDGAR share count fingerprints "no EDGAR record". The same denominator is in Round 8's
+  `si_ratio` (its probe moved only 0.70 → 0.72, but it is worth re-checking if SI is ever re-used).
+
+Ninety-five trials in, the conclusion of rounds 7–8 stands: better risk than SPY, no demonstrated excess
+return after costs.

@@ -1135,9 +1135,160 @@ candidate (paper, explicit opt-in, with the documented gate failures). On *retur
 in eight rounds (92 trials) has shown an edge over SPY after costs."""
 
 
+# =========================================================================== #
+# Round 9 results (tables; prose in RECOMMENDATION_R9 / R9_TEXT)
+# =========================================================================== #
+R9_MARK = "\n## Round 9 — results"
+R9_TEXT = {
+    "data": (
+        "* **SEC Form 13F**: 42 bulk data sets (filing quarters 2016Q2–2023Q4 + eleven 3-month windows to "
+        "Jun–Aug 2026), 246,918 filings; after the rules (original 13F-HR, filed by the 45-day deadline, one per "
+        "filer and quarter) 3,849–8,694 filers per report quarter 2016Q1–2026Q2; 61.3M common-share positions in "
+        "CUSIPs that ever appear in the FTD files. Every decision date through 2026-11-04 has its latest quarter "
+        "(2026Q2, usable from 2026-08-17).\n"
+        "* **Fails-to-deliver**: 257 half-month files 2016-01 → 2026-10a, 13.8M records, 43.5k CUSIPs / 44.4k "
+        "symbols. Posting lag measured on 138 Last-Modified stamps 2021–2026: median 15 days, 98% ≤ 21 days.\n"
+        "* **CUSIP → ticker** from the FTD (CUSIP, symbol) pairs, point in time: 238k ticker-quarters linked. "
+        "Known noise: shares outstanding (EDGAR mcap / close) is class-ambiguous for multi-class issuers "
+        "(e.g. BRK.B `inst_io` hits the clip at 2; ~5% of eligible rows have `inst_io` > 1.2) — the same "
+        "denominator as Round 8's `si_ratio`; per-date winsorisation bounds its effect."),
+    "leak": (
+        "The uncorrected (`raw`) 13F block separated \"no EDGAR record\" at AUC 0.94 and \"was delisted\" at 0.93; "
+        "a ticker-held-out split gave the same numbers, so it was information about the row, not memorised "
+        "ticker identity. The mapping flags alone are ≈ 0.51 (links are symmetric: 94–95% for survivors, delisted "
+        "names, CIK and no-CIK rows alike), so the CUSIP map is clean; the leak was the shares denominator — on "
+        "rows without a CIK it is a hot-deck value from a weekly-changing donor, so `inst_dio` there is donor "
+        "noise (13F block without io/dio: 0.67). After the registered correction the 13F block adds +0.06 AUC "
+        "(0.75 → 0.81) and FTD +0.04 — the same order as the Round 8 insider hot-deck (+0.05), i.e. residual "
+        "hot-deck signature plus the legitimate fact that thinly-held, high-fail stocks delist more (on CIK rows "
+        "only, 13F shares-free features predict delisting at 0.73 vs 0.71 for size). The decisive check — the "
+        "IC gain on rows with a CIK and a block link — is in the screen below."),
+    "features": (
+        "Standalone, the new data are strong and clean in sign: breadth, new and exit counts (+0.04…+0.06 on "
+        "tradable names; ≈ +0.02–0.03 in the top-1000 — larger than any round-8 feature there) and "
+        "fails-to-deliver (−0.03…−0.04 tradable). But they are mostly size, liquidity, attention and "
+        "short-interest proxies the model already has (log dollar volume, mcap, SI, insider selling): in the "
+        "model the increments are +0.0004 (13F), +0.0011 (FTD) and +0.0020 (both) — on CIK- and block-mapped rows "
+        "+0.0002 / +0.0004 / +0.0013 — far below the pre-registered +0.005 bar. Change measures (Chen–Hong–Stein "
+        "Δbreadth +0.009, Δ institutional ownership ≈ 0) carry little."),
+}
+RECOMMENDATION_R9 = """**Do not replace production; nothing new to paper-trade.** No round-9 variant cleared the
+pre-registered +0.005 incremental-IC screen (best: 13F + FTD, +0.0020 overall and +0.0013 on mapped rows), so
+no book was run and the gate verdict is FAIL by construction. The incumbent best book (`sn30_altall_hd` through
+`mv_abs_all`, Sharpe 1.02, max DD −28.5%, CAGR 15.2% vs SPY 16.1%, IR vs SPY −0.13) is unchanged; at the new
+N = 95 its DSR is 0.861 (0.863 at N = 92) — still below 0.90.
+
+What round 9 established:
+* Free 13F breadth and fails-to-deliver data can be mapped point-in-time without a current-ticker list
+  (94–95% coverage, symmetric for survivors and delisted names), and standalone they are among the strongest
+  and most large-cap-relevant features tested (breadth IC +0.055 tradable / +0.029 top-1000).
+* They are largely redundant with what the signal already knows (size, liquidity, short interest, insider
+  selling): the model gains ≤ 0.002 IC. Quarterly-stale 13F information (45–135 days old) adds little to a
+  30-session ranking.
+* A second survivorship-type leak was caught before any evaluation: any feature normalised by the
+  hot-decked EDGAR share count fingerprints "no EDGAR record". The same denominator is in Round 8's
+  `si_ratio` (its probe moved only 0.70 → 0.72, but it is worth re-checking if SI is ever re-used).
+
+Ninety-five trials in, the conclusion of rounds 7–8 stands: better risk than SPY, no demonstrated excess
+return after costs."""
+
+
+def write_r9() -> None:
+    """Replace (or append) the Round 9 results section at the end of the report;
+    the pre-registration above it is left untouched."""
+    sic = json.load(open(ex.eval_dir("r9_signal_ics.json")))
+    fic = json.load(open(ex.eval_dir("r9_feature_ics.json")))
+    leak = json.load(open(ex.eval_dir("r9_leak.json")))
+    leak_t = json.load(open(ex.eval_dir("r9_leak_ticker.json")))
+    cov = json.load(open(ex.eval_dir("r9_coverage.json")))
+    g = json.load(open(ex.eval_dir("gate_r9.json")))
+    res = json.load(open(ex.eval_dir("results_r9.json")))
+    r8j = json.load(open(ex.eval_dir("results_r8.json")))
+    r5j = json.load(open(ex.eval_dir("results_r5.json")))
+    L = [R9_MARK + "\n"]
+    if g["config"] is None:
+        L.append(f"**FAIL — nothing replaces production.** No variant passed the pre-registered incremental-IC "
+                 f"screen, so no book was run; N = {g['n_trials']}.\n")
+    else:
+        L.append(("**PASS**" if g["passed"] else "**FAIL — nothing replaces production**")
+                 + f". Selected: `{g['config']}` through `mv_abs_all` at $100M; N = {g['n_trials']}.\n")
+        L.append(_gt(g["gate"]) + "\n")
+        b = g["boot"]
+        L.append(f"Sharpe {_f(b['sharpe']['point'])} [{_f(b['sharpe']['lo'])}, {_f(b['sharpe']['hi'])}], IR vs SPY "
+                 f"{_f(b['ir_spy']['point'])} [{_f(b['ir_spy']['lo'])}, {_f(b['ir_spy']['hi'])}], IR vs EW "
+                 f"{_f(b['ir_ew']['point'])} [{_f(b['ir_ew']['lo'])}, {_f(b['ir_ew']['hi'])}]; DSR "
+                 f"{_f(g['dsr']['dsr'], 3)} vs SR* {_f(g['dsr']['sr_star_ann'])}.\n")
+    L.append("### Data\n")
+    L.append(R9_TEXT.get("data", "") + "\n")
+    el = cov["eligible"]
+    L.append(f"Coverage (v3-eligible weekly rows): CUSIP-linked for 13F {_pct(el['inst_mapped'])}, FTD record in the "
+             f"trailing year {_pct(el['ftd_mapped'])}; survivors vs delisted names: 13F "
+             f"{_pct(cov['eligible_by_delisted']['inst_mapped']['false'])} / "
+             f"{_pct(cov['eligible_by_delisted']['inst_mapped']['true'])}, FTD "
+             f"{_pct(cov['eligible_by_delisted']['ftd_mapped']['false'])} / "
+             f"{_pct(cov['eligible_by_delisted']['ftd_mapped']['true'])}; with vs without a CIK: 13F "
+             f"{_pct(cov['eligible_by_cik']['inst_mapped']['true'])} / {_pct(cov['eligible_by_cik']['inst_mapped']['false'])}.\n")
+    L.append("### Leak checks\n")
+    rows = []
+    for s in leak["no_edgar"]:
+        rows.append({"features": s, "no EDGAR (date split)": _f(leak["no_edgar"][s], 3),
+                     "delisted (date split)": _f(leak["delisted"][s], 3),
+                     "no EDGAR (ticker split)": _f(leak_t["no_edgar"][s], 3),
+                     "delisted (ticker split)": _f(leak_t["delisted"][s], 3)})
+    L.append("Held-out AUC, rows 2017–2022, corrected frame (`raw` = before any hot-deck, i.e. the uncorrected "
+             "first-pass block):\n\n" + md_table(pd.DataFrame(rows), index=False) + "\n")
+    L.append(R9_TEXT.get("leak", "") + "\n")
+    L.append("### Signals and the book screen (weekly OOS IC vs 30-session return, v3-eligible)\n")
+    rows = []
+    for v, x in sic["signals"].items():
+        sc = sic["screen"].get(v, {})
+        rows.append({"signal": v, "IC 30d": _f(x["ic_all"], 4), "NW t": _f(x["nw_t"]),
+                     "Δ vs sn30_altall_hd": _f(sc["gain"], 4) if sc else "",
+                     "Δ on mapped-only rows": _f(sc["gain_mapped"], 4) if sc else "",
+                     "top-1000 IC (t)": f"{_f(x['top1000'], 4)} ({_f(x['top1000_t'])})",
+                     "holdout proxy": _f(x["holdout_proxy"], 4),
+                     "screen": ("book" if sc.get("bookable") else "no book") if sc else ""})
+    L.append(md_table(pd.DataFrame(rows), index=False) + "\n")
+    py = pd.DataFrame({v: {y: _f(x["by_year"].get(y, float("nan")), 3) for y in gate.A_YEARS}
+                       for v, x in sic["signals"].items()})
+    L.append("Per-year IC:\n\n" + md_table(py) + "\n")
+    L.append("### Standalone feature ICs (raw features, weekly, vs 30-session return)\n")
+    frows = []
+    for c, x in fic.items():
+        frows.append({"feature": c, "IC all names": _f(x["all"]["ic"], 4), "t": _f(x["all"]["nw_t"]),
+                      "IC tradable": _f(x["tradable"]["ic"], 4), "t ": _f(x["tradable"]["nw_t"]),
+                      "IC top-1000": _f(x["top1000"]["ic"], 4), "coverage": _pct(x["tradable"]["coverage"], 0),
+                      **{f"decay {h}d": _f(v, 3) for h, v in x["decay"].items() if h in ("5", "21", "63")}})
+    L.append(md_table(pd.DataFrame(frows), index=False) + "\n")
+    L.append(R9_TEXT.get("features", "") + "\n")
+    if res["configs"]:
+        brows = []
+        for name, a in [(k, v["all"]) for k, v in res["configs"].items()] + [
+                ("sn30_altall_hd (R8)", r8j["configs"]["sn30_altall_hd"]["all"]),
+                ("sn30_fund (R5)", r5j["configs"]["mv_abs_all_100m"]["all"])]:
+            brows.append({"signal": name, "CAGR": _pct(a["cagr"]), "vol": _pct(a["vol"]), "Sharpe": _f(a["sharpe"]),
+                          "maxDD": _pct(a["max_dd"]), "IR vs SPY": _f(a["ir_spy"]), "IR vs EW": _f(a["ir_ew"]),
+                          "turnover/reb": _pct(a.get("turnover_m", float("nan")), 0),
+                          "cost/yr": _pct(a.get("cost_drag_ann", float("nan")), 2)})
+        a = r5j["benchmarks"]["spy"]["all"]
+        brows.append({"signal": "SPY", "CAGR": _pct(a["cagr"]), "vol": _pct(a["vol"]), "Sharpe": _f(a["sharpe"]),
+                      "maxDD": _pct(a["max_dd"]), "IR vs SPY": "", "IR vs EW": _f(a.get("ir_ew", float("nan"))),
+                      "turnover/reb": "", "cost/yr": ""})
+        L.append("### Books — `mv_abs_all` at $100M (Feb 2019 → 2026-11-04, after costs)\n\n"
+                 + md_table(pd.DataFrame(brows), index=False) + "\n")
+    L.append("### Recommendation (round 9)\n")
+    L.append(RECOMMENDATION_R9)
+    text = open(REPORT).read()
+    if R9_MARK in text:
+        text = text[:text.index(R9_MARK)]
+    open(REPORT, "w").write(text.rstrip() + "\n" + "\n".join(L) + "\n")
+
+
 if __name__ == "__main__":
     import sys
-    if "--r8" in sys.argv:
+    if "--r9" in sys.argv:
+        write_r9()
+    elif "--r8" in sys.argv:
         write_r8()
     elif "--r7" in sys.argv:
         write_r7()
