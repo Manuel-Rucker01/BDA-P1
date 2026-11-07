@@ -65,16 +65,17 @@ def insider_hotdeck(w: pd.DataFrame, k: int = 5) -> pd.DataFrame:
     return pd.DataFrame(vals, columns=HD_COLS, index=w.index)
 
 
-def build_frame(log=print) -> pd.DataFrame:
+def build_frame(log=print, alt_path: str | None = None, out_path: str | None = None) -> pd.DataFrame:
     """weekly_mh (eligible rows, z-scored core + fundamentals, labels) + the
-    round-8 blocks z-scored per date over the same rows."""
+    round-8 blocks z-scored per date over the same rows. ``alt_path`` /
+    ``out_path`` default to the round-8 evaluation files."""
     w = pd.read_parquet(r6.mh_path())
-    alt = pd.read_parquet(os.path.join(ds.v3_dir(), "alt_weekly.parquet"),
+    alt = pd.read_parquet(alt_path or os.path.join(ds.v3_dir(), "alt_weekly.parquet"),
                           columns=["ticker", "Date", "cik"] + ALT_COLS)
     w = w.merge(alt, on=["ticker", "Date"], how="left")
     w[HD_COLS] = insider_hotdeck(w)
     w[ALT_COLS + HD_COLS] = core.cross_sectional_zscore(w, ALT_COLS + HD_COLS)
-    w.to_parquet(frame_path(), index=False)
+    w.to_parquet(out_path or frame_path(), index=False)
     log(f"[r8] frame: {len(w):,} rows; SI coverage before z {alt['si_ratio'].notna().mean():.1%}")
     return w
 

@@ -1,16 +1,16 @@
 {
  "as_of": "2026-11-05",
- "built": "2026-11-06",
+ "built": "2026-11-07",
  "source": "local EDGAR store ($BDA_DATA_V3/fundamentals)",
- "window_start": "2023-11-06",
+ "window_start": "2023-11-07",
  "rows": {
   "cik_map": 10479,
-  "fundamentals_asof": 66050,
+  "fundamentals_asof": 65788,
   "sectors": 8039
  },
  "bytes": {
   "cik_map.parquet": 146485,
-  "fundamentals_asof.parquet": 1768445,
+  "fundamentals_asof.parquet": 4402813,
   "sectors.parquet": 40435
  },
  "note": "Point-in-time rows (asof_date = filing availability). Refresh monthly with `python -m DataAnalysisPipeline2.trading_agent.optimized snapshot`; the bot rejects it when the newest filing is older than BDA_OPT_FUND_MAX_AGE_DAYS."

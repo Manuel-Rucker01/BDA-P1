@@ -1,0 +1,28 @@
+{
+ "insider_as_of": "2026-11-06",
+ "insider_last_filing": "2026-11-06",
+ "insider_window_start": "2025-10-02",
+ "si_last_settlement": "2026-10-15",
+ "si_settlements": [
+  "2026-06-15",
+  "2026-06-30",
+  "2026-07-15",
+  "2026-07-31",
+  "2026-08-14",
+  "2026-08-31",
+  "2026-09-15",
+  "2026-09-30",
+  "2026-10-15"
+ ],
+ "built": "2026-11-07",
+ "rows": {
+  "insider_events": 122977,
+  "finra_si": 116318
+ },
+ "bytes": {
+  "insider_events.parquet": 2355635,
+  "finra_si.parquet": 1444875
+ },
+ "source": "local caches: SEC bulk quarters + daily EDGAR Form 4 feed ($BDA_DATA_V3/sec_insider), FINRA bi-monthly files ($BDA_DATA_V3/finra_si)",
+ "note": "Refresh before each monthly rebalance: `python -m DataAnalysisPipeline2.v3.altlive refresh` then `python -m DataAnalysisPipeline2.trading_agent.altall snapshot`; the bot rejects it when the insider feed is older than BDA_ALT_INSIDER_MAX_AGE_DAYS or a FINRA file that is already public is missing."
+}

@@ -65,6 +65,19 @@ jobs:
       # long_only_v3 automatically if the fundamentals snapshot is stale or the solve fails.
       # Set vars.BDA_STRATEGY=long_only_v3 (or top_k) to go back.
       BDA_STRATEGY: ${{ vars.BDA_STRATEGY || 'optimized_v3' }}
+      # Signal (model) selection. production (default) = ExploitationZone/best_model.pkl.
+      # altall = the best Round-8 book's signal sn30_altall_hd (core + fundamentals +
+      # SEC insider + FINRA short interest; ExploitationZone/model_v3_altall.pkl), PAPER
+      # opt-in: Sharpe 1.02 / max DD -28.5% through optimized_v3 in the walk-forward but it
+      # FAILS the gate (DSR 0.863 at N = 92, IR vs SPY -0.13). Needs fresh committed
+      # snapshots (trading_agent/data/{altdata,fundamentals}_snapshot); any failure falls
+      # back to production + optimized_v3 -> long_only_v3 (logged in CONSTRUCTION_JSON).
+      # Switch: repository variable BDA_SIGNAL=altall.
+      BDA_SIGNAL: ${{ vars.BDA_SIGNAL || 'production' }}
+      BDA_ALT_INSIDER_MAX_AGE_DAYS: ${{ vars.BDA_ALT_INSIDER_MAX_AGE_DAYS || '14' }}
+      # Optional: with a SEC_USER_AGENT secret the runner tops up the Form 4 feed since the
+      # snapshot (<= 8 req/s, time-boxed); without it the committed snapshot is used.
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
       BDA_V3_K: ${{ vars.BDA_V3_K || '30' }}
       BDA_V3_MAX_PER_SECTOR: ${{ vars.BDA_V3_MAX_PER_SECTOR || '5' }}
       BDA_V3_MAX_WEIGHT: ${{ vars.BDA_V3_MAX_WEIGHT || '0.06' }}
@@ -116,6 +129,12 @@ jobs:
       - name: Fetch model (cache miss)
         if: steps.pre.outputs.decision == 'trade' && steps.pre.outputs.mode != 'check' && steps.pre.outputs.mode != 'monitor' && steps.cache.outputs.cache-hit != 'true'
         run: git lfs pull --include="ExploitationZone/best_model.pkl"
+
+      - name: Fetch altall model (BDA_SIGNAL=altall)
+        # ~2 MB; if this fails the bot detects the LFS pointer and falls back to production.
+        if: steps.pre.outputs.decision == 'trade' && steps.pre.outputs.mode != 'check' && steps.pre.outputs.mode != 'monitor' && env.BDA_SIGNAL == 'altall'
+        continue-on-error: true
+        run: git lfs pull --include="ExploitationZone/model_v3_altall.pkl"
 
       - name: Rebalance
         # --execute implies --monitor after an actual rebalance (records predictions,

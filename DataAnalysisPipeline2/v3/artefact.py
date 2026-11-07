@@ -37,10 +37,13 @@ def _git_commit() -> str:
 
 
 def build_artifact(frame: pd.DataFrame, target: str, calendar, *, variant: str, construction: str | None,
-                   extra: dict | None = None, models=tr.MODEL_NAMES, log=print) -> dict:
+                   extra: dict | None = None, models=tr.MODEL_NAMES, log=print,
+                   feats: list | None = None, profile_dates: bool = False) -> dict:
     """Fit the ensemble on every row of ``frame`` with a label and return the
-    artefact dict (models + manifest)."""
-    feats = list(ds.FEATURE_COLUMNS)
+    artefact dict (models + manifest). ``feats`` defaults to the core v3
+    columns; ``profile_dates`` adds the per-date PSI null calibration to the
+    feature profile."""
+    feats = list(feats or ds.FEATURE_COLUMNS)
     fr = frame[frame[target].notna()]
     ms, info = tr.fit_ensemble(fr, feats, target, calendar, models=models, log=log)
     horizon = int(target.rsplit("_", 1)[1])
@@ -81,7 +84,8 @@ def build_artifact(frame: pd.DataFrame, target: str, calendar, *, variant: str, 
         "models": {"mix": list(ms), "params": tr.MODEL_PARAMS, "best_iter": info["best_iter"],
                    "ensemble": "per-date rank average of member predictions, re-ranked"},
         "construction": {"name": construction, **(bt.CONSTRUCTIONS.get(construction, {}) if construction else {})},
-        "feature_profile": monitoring.build_feature_profile(fr[feats]),
+        "feature_profile": monitoring.build_feature_profile(
+            fr[feats], dates=fr["Date"].to_numpy() if profile_dates else None),
     }
     manifest.update(extra or {})
     art = {"trained_models": ms, "mix_models": list(ms), "scaler": None, "pca": None,

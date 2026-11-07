@@ -174,7 +174,7 @@ def main():
               f"(strict) | <= {config.V3_MAX_WEIGHT:.2%}/name | exposure <= {config.V3_TARGET_EXPOSURE:.2f}")
     elif args.strategy == "optimized_v3":
         print(f"[Strategy] optimized_v3 (EXPERIMENTAL, fails the promotion gate): mv_abs_all | "
-              f"AUM ${config.OPT_AUM:,.0f} | IC {config.OPT_IC} | exposure {config.OPT_TARGET_EXPOSURE:.2f} | "
+              f"AUM ${config.OPT_AUM:,.0f} | IC {config.OPT_IC_ALTALL if config.SIGNAL == 'altall' else config.OPT_IC} (signal {config.SIGNAL}) | exposure {config.OPT_TARGET_EXPOSURE:.2f} | "
               f"min weight {config.OPT_MIN_WEIGHT:.2%} | {config.OPT_HISTORY_DAYS} days of history | "
               f"fallback long_only_v3")
     elif args.strategy == "long_short_neutral":
@@ -184,67 +184,15 @@ def main():
 
     try:
         agent = BDATradingAgent()
+        requested_tickers = list(config.TICKERS)
 
-        # 1. Load serializations
+        # 1. Load serializations (BDA_SIGNAL=altall: the Round-8 artefact, or
+        #    the production one if it / its live inputs are unavailable)
         agent.load_model()
 
-        # Full-universe expansion: after the model is loaded we know every
-        # ticker the model can score, so we can now populate the trade list.
-        if agent.feature_version >= 3:
-            # v3 has no KG: every active common stock is a candidate; the PIT
-            # eligibility rule is applied on the decision date in run_inference.
-            # A --tickers-file (custom) list is honoured as given.
-            from .bot import v3_live_universe
-            if universe != "custom":
-                config.TICKERS = v3_live_universe()
-            print(f"[Filter] feature_version 3: {len(config.TICKERS)} candidate tickers "
-                  f"(no KG filter).")
-        elif universe == "full":
-            config.TICKERS = sorted(agent.company_embeddings.keys())
-            print(f"[Filter] Full-universe mode: {len(config.TICKERS)} modelled tickers loaded.")
-        if agent.feature_version < 3 and getattr(config, "EXCLUDE_NON_COMMON", True):
-            from .bot import exclude_non_common
-            config.TICKERS, _ = exclude_non_common(config.TICKERS)
+        is_bull, prices_df, predictions, weights = run_with_signal_fallback(
+            agent, args, universe, requested_tickers)
 
-        # Validate that loaded tickers have structural embeddings in best_model.pkl
-        valid_tickers = ([t for t in config.TICKERS if t in agent.company_embeddings]
-                         if agent.feature_version < 3 else list(config.TICKERS))
-        if len(valid_tickers) != len(config.TICKERS):
-            print(f"[Filter] Removed {len(config.TICKERS) - len(valid_tickers)} tickers lacking structural model embeddings.")
-            config.TICKERS = valid_tickers
-            print(f"[Filter] Active universe size: {len(config.TICKERS)} tickers.")
-        
-        if args.strategy == "optimized_v3":
-            agent.risk_history_days = int(config.OPT_HISTORY_DAYS)
-
-        # 2. Check S&P 500 trend regime
-        is_bull = agent.check_market_regime(force_regime=args.force_regime,
-                                             strategy=args.strategy)
-        
-        # 3. Download live pricing
-        prices_df = agent.fetch_live_data()
-        
-        # 4. Run ensemble inference
-        predictions = agent.run_inference(prices_df)
-        
-        print("\nModel Inference (30d Cross-Sectional Rank) & Kalman Betas:")
-        print("-" * 75)
-        print(f"{'Ticker':<8} | {'Current Close':<15} | {'Pred Rank (30d)':<20} | {'Kalman Beta'}")
-        print("-" * 75)
-        for _, row in predictions.iterrows():
-            rank_val = row.get("pred_rank", row.get("pred_proba", float("nan")))
-            print(f"{row['ticker']:<8} | ${row['company_close']:>14.2f} | "
-                  f"{rank_val * 100:>18.2f}% | {row['kalman_beta']:>11.2f}")
-        print("-" * 75)
-
-        # 4b. LIVE-ONLY: tilt predictions by real-time news sentiment
-        #     (Alpaca news → RDF news-event graph → SPARQL → per-ticker score).
-        #     Never used in backtests or embeddings — no PIT archive to do so safely.
-        predictions = agent.apply_news_sentiment_tilt(predictions)
-
-        # 5. Compute target weights
-        weights = agent.calculate_target_weights(predictions, is_bull, strategy=args.strategy)
-        
         print("\nTarget Portfolio Weights Allocations:")
         print("-" * 35)
         print(f"{'Ticker':<8} | {'Target Weight Allocation %'}")
@@ -257,6 +205,9 @@ def main():
 
         import json as _json
         construction = getattr(agent, "last_construction", None)
+        if construction is not None or agent.signal_requested != "production":
+            construction = {**(construction or {"construction": args.strategy}), **agent.signal_info()}
+            agent.last_construction = construction
         if construction:
             print("CONSTRUCTION_JSON: " + _json.dumps(construction, default=str))
 
@@ -349,7 +300,11 @@ def main():
                            "requested_strategy": construction.get("requested")}
             if construction.get("fallback_reason"):
                 exec_status["fallback_reason"] = construction["fallback_reason"][:200]
-        st = exec_status.get("status")
+            if construction.get("signal"):
+                exec_status["signal"] = construction["signal"]
+            if construction.get("signal_fallback_reason"):
+                exec_status["signal_fallback_reason"] = construction["signal_fallback_reason"][:200]
+        st =exec_status.get("status")
         print("RESULT_JSON: " + _json.dumps({k: v for k, v in exec_status.items() if k != "failures"}))
         if st == "halted":
             print("\nRun halted by the drawdown circuit breaker — no orders placed.")
@@ -369,6 +324,93 @@ def main():
         sys.exit(1)
 
 
+
+def run_with_signal_fallback(agent, args, universe, requested_tickers, score=None):
+    """``score`` (default ``_score_and_construct``) with the loaded artefact.
+
+    With the altall signal, ANY exception -- or an optimized_v3 request that
+    did not end in an optimized_v3 book on the altall scores -- switches the
+    agent to the production artefact and re-runs the whole production path
+    (universe, data, inference, optimized_v3 -> long_only_v3) from scratch.
+    Production-signal failures propagate as before."""
+    score = score or _score_and_construct
+    try:
+        out = score(agent, args, universe)
+        c = agent.last_construction or {}
+        if (agent.signal == "altall" and args.strategy == "optimized_v3"
+                and c.get("construction") != "optimized_v3"):
+            raise RuntimeError(f"optimized_v3 not built on the altall signal "
+                               f"({c.get('fallback_reason', 'unknown reason')})")
+        return out
+    except Exception as e:
+        if agent.signal != "altall":
+            raise
+        agent.use_production(f"altall failed after load: {type(e).__name__}: {e}")
+        config.TICKERS = list(requested_tickers)
+        return score(agent, args, universe)
+
+
+def _score_and_construct(agent, args, universe):
+    """Universe expansion, regime, live bars, inference and target weights for
+    the artefact ``agent`` has loaded. Returns (is_bull, prices_df, predictions, weights)."""
+    # Full-universe expansion: after the model is loaded we know every
+    # ticker the model can score, so we can now populate the trade list.
+    if agent.feature_version >= 3:
+        # v3 has no KG: every active common stock is a candidate; the PIT
+        # eligibility rule is applied on the decision date in run_inference.
+        # A --tickers-file (custom) list is honoured as given.
+        from .bot import v3_live_universe
+        if universe != "custom":
+            config.TICKERS = v3_live_universe()
+        print(f"[Filter] feature_version 3: {len(config.TICKERS)} candidate tickers "
+              f"(no KG filter).")
+    elif universe == "full":
+        config.TICKERS = sorted(agent.company_embeddings.keys())
+        print(f"[Filter] Full-universe mode: {len(config.TICKERS)} modelled tickers loaded.")
+    if agent.feature_version < 3 and getattr(config, "EXCLUDE_NON_COMMON", True):
+        from .bot import exclude_non_common
+        config.TICKERS, _ = exclude_non_common(config.TICKERS)
+
+    # Validate that loaded tickers have structural embeddings in best_model.pkl
+    valid_tickers = ([t for t in config.TICKERS if t in agent.company_embeddings]
+                     if agent.feature_version < 3 else list(config.TICKERS))
+    if len(valid_tickers) != len(config.TICKERS):
+        print(f"[Filter] Removed {len(config.TICKERS) - len(valid_tickers)} tickers lacking structural model embeddings.")
+        config.TICKERS = valid_tickers
+        print(f"[Filter] Active universe size: {len(config.TICKERS)} tickers.")
+
+    if args.strategy == "optimized_v3":
+        agent.risk_history_days = int(config.OPT_HISTORY_DAYS)
+
+    # 2. Check S&P 500 trend regime
+    is_bull = agent.check_market_regime(force_regime=args.force_regime,
+                                        strategy=args.strategy)
+
+    # 3. Download live pricing
+    prices_df = agent.fetch_live_data()
+
+    # 4. Run ensemble inference
+    predictions = agent.run_inference(prices_df)
+
+    print("\nModel Inference (30d Cross-Sectional Rank) & Kalman Betas:")
+    print("-" * 75)
+    print(f"{'Ticker':<8} | {'Current Close':<15} | {'Pred Rank (30d)':<20} | {'Kalman Beta'}")
+    print("-" * 75)
+    for _, row in predictions.iterrows():
+        rank_val = row.get("pred_rank", row.get("pred_proba", float("nan")))
+        print(f"{row['ticker']:<8} | ${row['company_close']:>14.2f} | "
+              f"{rank_val * 100:>18.2f}% | {row['kalman_beta']:>11.2f}")
+    print("-" * 75)
+
+    # 4b. LIVE-ONLY: tilt predictions by real-time news sentiment
+    #     (Alpaca news -> RDF news-event graph -> SPARQL -> per-ticker score).
+    #     Never used in backtests or embeddings -- no PIT archive to do so safely.
+    predictions = agent.apply_news_sentiment_tilt(predictions)
+
+    # 5. Compute target weights
+    weights = agent.calculate_target_weights(predictions, is_bull, strategy=args.strategy)
+    return is_bull, prices_df, predictions, weights
+
 class _SkipState(Exception):
     """Internal: skip attribution/state persistence (dry-run, halted, error)."""
 
@@ -381,7 +423,7 @@ def _record_for_monitoring(agent, predictions, weights, prices_df) -> dict:
     try:
         from . import monitoring
         meta = getattr(agent, "model_metadata", None) or {}
-        model_id = monitoring.model_id_from(meta, config.MODEL_PATH)
+        model_id = monitoring.model_id_from(meta, getattr(agent, "model_path", None) or config.MODEL_PATH)
         out["model_id"] = model_id
         account = os.getenv("ACTIVE_ACCOUNT", "weekly").lower()
         # decision date = last bar the model saw (see monitoring module docstring)

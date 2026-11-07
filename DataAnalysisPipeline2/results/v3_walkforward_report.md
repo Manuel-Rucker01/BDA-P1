@@ -1013,3 +1013,55 @@ in eight rounds (92 trials) has shown an edge over SPY after costs.
 * **Parity with the bulk data set** (2026-03-02 and 03-03, covered by both): 730 = 730 accessions, 1,327 = 1,327 lines, 100% matched both ways, 0 mismatches in issuer, value or availability date — after applying the bulk convention (price and shares rounded to 2 decimals, half up; identical lines collapsed). Documented difference: in multi-owner filings the bulk TSV's first reporting owner is not always the XML's first owner (3.4% of lines differ in owner CIK, 0.5% in the officer/director flag) — affects only `ins_n_buyers_90` / `ins_od_buy_90` / cluster counts.
 * **FINRA:** the live refresh downloads new bi-monthly files (quoted-header fix); latest usable on 2026-11-05 = the 2026-10-15 settlement (13,078 symbols).
 * **Live == offline:** `live_altdata_features` reproduces the round-8 training frame exactly on a historical date (test `test_live_features_equal_offline_frame`, 2025-06-27, all `ins_*_hd` and `si_*` columns). Live smoke on 2026-10-30: 75% of eligible names have insider activity in the trailing 180 days (65% over 2025–2026Q1), 1.7 s per decision date, 1.1 GB RSS.
+
+## altall on paper: the Round-8 signal in the monthly bot (engineering, user opt-in; no new trials, N stays 92)
+
+The user opted in to paper-trade the best Round-8 book (`sn30_altall_hd` through `mv_abs_all`)
+knowing that it **fails the gate** (DSR 0.863 at N = 92, IR vs SPY −0.13). Production is unchanged
+(`best_model.pkl`, workflow default `BDA_SIGNAL=production`).
+
+* **Artefact** `ExploitationZone/model_v3_altall.pkl` (git LFS, 2.2 MB; manifest
+  `model_v3_altall.manifest.json` with `feature_profile` incl. per-date PSI null levels), built by
+  `python -m DataAnalysisPipeline2.v3.final_altall frame train`: the exact Round-8 recipe
+  (`round8.feats_for('sn30_altall_hd')`, 65 features, target `target_sn_30`, `train.fit_ensemble`)
+  fitted once on every labelled week, 2017-01-06 → 2026-09-18 (1,531,438 rows, 507 dates; early
+  stopping on 2025-09-26 → 2026-09-18; trees lgbm 239 / xgb 259 / cat 672).
+  *Data completion, same code:* the Round-8 evaluation frame had insider features missing after
+  2026-03-31 and SI up to ~2 months stale on its last weeks; the final frame recomputes the
+  alternative-data block with the bulk quarters + the daily Form 4 feed (exact bulk parity) and the
+  refreshed FINRA files, so 2026Q2–Q3 training rows carry what the live bot sees. The evaluation
+  files (`alt_weekly.parquet`, `weekly_dataset_r8.parquet`) are untouched.
+* **Live path** (`trading_agent/altall.py`, `bot._run_inference_v3`): v3 core features → EDGAR
+  FF-12 sectors → `FundamentalsBlock` on the decision-date cross-section → per-date z-score →
+  `altlive.compute` (insider hot-deck + SI) → model input in the artefact's column order.
+  Cloud inputs: `trading_agent/data/fundamentals_snapshot/` (now with every
+  `fundamental_features` column, float64; 4.4 MB) and `trading_agent/data/altdata_snapshot/`
+  (Form 4/5 P/S lines available in the last 400 days for the CIK-map issuers, 123k rows, 2.4 MB;
+  last 9 FINRA settlements, 116k rows, 1.4 MB; `manifest.json` with `insider_as_of`).
+* **IC for optimized_v3:** `BDA_OPT_IC_ALTALL` = 0.0534 = the Round-8 trailing IC of
+  `sn30_altall_hd` at 2026-11-04 under the pre-registered R5 rule (104 matured weekly ICs on
+  v3-eligible names, shrunk to 0.03 with 26 pseudo-weeks); full-sample mean weekly IC 0.0734.
+* **Freshness:** insider feed ≤ `BDA_ALT_INSIDER_MAX_AGE_DAYS` (14) days before the decision date;
+  the snapshot must hold the latest FINRA settlement surely public by then (settlement + 8 NYSE
+  days). In the runner: missing FINRA files are fetched from the public CDN; the Form 4 feed is
+  topped up only if a `SEC_USER_AGENT` secret exists (none is configured; time-boxed 900 s).
+* **Fallbacks (all logged in `CONSTRUCTION_JSON` / `RESULT_JSON`: `signal`, `signal_fallback_reason`):**
+  artefact missing / LFS pointer / invalid schema, fundamentals stale or lacking columns, stale or
+  missing alt snapshot → production model at load; any error after load (data, features) or an
+  optimized_v3 request that did not produce an optimized book on the altall scores → the whole
+  production path is re-run (universe, bars, v2 model, optimized_v3 → long_only_v3).
+* **Live == offline (full model input row):** on 2025-06-27, 2026-06-26 and 2026-10-30 the live
+  path on a 420-day price window reproduces the final training frame: identical eligible universe
+  (3,116 / 3,319 / 3,143 names), fundamentals + insider + SI columns within 1e-4, core features
+  identical except EMA-warm-up / float32 cells on 1–2 names (max 0.05 in z units); predictions
+  Spearman > 0.9999, ≥ 97 of the top-100 shared (`test_altall.py`).
+* **Dry run** (2026-11-07, decision 2026-11-06, `ACTIVE_ACCOUNT=monthly BDA_SIGNAL=altall
+  … --strategy optimized_v3 --dry-run`): 3,159 eligible, 99.8% CIK-mapped, 75% with insider
+  activity in 180 days, 99.5% with a recent SI record; optimized_v3 (IC 0.0534) solved: 86 names,
+  ex-ante vol 9.4%, beta vs cap-weighted 0.40, TE 11.6%, turnover 75% vs the current 30-name
+  paper book, expected cost 51 bp; largest weights AAPL 5.0%, PG 3.9%, META 3.6%, ET 3.2%, CVS 3.0%.
+  Cloud-like rerun (empty `$BDA_DATA_V3`: committed snapshots + Alpaca asset universe): 3,160
+  eligible, 85 names, ex-ante vol 9.4%, beta 0.40, TE 11.6%, turnover 75%.
+* **To switch:** set the repository variable `BDA_SIGNAL=altall` (keep `BDA_STRATEGY=optimized_v3`),
+  and before each monthly run refresh and commit the snapshots:
+  `python -m DataAnalysisPipeline2.v3.altlive refresh && python -m DataAnalysisPipeline2.trading_agent.optimized snapshot && python -m DataAnalysisPipeline2.trading_agent.altall snapshot`.

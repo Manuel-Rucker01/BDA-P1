@@ -284,9 +284,14 @@ def si_features(si: pd.DataFrame, rows: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def weekly_features(log=print) -> pd.DataFrame:
+def weekly_features(log=print, events: pd.DataFrame | None = None, si: pd.DataFrame | None = None,
+                    out_path: str | None = None) -> pd.DataFrame:
     """Raw insider + SI features for every (ticker, weekly date) row of the
-    store (eligible or not) with the 30-session label -> ``alt_weekly.parquet``."""
+    store (eligible or not) with the 30-session label -> ``alt_weekly.parquet``.
+    ``events`` / ``si`` / ``out_path`` default to the round-8 evaluation inputs
+    (bulk insider quarters, the cached FINRA parse, ``alt_weekly.parquet``); the
+    final artefact (``v3/final_altall.py``) passes bulk + daily Form 4 events and
+    the refreshed FINRA files and writes to its own file."""
     from . import fundamentals as fu
     t0 = time.time()
     cal = ds.calendar_from_dataset(ds.v3_dir(ds.EDGAR_DATASET))
@@ -309,7 +314,7 @@ def weekly_features(log=print) -> pd.DataFrame:
     keys = pd.DataFrame({"tkey": rows["ticker"].str.split("~").str[0].map(fu.norm_ticker),
                          "Date": pd.to_datetime(rows["Date"]).astype("datetime64[ns]")})
     rows["cik"] = fu.resolve_cik(keys, cm).to_numpy()
-    ev = load_insider_events()
+    ev = load_insider_events() if events is None else events
     ins = insider_features(ev, weekly)
     ins = ins.rename(columns={"issuer_cik": "cik"})
     ins["cik"] = ins["cik"].astype("Int64")
@@ -322,14 +327,14 @@ def weekly_features(log=print) -> pd.DataFrame:
     log(f"[alt] insider data ends {ins_end.date()}: features NaN after it")
     log(f"[alt] insider features: {len(ev):,} P/S lines; rows with any 180d activity "
         f"{((rows['ins_buy_n_180'] + rows['ins_sell_n_180']) > 0).mean():.1%} ({time.time() - t0:.0f}s)")
-    si = load_si()
+    si = load_si() if si is None else si
     rows[SI_COLUMNS] = si_features(si, rows[["ticker", "Date", "first_date", "shares"]]).to_numpy()
     log(f"[alt] SI coverage {rows['si_ratio'].notna().mean():.1%} ({time.time() - t0:.0f}s)")
     keep = ["ticker", "Date", "eligible", "fwd_ret_30", "cik"] + INSIDER_COLUMNS + SI_COLUMNS
     out = rows[keep]
     for c in INSIDER_COLUMNS + SI_COLUMNS:
         out[c] = out[c].astype("float32")
-    out.to_parquet(os.path.join(ds.v3_dir(), "alt_weekly.parquet"), index=False)
+    out.to_parquet(out_path or os.path.join(ds.v3_dir(), "alt_weekly.parquet"), index=False)
     return out
 
 

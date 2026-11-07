@@ -116,7 +116,9 @@ def build_snapshot(src: str | None = None, out: str = SNAPSHOT_DIR, years: int =
                    today=None) -> dict:
     """Trim the EDGAR store to what ``risk.live_panel`` needs for a live decision.
 
-    * fundamentals_asof: ``risk.LIVE_FUND_COLS`` (values as float32), rows with
+    * fundamentals_asof: ``risk.LIVE_FUND_COLS`` + ``risk.LIVE_FUND_OPTIONAL``
+      (every column ``fundamentals.fundamental_features`` reads, float64 as in
+      the store, so the altall model's fundamentals block is exact), rows with
       asof_date in the last ``years`` years plus each CIK's last row before
       that (so the as-of join is exact from the window start), CIKs in the
       current cik_map only;
@@ -131,13 +133,14 @@ def build_snapshot(src: str | None = None, out: str = SNAPSHOT_DIR, years: int =
     cm = cm[cm["valid_to"].isna() | (pd.to_datetime(cm["valid_to"]) >= cut)]
     cm = cm[["ticker", "cik", "valid_from", "valid_to"]].reset_index(drop=True)
     ciks = set(cm["cik"].astype("int64"))
-    fa = pd.read_parquet(os.path.join(src, "fundamentals_asof.parquet"), columns=risk.LIVE_FUND_COLS)
+    import pyarrow.parquet as pq
+    fpath = os.path.join(src, "fundamentals_asof.parquet")
+    have = set(pq.ParquetFile(fpath).schema_arrow.names)
+    fa = pd.read_parquet(fpath, columns=risk.LIVE_FUND_COLS + [c for c in risk.LIVE_FUND_OPTIONAL if c in have])
     fa = fa[fa["cik"].isin(ciks)].sort_values(["cik", "asof_date"])
     recent = fa[fa["asof_date"] >= cut]
     before = fa[fa["asof_date"] < cut].groupby("cik").tail(1)
     fa = pd.concat([before, recent]).sort_values(["cik", "asof_date"]).reset_index(drop=True)
-    for c in ("net_income_ttm", "gross_profit_ttm", "assets", "equity", "shares"):
-        fa[c] = fa[c].astype("float32")
     fa["last_form"] = fa["last_form"].astype("category")
     secs = pd.read_parquet(os.path.join(src, "sectors.parquet"), columns=["cik", "ff12", "sector_name"])
     secs = secs[secs["cik"].isin(ciks)].reset_index(drop=True)

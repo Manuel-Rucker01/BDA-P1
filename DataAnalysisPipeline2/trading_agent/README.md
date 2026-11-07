@@ -104,6 +104,19 @@ Customize your stock universe and basket size:
   missing or stale, the history is too short, or the solver / constraint check fails, the
   bot logs a warning and uses `long_only_v3`; `CONSTRUCTION_JSON` / `RESULT_JSON` report the
   construction actually used.
+* **Signal selection (`BDA_SIGNAL`, default `production`)**: `BDA_SIGNAL=altall` scores with
+  the best Round-8 signal `sn30_altall_hd` (v3 core + EDGAR fundamentals + SEC insider +
+  FINRA short interest; `ExploitationZone/model_v3_altall.pkl`, git LFS, built by
+  `python -m DataAnalysisPipeline2.v3.final_altall frame train`). PAPER opt-in: it fails the
+  promotion gate (DSR 0.863 at N = 92, IR vs SPY -0.13). With `optimized_v3` it uses
+  `BDA_OPT_IC_ALTALL` (0.0534, its Round-8 trailing IC) instead of `BDA_OPT_IC`. Live inputs
+  come from `data/fundamentals_snapshot/` and `data/altdata_snapshot/` (`altall.py`); refresh
+  both before each monthly run:
+  `python -m DataAnalysisPipeline2.v3.altlive refresh && python -m DataAnalysisPipeline2.trading_agent.optimized snapshot && python -m DataAnalysisPipeline2.trading_agent.altall snapshot`.
+  A missing / invalid artefact, an insider feed older than `BDA_ALT_INSIDER_MAX_AGE_DAYS`
+  (14) or a missing public FINRA file, a feature error, or an optimized_v3 book that could not
+  be built all fall back to the production model and its usual optimized_v3 -> long_only_v3
+  path; `CONSTRUCTION_JSON` / `RESULT_JSON` carry `signal` and `signal_fallback_reason`.
 
 ### 5. Market Regime Override
 To manually force the market trend regime (bypassing S&P 500 HMM decoders):

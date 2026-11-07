@@ -679,7 +679,13 @@ def validate_v3_artifact_schema(model_data):
     if not bool(model_data.get("cs_z_standardize", False)):
         raise ValueError("feature_version>=2 artefacts must use cross-sectional z-scoring")
     v3ds = _v3("dataset")
-    unknown = sorted(set(model_data["tabular_cols"]) - set(v3ds.FEATURE_COLUMNS))
+    allowed = set(v3ds.FEATURE_COLUMNS)
+    blocks = set(meta.get("feature_blocks") or [])
+    if "fundamentals" in blocks:
+        allowed |= set(_v3("fundamentals").FEATURE_COLUMNS)
+    if blocks & {"insider_hd", "si"}:
+        allowed |= set(_v3("altlive").MODEL_COLUMNS)
+    unknown = sorted(set(model_data["tabular_cols"]) - allowed)
     if unknown:
         raise ValueError(f"v3 artefact uses columns the v3 feature code does not produce: {unknown}")
 
@@ -868,18 +874,100 @@ class BDATradingAgent:
         self.risk_history_days = None
         self.last_bars = None
         self.last_construction = None
+        # Signal selection (config.SIGNAL): "production" or "altall". ``signal``
+        # is what is actually in use; a fallback records its reason.
+        self.signal = "production"
+        self.signal_requested = config.SIGNAL
+        self.production_model_path = config.MODEL_PATH
+        self.signal_fallback_reason = None
+        self.alt_sources = None
+        self.alt_fund = None
+        self.alt_info = None
 
     def load_model(self):
-        """Loads serialized ensemble classifier models and scaling metrics from best_model.pkl."""
-        if not os.path.exists(config.MODEL_PATH):
-            raise FileNotFoundError(f"Baked ensemble model file not found at: {config.MODEL_PATH}. "
+        """Load the artefact selected by ``config.SIGNAL``.
+
+        ``altall``: the Round-8 artefact (``config.ALTALL_MODEL_PATH``) plus a
+        preflight of its live inputs (fundamentals + alt-data snapshot fresh
+        enough for today). ANY failure there loads the production artefact
+        instead (``signal_fallback_reason``). ``production``: best_model.pkl."""
+        if self.signal_requested == "altall" and self.signal_fallback_reason is None:
+            try:
+                self._load_artifact(config.ALTALL_MODEL_PATH)
+                if "insider_hd" not in set(self.model_metadata.get("feature_blocks") or []):
+                    raise ValueError(f"{config.ALTALL_MODEL_PATH} is not an altall (insider/SI) artefact")
+                self._altall_preflight()
+                self.signal = "altall"
+                print(f"[Agent] SIGNAL altall: {self.model_metadata.get('model_id')} (Round-8 sn30_altall_hd; "
+                      f"PAPER opt-in, fails the promotion gate) | alt data {self.alt_sources['fresh']}")
+                return
+            except Exception as e:
+                self.signal_fallback_reason = f"altall unavailable at load: {type(e).__name__}: {e}"[:500]
+                print(f"[WARNING] {self.signal_fallback_reason}. FALLING BACK to the production model.")
+        elif self.signal_requested not in ("production", "altall"):
+            print(f"[WARNING] unknown BDA_SIGNAL={self.signal_requested!r}; using the production model.")
+        self._load_artifact(self.production_model_path)
+        self.signal = "production"
+
+    def use_production(self, reason):
+        """Abandon the altall signal (any failure after load) and load the
+        production artefact; the caller re-runs universe / data / inference."""
+        self.signal_fallback_reason = str(reason)[:500]
+        print(f"[WARNING] altall signal abandoned -- {self.signal_fallback_reason}. "
+              f"FALLING BACK to the production model + the usual construction path.")
+        self.alt_sources = self.alt_fund = self.alt_info = None
+        self.last_construction = None
+        self.last_bars = None
+        self._load_artifact(self.production_model_path)
+        self.signal = "production"
+
+    def signal_info(self):
+        """Which signal / artefact produced the book (merged into CONSTRUCTION_JSON)."""
+        out = {"signal": self.signal, "signal_requested": self.signal_requested,
+               "model_id": (self.model_metadata or {}).get("model_id")
+               or os.path.basename(str(getattr(self, "model_path", None) or config.MODEL_PATH)),
+               "model_path": os.path.basename(str(getattr(self, "model_path", None) or config.MODEL_PATH))}
+        if self.signal_fallback_reason:
+            out["signal_fallback_reason"] = self.signal_fallback_reason
+        if self.signal == "altall" and self.alt_sources:
+            out["alt_data"] = self.alt_sources.get("fresh")
+            out["alt_source"] = self.alt_sources.get("source")
+            out["fundamentals"] = (self.alt_fund or {}).get("resolved")
+            if self.alt_info:
+                out["alt_inputs"] = self.alt_info
+        return out
+
+    def _altall_preflight(self):
+        """Fundamentals source (with every fundamentals-block column) and the
+        alt-data snapshot (+ optional top-ups), fresh for today (stricter than
+        the decision date, which is the last completed session)."""
+        from . import altall, optimized
+        fd = optimized.resolve_fund_dir(config.OPT_FUND_DIR or None, config.OPT_FUND_MAX_AGE_DAYS)
+        self.alt_fund = {**altall.read_fundamentals(fd["path"]), "resolved": fd}
+        ciks = set(self.alt_fund["cik_map"]["cik"].dropna().astype("int64"))
+        self.alt_sources = altall.load_sources(
+            pd.Timestamp.today().normalize(), snapshot_dir=config.ALT_SNAPSHOT_DIR,
+            insider_max_age_days=config.ALT_INSIDER_MAX_AGE_DAYS, refresh=config.ALT_REFRESH,
+            refresh_budget_s=config.ALT_REFRESH_BUDGET_S, ciks=ciks)
+        print(f"[Agent] altall inputs: fundamentals {fd['source']} (newest filing {fd['as_of']}); "
+              f"alt data {self.alt_sources['source']} {self.alt_sources['fresh']}")
+
+    def _load_artifact(self, path):
+        """Loads serialized ensemble models and scaling metrics from ``path``
+        (validated); re-points ``config.MODEL_PATH`` at it."""
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Baked ensemble model file not found at: {path}. "
                                     f"Please run model training first.")
 
-        print(f"[Agent] Loading best ensemble model from {config.MODEL_PATH}...")
-        with open(config.MODEL_PATH, "rb") as f:
-            self.model_data = pickle.load(f)
-
-        validate_model_artifact_schema(self.model_data)
+        print(f"[Agent] Loading best ensemble model from {path}...")
+        with open(path, "rb") as f:
+            if f.read(40).startswith(b"version https://git-lfs"):
+                raise ValueError(f"{path} is an LFS pointer, not the artefact (fetch it with LFS)")
+            f.seek(0)
+            model_data = pickle.load(f)
+        validate_model_artifact_schema(model_data)
+        self.model_data = model_data
+        self.model_path = path
         self.trained_models = self.model_data["trained_models"]
         self.mix_models = list(self.model_data["mix_models"])
         self.scaler = self.model_data.get("scaler")
@@ -1204,7 +1292,7 @@ class BDATradingAgent:
         # --- Build & persist the reproducibility tag for this decision ---
         try:
             self.last_decision_ctx = build_decision_context(
-                model_path=config.MODEL_PATH,
+                model_path=getattr(self, "model_path", None) or config.MODEL_PATH,
                 feature_df=X_full_df,
                 universe=list(latest_df["ticker"].unique()),
                 hmm_state=self.hmm_state,
@@ -1245,20 +1333,34 @@ class BDATradingAgent:
         names; no KG. Members' predictions are rank-averaged."""
         import warnings
         v3ds = _v3("dataset")
-        meta = fetch_company_metadata()
-        meta = meta[["ticker", "Sector"]] if "Sector" in meta.columns else None
         decision_date = str(price_history_df["Date"].max())[:10]
-        print("[Agent] Computing feature_version-3 features (shared v3 dataset module)...")
-        feats = v3ds.compute_v3_features(price_history_df, meta, decision_date=decision_date)
-        latest_df = v3ds.decision_rows(feats, decision_date)
-        if latest_df.empty:
-            raise RuntimeError("No v3-eligible tickers on the decision date.")
+        if getattr(self, "signal", "production") == "altall":
+            from . import altall
+            print("[Agent] Computing altall model input (v3 core + EDGAR fundamentals + insider + short "
+                  "interest; v3 dataset / altlive modules)...")
+            self.alt_sources["fresh"] = altall.check_fresh(self.alt_sources, decision_date,
+                                                           config.ALT_INSIDER_MAX_AGE_DAYS)
+            latest_df, X_full_df, info = altall.model_input(
+                price_history_df, self.tabular_cols, self.alt_fund, self.alt_sources["events"],
+                self.alt_sources["si"], decision_date=decision_date)
+            self.alt_info = info
+            feats = price_history_df[["ticker", "Date", "company_close"]].sort_values(["ticker", "Date"])
+            feats = feats.assign(daily_return=feats.groupby("ticker")["company_close"].pct_change())
+            print(f"[Agent] altall inputs on {decision_date}: {info}")
+        else:
+            meta = fetch_company_metadata()
+            meta = meta[["ticker", "Sector"]] if "Sector" in meta.columns else None
+            print("[Agent] Computing feature_version-3 features (shared v3 dataset module)...")
+            feats = v3ds.compute_v3_features(price_history_df, meta, decision_date=decision_date)
+            latest_df = v3ds.decision_rows(feats, decision_date)
+            if latest_df.empty:
+                raise RuntimeError("No v3-eligible tickers on the decision date.")
+            validate_required_columns(latest_df, self.tabular_cols, "live v3 feature frame")
+            X_full_df = v3ds.zscore(latest_df, self.tabular_cols).reset_index(drop=True)[self.tabular_cols]
         print(f"[Agent] v3-eligible on {decision_date}: {len(latest_df)}/"
               f"{price_history_df['ticker'].nunique()} tickers (raw close >= $3, ADV20 >= $2M, "
               f">= 120 bars, fresh bar); sector source: "
               f"{latest_df['sector_source'].value_counts().to_dict()}")
-        validate_required_columns(latest_df, self.tabular_cols, "live v3 feature frame")
-        X_full_df = v3ds.zscore(latest_df, self.tabular_cols).reset_index(drop=True)[self.tabular_cols]
 
         model_preds = []
         for m in self.mix_models:
@@ -1284,7 +1386,7 @@ class BDATradingAgent:
 
         try:
             self.last_decision_ctx = build_decision_context(
-                model_path=config.MODEL_PATH, feature_df=X_full_df,
+                model_path=getattr(self, "model_path", None) or config.MODEL_PATH, feature_df=X_full_df,
                 universe=list(latest_df["ticker"].unique()), hmm_state=self.hmm_state,
                 hmm_probs=self.hmm_probs, decision_date=decision_date)
             snapshot_path = save_feature_snapshot(self.last_decision_ctx.decision_id, X_full_df)
@@ -1428,16 +1530,18 @@ class BDATradingAgent:
             bars = getattr(self, "last_bars", None)
             if bars is None or len(bars) == 0:
                 raise optimized.OptimizerUnavailable("no bar history (fetch_live_data not run)")
+            ic = config.OPT_IC_ALTALL if getattr(self, "signal", "production") == "altall" else config.OPT_IC
             w, diag = optimized.optimized_book(
-                predictions_df, bars, aum=config.OPT_AUM, ic=config.OPT_IC,
+                predictions_df, bars, aum=config.OPT_AUM, ic=ic,
                 target_exposure=config.OPT_TARGET_EXPOSURE, w_prev=self._current_weights(),
                 fund_dir=config.OPT_FUND_DIR or None, max_age_days=config.OPT_FUND_MAX_AGE_DAYS,
                 min_universe=config.OPT_MIN_UNIVERSE, min_names=config.OPT_MIN_NAMES,
                 spec={"min_weight": config.OPT_MIN_WEIGHT})
             self.last_book_diagnostics = diag
             self.last_construction = {"requested": "optimized_v3", "construction": "optimized_v3",
-                                      **{k: diag[k] for k in ("n_names", "long", "ex_ante_vol_ann",
-                                                               "turnover_oneway", "solve_seconds", "status")},
+                                      **{k: diag[k] for k in ("ic", "n_names", "long", "ex_ante_vol_ann",
+                                                               "turnover_oneway", "solve_seconds", "status",
+                                                               "ex_ante_beta_vs_cw", "ex_ante_te_ann_vs_cw")},
                                       "fundamentals_source": diag["fundamentals"]["source"],
                                       "fundamentals_as_of": diag["fundamentals"]["as_of"]}
             print(f"[Agent] optimized_v3 ({diag['spec']}, AUM ${diag['aum']:,.0f}, IC {diag['ic']:.4f}): "

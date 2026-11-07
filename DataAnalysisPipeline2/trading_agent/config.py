@@ -26,6 +26,8 @@ ROOT_DIR = os.path.abspath(os.path.join(PIPELINE_DIR, ".."))
 # Exploitation Zone path
 EXPLOITATION_DIR = os.path.join(ROOT_DIR, "ExploitationZone")
 MODEL_PATH = os.path.join(EXPLOITATION_DIR, "best_model.pkl")
+# MODEL_PATH is the production artefact; the agent records the artefact it
+# actually loaded in ``BDATradingAgent.model_path`` (see SIGNAL below).
 MACRO_KG_PATH = os.path.join(EXPLOITATION_DIR, "macroeconomic_graph.ttl")
 DB_PATH = os.path.join(EXPLOITATION_DIR, "ExploitationZone.duckdb")
 
@@ -258,6 +260,31 @@ OPT_FUND_DIR = os.getenv("BDA_OPT_FUND_DIR", "")             # override; else lo
 OPT_FUND_MAX_AGE_DAYS = _env_num("OPT_FUND_MAX_AGE_DAYS", 120, int)
 OPT_MIN_UNIVERSE = _env_num("OPT_MIN_UNIVERSE", 300, int)
 OPT_MIN_NAMES = _env_num("OPT_MIN_NAMES", 20, int)
+# --- Signal selection: BDA_SIGNAL = production (default) | altall ---
+# altall = the best Round-8 book's signal sn30_altall_hd (v3 core + EDGAR
+# fundamentals + SEC insider (hot-decked) + FINRA short interest), artefact
+# ExploitationZone/model_v3_altall.pkl (git LFS; trained with the exact Round-8
+# recipe on every labelled week, v3/final_altall.py). PAPER opt-in only: it
+# FAILS the pre-registered gate (DSR 0.863 at N = 92, IR vs SPY -0.13; Sharpe 1.02,
+# max DD -28.5% through mv_abs_all in the 2019-2026 walk-forward). Live inputs:
+# fundamentals snapshot + data/altdata_snapshot (trading_agent/altall.py).
+# ANY failure (artefact missing / invalid, stale or missing snapshot, feature
+# error, optimized_v3 not built) falls back to the production model and the
+# usual optimized_v3 -> long_only_v3 path, logged in CONSTRUCTION_JSON.
+SIGNAL = (os.getenv("BDA_SIGNAL", "production") or "production").strip().lower()
+ALTALL_MODEL_PATH = os.getenv("BDA_MODEL_PATH_ALTALL", "") or os.path.join(EXPLOITATION_DIR, "model_v3_altall.pkl")
+# OPT_IC for the altall signal: Round-8 trailing IC of sn30_altall_hd at the last
+# walk-forward decision (2026-11-04) under the pre-registered R5 rule (last 104
+# matured weekly ICs on v3-eligible names, shrunk to 0.03 with 26 pseudo-weeks).
+# Its full-sample mean weekly IC is 0.0734 (OPT_IC=0.0725 is the v2 signal's mean).
+OPT_IC_ALTALL = _env_num("OPT_IC_ALTALL", 0.0534)
+ALT_SNAPSHOT_DIR = os.getenv("BDA_ALT_SNAPSHOT_DIR", "") or os.path.join(AGENT_DIR, "data", "altdata_snapshot")
+ALT_INSIDER_MAX_AGE_DAYS = _env_num("ALT_INSIDER_MAX_AGE_DAYS", 14, int)
+# In-runner top-ups: FINRA files (public CDN) when one is missing; the EDGAR Form 4
+# feed only if SEC_USER_AGENT is set, time-boxed to ALT_REFRESH_BUDGET_S seconds.
+ALT_REFRESH = bool(_env_num("ALT_REFRESH", 1, int))
+ALT_REFRESH_BUDGET_S = _env_num("ALT_REFRESH_BUDGET_S", 900.0)
+
 # Exposure-reducing orders (sells / covers) are sent first and the bot waits up
 # to FILL_WAIT_TIMEOUT_S for them to fill (polling every FILL_POLL_INTERVAL_S)
 # before sending buys / new shorts. Unfilled orders are reported.
