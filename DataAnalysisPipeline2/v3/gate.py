@@ -536,3 +536,86 @@ def choose_config_r8(perf: dict) -> str:   # noqa: F811 -- the correction redefi
     ok = {k: v for k, v in perf.items() if k in R8_ELIGIBLE and v["max_dd"] >= MAX_DD_FLOOR}
     pool = ok or {k: v for k, v in perf.items() if k in R8_ELIGIBLE}
     return max(pool, key=lambda k: pool[k]["ir_spy"])
+
+
+# --------------------------------------------------------------------------- #
+# Round 9 (new free information: SEC Form 13F institutional holdings, SEC
+# fails-to-deliver) -- pre-registered 2026-11-07 on top of main a39b0c6, BEFORE
+# any round-9 feature IC, model, leak probe or backtest was computed (only the
+# raw files were downloaded and the FTD posting lag measured). Thresholds and
+# the R8 gate criteria (incl. IR vs SPY > 0) unchanged.
+# --------------------------------------------------------------------------- #
+# Blocks (v3/altdata_r9.py), weekly decision dates t:
+#  inst13f -- SEC "Form 13F Data Sets". Original 13F-HR holdings/combination
+#    reports only (no amendments, no notices), one per (filer, quarter), filed
+#    ON OR BEFORE the 45-day deadline; quarter P is usable from the business
+#    day after its deadline (late filers never enter). Positions: SH, no
+#    PUT/CALL. CUSIP -> ticker id via the FTD files' (CUSIP, symbol) pairs
+#    published by P's availability date, settlement within the prior 365 days
+#    and on/after the ticker id's first bar (point in time; no current ticker
+#    list). On t the latest available quarter P (and P-1):
+#      inst_breadth = # filers holding / # filers in P;
+#      inst_dbreadth = Chen-Hong-Stein change in breadth over filers present in
+#        both P and P-1 (/ # such filers);
+#      inst_io = institutional shares / shares outstanding at P's quarter end
+#        (clipped at 2), inst_dio = inst_io(P) - inst_io(P-1);
+#      inst_new_n, inst_exit_n = log1p(# continuing filers opening / closing a
+#        position).
+#  ftd -- SEC CNS fails-to-deliver half-month files, a file available the
+#    business day after max(period end + 21 days, its observed posting date
+#    when that is < 90 days after the period); on t the latest 6 available
+#    files: ftd_ratio = mean daily fails over the latest file / shares out,
+#    ftd_ratio_3m = same over the 6 files, ftd_persist_3m = share of settlement
+#    days with a fail record. Days without a record = zero fails.
+# Missing / unmapped rows -- the Round 8 lesson: a row whose ticker has no
+# CUSIP link at P (inst13f) or no FTD record in the trailing 365 days (ftd)
+# gets the whole block vector of a same-date mapped donor among its 5 nearest
+# neighbours on (log dollar volume, 20d vol, 20d and 50d return) (Round 8
+# hot-deck), identically for survivors and delisted names. Change features
+# without a P-1 link -> missing (z = 0).
+# Variants (sn30_altall_hd recipe = the current best signal: core + EDGAR
+# fundamentals + insider_hd + SI, sector-neutral 30-session target, same
+# folds/embargo/hyperparameters, round-8 evaluation frame):
+#   sn30_r9_13f (+inst13f), sn30_r9_ftd (+ftd), sn30_r9_all (+both).
+# Leak checks (before any book): held-out AUC of LightGBM probes for
+# (i) "no EDGAR record" (Round 8's probe) and (ii) "was delisted" (the ticker
+# id's last bar is before 2026-10-01) on rows <= 2022-12-31, core+fund+alt8_hd
+# vs + each new block (raw and hot-decked); and the walk-forward IC on rows
+# mapped by CIK AND by the block's own link.
+# Book screen (Round 8's incremental-IC bar, SWITCH_MIN_IC_GAIN): a variant is
+# run through mv_abs_all at R5_PRIMARY_AUM only if its walk-forward mean
+# weekly IC (v3-eligible, vs the 30-session return) >= sn30_altall_hd's
+# + 0.005 AND its gain on the mapped-only rows is >= half that bar (+0.0025);
+# otherwise no book (the signal stays information). No new stack.
+# Trials: every variant's walk-forward counts, booked or not -> 3 new trials,
+# N = 95 (DSR with n_trials = 95; dispersion from the trials that have a
+# Sharpe ratio).
+# Selection: highest IR vs SPY with max DD >= -35% among the round-9 books
+# (else highest IR vs SPY); no book -> nothing selected, verdict FAIL. Gate =
+# R8 criteria for that book: a1-a3 on the signal's weekly IC over v3-eligible
+# names; b1 Sharpe > EW-universe Sharpe; b2 max DD >= -35%; b3 DSR >= 0.90 with
+# N = 95; c1 >= 0.12 on the gate-c window from the 2026 walk-forward fold; r5
+# IR vs SPY > 0 (bootstrap 95% CI).
+R9_BASE = "sn30_altall_hd"
+R9_VARIANTS = {"sn30_r9_13f": ("inst13f",), "sn30_r9_ftd": ("ftd",), "sn30_r9_all": ("inst13f", "ftd")}
+R9_MIN_IC_GAIN = SWITCH_MIN_IC_GAIN                                   # 0.005
+R9_MIN_MAPPED_GAIN = SWITCH_MIN_IC_GAIN / 2                           # 0.0025
+R9_DELISTED_BEFORE = "2026-10-01"
+N_TRIALS_R9 = N_TRIALS_R8 + len(R9_VARIANTS)                          # 92 + 3 = 95
+
+
+def r9_bookable(ic: dict, ic_mapped: dict) -> list:
+    """Variants passing the incremental-IC screen (both dicts: name -> mean IC,
+    incl. R9_BASE)."""
+    return [v for v in R9_VARIANTS if v in ic
+            and ic[v] >= ic[R9_BASE] + R9_MIN_IC_GAIN
+            and ic_mapped[v] >= ic_mapped[R9_BASE] + R9_MIN_MAPPED_GAIN]
+
+
+def choose_config_r9(perf: dict):
+    pool_all = {k: v for k, v in perf.items() if k in R9_VARIANTS}
+    if not pool_all:
+        return None
+    ok = {k: v for k, v in pool_all.items() if v["max_dd"] >= MAX_DD_FLOOR}
+    pool = ok or pool_all
+    return max(pool, key=lambda k: pool[k]["ir_spy"])
