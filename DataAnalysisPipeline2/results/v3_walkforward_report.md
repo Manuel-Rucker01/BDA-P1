@@ -1217,3 +1217,77 @@ So the SUE block is largely Round 4's SUE re-expressed per share (plus a streak 
 **Trials:** 3 walk-forwards, booked or not → **N = 98** (95 + 3).
 
 **Selection / gate:** highest IR vs SPY with max DD ≥ −35% among round-10 books; no book → nothing selected, FAIL. Gate = R9 criteria: a1–a3 (signal IC), b1 Sharpe > EW, b2 max DD ≥ −35%, b3 DSR ≥ 0.90 at N = 98, c1 ≥ 0.12 on the gate-c window (2026 fold), r5 IR vs SPY > 0.
+
+## Round 10 — results
+
+**FAIL — nothing replaces production.** No variant passed the pre-registered incremental-IC screen, so no book was run; N = 98. The incumbent (`sn30_altall_hd` through `mv_abs_all`, Sharpe 1.02, max DD −28.5%, CAGR 15.2% vs SPY 16.1%, IR vs SPY −0.13) is unchanged; its DSR at N = 98 is **0.860** (0.861 at N = 95).
+
+### Leak checks
+
+Held-out AUC, rows 2017–2022 (`raw` = before the hot-deck; rows without a CIK have no value):
+
+| features | no EDGAR (date split) | delisted (date split) | no EDGAR (ticker split) | delisted (ticker split) |
+|---|---|---|---|---|
+| base (core+fund+alt8_hd) | 0.747 | 0.751 | 0.745 | 0.752 |
+| +SUE raw | 0.987 | 0.977 | 0.981 | 0.971 |
+| +SUE hd | 0.799 | 0.795 | 0.800 | 0.799 |
+| +EAR raw | 0.991 | 0.982 | 0.990 | 0.979 |
+| +EAR hd | 0.763 | 0.765 | 0.764 | 0.771 |
+| +both hd | 0.800 | 0.799 | 0.804 | 0.808 |
+| SUE hd only | 0.558 | 0.559 | 0.545 | 0.550 |
+| EAR hd only | 0.560 | 0.564 | 0.588 | 0.595 |
+| SUE has-flag only | 0.899 | 0.888 | 0.893 | 0.882 |
+| EAR has-flag only | 0.930 | 0.918 | 0.928 | 0.914 |
+
+As expected, the raw blocks are almost perfect "no EDGAR record" detectors (missing exactly when there is no CIK, AUC 0.98–0.99), so only the hot-decked blocks were evaluated. After the hot-deck: EAR adds +0.016…+0.019 AUC, SUE +0.044…+0.055, both +0.048…+0.056. All are below the registered +0.06 limit, so no correction was triggered. The SUE residual is the hot-deck signature already seen in Rounds 8–9. Diagnostic (date split, no EDGAR): `sue_days` alone adds +0.024 (0.771), because on real rows it is ≈ `fund_staleness_days` (ρ 0.99), while on imputed rows the two come from different donors; SUE without `sue_days` adds +0.037 (0.784). The decisive check is the IC on own-value rows below.
+
+### Signals and the book screen (weekly OOS IC vs 30-session return, v3-eligible)
+
+| signal | IC 30d | NW t | Δ vs sn30_altall_hd | Δ on own-value rows | top-1000 IC (t) | holdout proxy | screen |
+|---|---|---|---|---|---|---|---|
+| sn30_altall_hd | 0.0734 | 5.10 |  |  | 0.0208 (1.54) | 0.1622 |  |
+| sn30_r9_all (R9) | 0.0754 | 5.34 |  |  | 0.0213 (1.64) | 0.1578 |  |
+| sn30_r10_sue | 0.0750 | 5.20 | +0.0016 | +0.0014 | 0.0213 (1.61) | 0.1608 | no book |
+| sn30_r10_ear | 0.0751 | 5.39 | +0.0016 | +0.0019 | 0.0241 (1.87) | 0.1531 | no book |
+| sn30_r10_both | 0.0729 | 5.30 | −0.0005 | +0.0011 | 0.0208 (1.60) | 0.1565 | no book |
+
+Own-value rows: CIK and the block's own value (SUE 63%, EAR 67.5%, both ~57% of eligible rows).
+
+Per-year IC:
+
+| year | sn30_altall_hd | sn30_r10_sue | sn30_r10_ear | sn30_r10_both |
+|---|---|---|---|---|
+| 2019 | 0.061 | 0.066 | 0.065 | 0.067 |
+| 2020 | 0.007 | 0.009 | 0.012 | 0.010 |
+| 2021 | 0.137 | 0.139 | 0.141 | 0.125 |
+| 2022 | 0.086 | 0.086 | 0.085 | 0.085 |
+| 2023 | 0.088 | 0.088 | 0.082 | 0.084 |
+| 2024 | 0.088 | 0.089 | 0.092 | 0.093 |
+| 2025 | 0.040 | 0.041 | 0.043 | 0.041 |
+| 2026 | 0.086 | 0.086 | 0.084 | 0.083 |
+
+### Standalone feature ICs (raw features, weekly, vs 30-session return)
+
+| feature | IC all names | t | IC tradable | t | IC top-1000 | coverage | decay 5d | decay 21d | decay 63d |
+|---|---|---|---|---|---|---|---|---|---|
+| sue_eps | 0.0088 | 1.62 | 0.0094 | 1.54 | 0.0122 | 63% | 0.008 | 0.010 | 0.011 |
+| sue_eps_chg | 0.0022 | 0.87 | −0.0008 | −0.25 | 0.0048 | 62% | −0.000 | −0.000 | 0.002 |
+| sue_streak | 0.0100 | 1.91 | 0.0148 | 2.32 | 0.0113 | 65% | 0.010 | 0.014 | 0.016 |
+| surge | 0.0390 | 4.72 | 0.0239 | 2.42 | 0.0148 | 55% | 0.018 | 0.023 | 0.027 |
+| sue_days | 0.0362 | 6.03 | 0.0192 | 3.99 | 0.0040 | 65% | 0.011 | 0.017 | 0.029 |
+| ear | 0.0244 | 6.67 | 0.0076 | 1.75 | −0.0014 | 67% | 0.007 | 0.008 | 0.009 |
+| ear_prev | 0.0259 | 7.84 | 0.0133 | 3.75 | 0.0050 | 67% | 0.009 | 0.012 | 0.020 |
+| ear_abvol | 0.0414 | 8.14 | 0.0173 | 2.71 | 0.0121 | 67% | 0.010 | 0.016 | 0.018 |
+| ear_days | 0.0394 | 4.89 | 0.0230 | 3.50 | 0.0099 | 67% | 0.012 | 0.019 | 0.030 |
+| ear_src10q | −0.0602 | −9.86 | −0.0260 | −6.90 | −0.0014 | 67% | −0.016 | −0.023 | −0.032 |
+
+Post-earnings drift barely shows up in this universe and period. The EPS surprise itself is weak (+0.009 tradable, t 1.5), and so is the 3-day announcement return (+0.008 tradable, t 1.8, ≈ 0 in the top 1000). The stronger standalone features are slower characteristics: revenue surprise (+0.024), abnormal announcement volume (+0.017, a visibility effect), and the previous quarter's EAR. The 10-Q fallback flag (−0.026) marks small firms that do not issue earnings releases. Both day-count features largely reproduce `fund_staleness_days`.
+
+### Recommendation (round 10)
+
+**Do not replace production; nothing new to paper-trade.** No round-10 variant cleared the pre-registered +0.005 IC screen. The best were SUE and EAR alone at +0.0016 each overall (+0.0014 / +0.0019 on own-value rows); together the blocks scored −0.0005. So no book was run, and the gate verdict is FAIL by construction at N = 98.
+
+What round 10 established:
+* Announcement dates can be timed precisely for free: 8-K item 2.02 plus the EDGAR acceptance timestamp, with the 16:00 New York rule, puts the price reaction on day0 (|AR| 6.1% vs ~2% on surrounding days). This event table is reusable, for example for an analyst-revision block or for earnings-blackout logic in the bot.
+* An EDGAR-only SUE is almost the same signal as Round 4's (ρ 0.93) and again adds ≈ +0.002 IC. EAR adds the most large-cap information of anything since Round 8 (top-1000 IC 0.0208 → 0.0241, t 1.87), but the gain is far below the bar and slightly negative on the gate-c window (holdout proxy 0.153 vs 0.162).
+* As in Round 9, information that is strong standalone or that the literature says should be strong is largely already in the model: TTM growth, recent returns, staleness, size and liquidity. Earnings surprises measured without analyst expectations do not close the gap to SPY. Whether true analyst revisions do can only be tested once the daily estimate snapshots have accumulated history.
