@@ -635,3 +635,74 @@ def choose_config_r9(perf: dict):
     ok = {k: v for k, v in pool_all.items() if v["max_dd"] >= MAX_DD_FLOOR}
     pool = ok or pool_all
     return max(pool, key=lambda k: pool[k]["ir_spy"])
+
+
+# --------------------------------------------------------------------------- #
+# Round 10 pre-registration (committed before any round-10 feature IC, leak
+# probe, walk-forward or book). Analyst-free earnings surprise as a substitute
+# for analyst estimate revisions (no point-in-time history for those yet).
+# Code: v3/altdata_r10.py, v3/round10.py. Data: the EDGAR bulk companyfacts /
+# submissions zips already in the store (no new download).
+# Overlap with sn30_altall_hd (documented in the report before evaluation):
+# the incumbent has TTM fundamentals incl. ni_growth_scaled (TTM NI yoy change
+# / assets), sales_growth_yoy and fund_staleness_days, and price features up
+# to 50 sessions, but no quarterly surprise and nothing anchored on the
+# announcement date. Round 4's NI-based SUE (TTM differences; never part of the
+# incumbent) added +0.0005 IC to sn30_fund -- the prior for the SUE block is
+# small; the EAR block (event-anchored return / volume) is new to the model.
+# Blocks (definitions in altdata_r10's docstring):
+#  sue -- seasonal-random-walk SUE on quarterly diluted EPS (NI / diluted
+#    shares if no EPS concept; Q4 = FY - Q1..Q3); std of the previous <= 8
+#    recorded differences (min 4); sue_eps, sue_eps_chg, sue_streak, surge
+#    (revenue analogue), sue_days. Available the NYSE business day after the
+#    10-Q/10-K filed date.
+#  ear -- announcement = original 8-K with item 2.02 (EDGAR acceptance time),
+#    else a 10-Q/10-K with no 8-K 2.02 in the 75 days before (ear_src10q = 1);
+#    day0 = acceptance date if a session and < 16:00 New York, else the next
+#    session; ear = stock minus EW-eligible-market log return over
+#    [day0-1, day0+1]; ear_abvol = log(mean volume [day0-1, day0+1] / mean
+#    volume [day0-60, day0-11]); ear_prev (previous event), ear_days. Usable
+#    from session day0+2, held until the next event.
+# Missing rows (Rounds 8-9 lesson): a row without a CIK or without the block's
+# own value (sue_eps / ear) gets the whole block vector of a same-date donor
+# with a CIK and the value among its 5 nearest neighbours on round8.HD_MATCH
+# (round9.block_hotdeck), identically for survivors and delisted names.
+# Leak checks before any walk-forward is evaluated: Round 9's probes (held-out
+# AUC for "no EDGAR record" and "was delisted", rows <= 2022, date and ticker
+# splits), base vs + each block raw / hot-decked. A hot-decked block that
+# raises either AUC by more than R10_MAX_PROBE_GAIN (Round 9's accepted
+# residual, +0.06) is investigated and corrected -- correction registered in a
+# commit -- before any IC is computed.
+# Variants (sn30_altall_hd recipe, same folds / embargo / hyperparameters,
+# Round 8 evaluation frame): sn30_r10_sue (+sue), sn30_r10_ear (+ear),
+# sn30_r10_both (+both).
+# Book screen = Round 9's: walk-forward mean weekly IC >= sn30_altall_hd +
+# 0.005 AND gain on rows with a CIK and the block's own value >= +0.0025; only
+# then mv_abs_all at R5_PRIMARY_AUM. No new stack.
+# Trials: 3 walk-forwards -> N = 98. Selection / gate = Round 9's (highest IR
+# vs SPY with max DD >= -35% among round-10 books; no book -> FAIL; a1-a3, b1,
+# b2, b3 DSR >= 0.90 at N = 98, c1 >= 0.12 on the 2026-fold gate-c window, r5
+# IR vs SPY > 0).
+R10_BASE = R9_BASE
+R10_VARIANTS = {"sn30_r10_sue": ("sue",), "sn30_r10_ear": ("ear",), "sn30_r10_both": ("sue", "ear")}
+R10_MIN_IC_GAIN = SWITCH_MIN_IC_GAIN                                  # 0.005
+R10_MIN_MAPPED_GAIN = SWITCH_MIN_IC_GAIN / 2                          # 0.0025
+R10_MAX_PROBE_GAIN = 0.06
+N_TRIALS_R10 = N_TRIALS_R9 + len(R10_VARIANTS)                        # 95 + 3 = 98
+
+
+def r10_bookable(ic: dict, ic_mapped: dict) -> list:
+    """Variants passing the incremental-IC screen (both dicts: name -> mean IC,
+    incl. R10_BASE)."""
+    return [v for v in R10_VARIANTS if v in ic
+            and ic[v] >= ic[R10_BASE] + R10_MIN_IC_GAIN
+            and ic_mapped[v] >= ic_mapped[R10_BASE] + R10_MIN_MAPPED_GAIN]
+
+
+def choose_config_r10(perf: dict):
+    pool_all = {k: v for k, v in perf.items() if k in R10_VARIANTS}
+    if not pool_all:
+        return None
+    ok = {k: v for k, v in pool_all.items() if v["max_dd"] >= MAX_DD_FLOOR}
+    pool = ok or pool_all
+    return max(pool, key=lambda k: pool[k]["ir_spy"])

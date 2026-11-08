@@ -1173,3 +1173,47 @@ What round 9 established:
 
 Ninety-five trials in, the conclusion of rounds 7–8 stands: better risk than SPY, no demonstrated excess
 return after costs.
+
+## Round 10 — pre-registration (committed before any round-10 evaluation)
+
+Analyst-free earnings surprise, as a stand-in for analyst estimate revisions (the free Yahoo snapshots in `v3/estimates.py` only start now, so revisions cannot be backtested). Registered in `v3/gate.py` (`R10_*`, `N_TRIALS_R10`, `r10_bookable`, `choose_config_r10`); thresholds and the Round 9 gate criteria (incl. IR vs SPY > 0) unchanged. Code: `v3/altdata_r10.py` (tests `v3/tests/test_altdata_r10.py`), `v3/round10.py`. No new download: the EDGAR bulk `companyfacts.zip` / `submissions.zip` already in the store (2026-11-06) and the price store.
+
+At registration the raw features, their coverage, an announcement-timing check and feature-to-feature overlap correlations had been computed (no forward return involved), and the hot-decked frame had been written; **no feature IC, leak probe, walk-forward or book had been computed.**
+
+**Hypotheses.** (H1) A quarterly EPS surprise (SUE, post-earnings-announcement drift) adds ranking information beyond the incumbent's TTM fundamentals. (H2) The market's own reaction to the announcement (EAR, with abnormal volume) adds information beyond the incumbent's 5–50-session returns, because it isolates the earnings news and is anchored on the event. Prior: H1 is weak — Round 4's NI-based SUE added +0.0005 IC to `sn30_fund`, and the new SUE correlates 0.93 with it (below); H2 is the genuinely new element.
+
+**Overlap with `sn30_altall_hd` (checked first).** The incumbent (65 features: 32 price/volume, 14 EDGAR fundamentals, 15 insider_hd, 4 SI) has no quarterly surprise and nothing anchored on an announcement date; its earnings-related inputs are `ni_growth_scaled` (TTM net income yoy change / assets), `sales_growth_yoy` (TTM), `ep`, `roa`/`roe` and `fund_staleness_days` (days since the latest 10-Q/10-K), plus `return_5d/20d/50d`. Round 4's `sue` / `sue_chg` were never part of it. Mean per-date Spearman correlation, raw new feature vs existing feature, eligible rows with a CIK (every 4th week):
+
+| new feature | ni_growth_scaled | sales_growth_yoy | fund_staleness_days | return_20d | return_50d | ep | log_mcap | R4 sue | R4 sue_chg |
+|---|---|---|---|---|---|---|---|---|---|
+| sue_eps | 0.47 | 0.19 | 0.03 | 0.05 | 0.09 | 0.13 | 0.09 | **0.93** | 0.50 |
+| sue_eps_chg | −0.04 | −0.02 | 0.01 | 0.03 | 0.07 | −0.03 | 0.01 | 0.47 | **0.91** |
+| sue_streak | **0.56** | 0.23 | 0.03 | 0.04 | 0.07 | 0.16 | 0.11 | 0.73 | 0.12 |
+| surge | 0.21 | **0.62** | 0.01 | 0.04 | 0.07 | −0.05 | 0.17 | 0.34 | 0.11 |
+| sue_days | 0.04 | −0.06 | **0.99** | 0.01 | 0.01 | 0.09 | 0.18 | 0.03 | 0.01 |
+| ear | 0.04 | 0.02 | 0.00 | 0.21 | **0.39** | −0.01 | 0.02 | 0.13 | 0.12 |
+| ear_prev | 0.08 | 0.05 | 0.01 | 0.01 | 0.03 | 0.02 | 0.02 | 0.11 | 0.00 |
+| ear_abvol | 0.06 | 0.02 | 0.00 | 0.00 | −0.02 | −0.02 | 0.03 | 0.03 | 0.00 |
+| ear_days | 0.03 | −0.04 | 0.59 | 0.00 | 0.00 | 0.17 | 0.17 | 0.05 | 0.01 |
+
+So the SUE block is largely Round 4's SUE re-expressed per share (plus a streak and a revenue analogue that overlap `ni_growth_scaled` / `sales_growth_yoy`), and `sue_days` duplicates `fund_staleness_days`; EAR overlaps the 50-session return only partly (0.39 — the 3-day window lies inside it for most weeks), and `ear_prev` / `ear_abvol` are close to orthogonal to everything the model has.
+
+**Blocks** (definitions in `altdata_r10`'s docstring):
+
+* `sue` — seasonal-random-walk SUE on quarterly diluted EPS from XBRL companyfacts (EarningsPerShareDiluted > BasicAndDiluted > Basic; net income / weighted diluted shares if no EPS concept reports the quarter). Quarter = reported 3-month fact > YTD differencing > **Q4 = FY − (Q1+Q2+Q3)** (the round-2 `_FlowState`; for EPS this is the usual approximation that ignores share-count changes within the year). d_q = EPS_q − EPS_{q−4}, both as known at q's filing (so the comparative is split-restated); `sue_eps` = d_q / std(previous ≤ 8 recorded d, min 4, none older than ~3 years); `sue_eps_chg` (vs the previous quarter's SUE), `sue_streak` (signed run of same-sign surprises over consecutive quarters, |·| ≤ 8), `surge` (same on quarterly revenue), `sue_days`. Available the NYSE business day after the 10-Q/10-K `filed` date. Known limitation: a split between quarters puts pre- and post-split d in the same std for up to two years (the history is not split-adjusted).
+* `ear` — announcement = an original 8-K whose items include **2.02** (Results of Operations) at its EDGAR acceptance timestamp (UTC, verified against known after-close releases); a 10-Q/10-K is the event instead (`ear_src10q` = 1) only if no 8-K 2.02 was accepted in the 75 days before it (past only). `day0` = the acceptance date if it is a session and acceptance < 16:00 New York, else the next session. `ear` = stock minus EW-eligible-market log return over sessions [day0−1, day0+1] (adjusted closes); `ear_abvol` = log(mean volume [day0−1, day0+1] / mean volume [day0−60, day0−11]); `ear_prev` = same for the CIK's previous event; `ear_days`. **Usable from session day0+2** (the business day after the window closes), held until the next event.
+* Both blocks are missing when the latest event is older than 400 days (the firm stopped filing; `fund_staleness_days` already carries that).
+
+**Data at registration.** 1,135,694 8-K/10-Q/10-K filings for the 5,783 CIK-map issuers that have any (226,570 8-K 2.02); 184,847 announcement events for 5,455 CIKs (23% 10-Q/10-K fallbacks — firms before their first 8-K 2.02 or that never file one). SUE events: 201,341 newly available quarters for 5,022 CIKs (88% with a finite SUE). *Timing check* — mean |market-adjusted daily return| around 8-K 2.02 events 2017–2026, day −3…+3: 2.0%, 2.0%, 2.2%, **6.1%**, 2.9%, 2.4%, 2.2% (the reaction is on day0, so the acceptance-time rule is right); around 10-Q fallbacks: 3.5%, 3.5%, 3.6%, **5.0%**, 4.0%, 3.8%, 3.6% (weaker — part of the news is already out). Coverage on v3-eligible weekly rows: own value SUE 63%, EAR 67.5% (rows with a CIK: 80% / 86%, flat by year; rows without a CIK: 0% — all hot-decked). With a CIK, survivors 80% / 86% vs delisted 49% / 65% — but delisted rows with a CIK are only ~4k rows (most delisted names have no CIK, the Round 8 issue), and their missing ones are mostly foreign private issuers (20-F/6-K, no 8-K/10-Q).
+
+**Missing rows (the Round 8–9 lesson).** A row without a CIK or without the block's own value (`sue_eps` / `ear`) gets the whole block vector of a same-date donor *with a CIK and the value* among its 5 nearest neighbours on (log dollar volume, 20d vol, 20d and 50d return) (`round9.block_hotdeck`), identically for survivors and delisted names. No EDGAR-derived share or market-cap denominator enters either block (Round 9's leak path): SUE is per share as reported, EAR uses the ticker's own prices.
+
+**Leak checks (before any walk-forward is evaluated).** Round 9's probes: held-out AUC of LightGBM classifiers for "no EDGAR record" and "was delisted" (last bar before 2026-10-01), rows ≤ 2022, date and ticker splits; base (core+fund+alt8_hd) vs + each block raw / hot-decked, block-only and has-flag-only. If a hot-decked block raises either AUC by more than **+0.06** (Round 9's accepted residual) it is investigated and corrected, with the correction registered in a commit before any IC.
+
+**Variants** (`sn30_altall_hd` recipe: core + fundamentals + insider_hd + SI, sector-neutral 30-session target, same folds / embargo / hyperparameters, Round 8 evaluation frame): `sn30_r10_sue` (+sue), `sn30_r10_ear` (+ear), `sn30_r10_both` (+both).
+
+**Book screen (Round 9's).** A variant goes through `mv_abs_all` at $100M only if its walk-forward mean weekly IC ≥ `sn30_altall_hd` + 0.005 **and** its gain on rows with a CIK and the block's own value ≥ +0.0025. No new stack.
+
+**Trials:** 3 walk-forwards, booked or not → **N = 98** (95 + 3).
+
+**Selection / gate:** highest IR vs SPY with max DD ≥ −35% among round-10 books; no book → nothing selected, FAIL. Gate = R9 criteria: a1–a3 (signal IC), b1 Sharpe > EW, b2 max DD ≥ −35%, b3 DSR ≥ 0.90 at N = 98, c1 ≥ 0.12 on the gate-c window (2026 fold), r5 IR vs SPY > 0.
