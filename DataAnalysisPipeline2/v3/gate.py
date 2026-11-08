@@ -706,3 +706,101 @@ def choose_config_r10(perf: dict):
     ok = {k: v for k, v in pool_all.items() if v["max_dd"] >= MAX_DD_FLOOR}
     pool = ok or pool_all
     return max(pool, key=lambda k: pool[k]["ir_spy"])
+
+
+# --------------------------------------------------------------------------- #
+# Round 11 pre-registration (committed before any round-11 book, walk-forward,
+# residual target or blackout set was computed). Five trials aimed at the
+# incumbent's failing criterion, IR vs SPY (its book is low-beta: ex-ante, risk
+# model, ~0.4 vs the cap-weighted universe in the live dry run). Code:
+# v3/round11.py; data: FRED DTB3 (3-month T-bill, secondary market, % p.a.,
+# daily; fredgraph.csv?id=DTB3, downloaded 2026-11-08 to
+# $BDA_DATA_V3/rates/DTB3.csv) + the existing stores.
+# Common: signal sn30_altall_hd walk-forward OOS predictions (trial 3: its own
+# retrained ones), the Round 5 prep (risk models, costs), the mv_abs_all spec,
+# $100M, costs.py on every trade, cash at 0%, Feb 2019 -> 2026-11-04, the
+# trailing-IC rule of R5_COMMON (IC of the book's own signal vs the raw
+# 30-session return).
+# "Ex-ante beta vs SPY" (trials 1, 2): risk-model beta to an SPY proxy = the
+# cap-weighted top-500 (cleaned mcap) of the names the book may hold on the
+# decision date, beta_i = (Sigma b500)_i / b500' Sigma b500 (S&P 500 overlap of
+# that set: Round 5 coverage section).
+#  1 beta1_spy -- the literal spec (incumbent sleeve scaled down, SPY fills,
+#    weights sum <= 1) cannot reach beta 1 unless the book is all SPY (a mix of
+#    a beta < 1 sleeve and a beta-1 asset has beta < 1 for any sleeve weight
+#    > 0), so it is registered in its only non-degenerate form: SPY enters the
+#    mv_abs_all problem as an extra asset (alpha 0; factor exposure X'b500,
+#    specific variance sum b500^2 D; covariance with stock i =
+#    (X F X'b500)_i + D_i b500_i), long-only, weights sum to 1, stock caps as
+#    mv_abs_all, SPY in [0, 1], ex-ante beta vs SPY == R11_BETA_TARGET
+#    (equality row), sector bands on look-through weights (SPY contributes
+#    b500's sector shares). SPY trades cost R11_SPY_HALF_SPREAD +
+#    k sigma60 sqrt(trade / ADV20) (SPY's own dollar volume); SPY earns its
+#    adjusted daily return.
+#  2 beta1_lev -- the incumbent mv_abs_all sleeve w (the optimizer sees
+#    AUM x R11_LEV_CAP for impact / liquidity; w_prev = drifted sleeve weights
+#    / their sum), held at leverage L = min(R11_LEV_CAP,
+#    R11_BETA_TARGET / beta_exante(w)) (L < 1 -> cash), target exposure L w,
+#    costed on the full exposure change; financing on the borrowed amount
+#    max(sum exposure - NAV, 0), accrued daily at (DTB3 of the previous
+#    session, forward-filled) + R11_FIN_SPREAD.
+#  3 resid_target -- sn30_altall_hd features, folds, embargo, hyperparameters
+#    (train.walk_forward on the Round 8 frame) with target = per-date
+#    percentile rank (eligible rows) of the residual fwd_ret_30 - X_t f_t,
+#    X_t = risk-model exposures on the weekly date t (PIT) to R11_RESID_STYLES
+#    + the FF12 industries, f_t = sqrt(mcap)-WLS cross-sectional regression of
+#    the 30-session forward return (clipped to risk.EST_CLIP for the fit only)
+#    on X_t over eligible rows (value / reversal / liquidity / quality stay in
+#    the target: characteristics the model may forecast). Rows without
+#    exposures: target missing (not trained on, still predicted). Book:
+#    mv_abs_all.
+#  4 biweekly -- incumbent signal, mv_abs_all at every second weekly decision
+#    date (from the first monthly decision date on), traded at the next
+#    session; horizon = R11_BIWEEKLY_HORIZON sessions (alpha, risk and the
+#    once-per-rebalance cost on the same per-rebalance scale as monthly's
+#    21 = its interval; alpha pro-rated from the 30-session label by H/30 as in
+#    optimizer.grinold_alpha).
+#  5 earn_blackout -- incumbent mv_abs_all, except names with an expected
+#    earnings announcement in [R - R11_BLACKOUT_OVERDUE_DAYS calendar days,
+#    session R + R11_BLACKOUT_SESSIONS] (R = rebalance session) may not be
+#    bought or increased (upper bound = current drifted weight; may be held or
+#    reduced). Expected date = last retained 8-K 2.02 event +
+#    R11_EXPECTED_GAP_DAYS calendar days, from sec_earn/events.parquet
+#    (src10q == 0) with acceptance (America/New_York date) <= the decision
+#    date; an event is retained only if >= R11_EVENT_MIN_GAP_DAYS after the
+#    CIK's previous retained one (drops intra-quarter extra 2.02 filings;
+#    past-only). Ticker -> CIK from the decision date's alt10_weekly row; no
+#    CIK / no event -> never blacked out.
+# Trials: 5 books -> N = 103. Engineering check (not a trial): the generalised
+# runner with no overlay must reproduce Round 8's sn30_altall_hd book.
+# Selection: highest IR vs SPY with max DD >= -35% among the five (else the
+# highest IR vs SPY). Gate = Round 10's: a1-a3 (the book's signal, weekly IC
+# over v3-eligible names), b1 Sharpe > EW, b2 max DD >= -35%, b3 DSR >= 0.90 at
+# N = 103 (dispersion from every trial with a Sharpe ratio), c1 >= 0.12
+# holdout IC proxy (2026 fold, gate-c window), r5 IR vs SPY > 0 (stationary
+# bootstrap 95% CI).
+R11_BASE = R10_BASE
+R11_TRIALS = ("beta1_spy", "beta1_lev", "resid_target", "biweekly", "earn_blackout")
+R11_AUM = R5_PRIMARY_AUM
+R11_BETA_TARGET = 1.0
+R11_SPY_PROXY_TOP = 500
+R11_SPY_HALF_SPREAD = 0.5e-4
+R11_LEV_CAP = 1.5
+R11_FIN_SPREAD = 0.01
+R11_RATE_SERIES = "DTB3"
+R11_RESID_STYLES = ("beta", "size", "momentum", "volatility")
+R11_BIWEEKLY_HORIZON = 10
+R11_BLACKOUT_SESSIONS = 5
+R11_BLACKOUT_OVERDUE_DAYS = 10
+R11_EXPECTED_GAP_DAYS = 91
+R11_EVENT_MIN_GAP_DAYS = 60
+N_TRIALS_R11 = N_TRIALS_R10 + len(R11_TRIALS)                         # 98 + 5 = 103
+
+
+def choose_config_r11(perf: dict):
+    pool_all = {k: v for k, v in perf.items() if k in R11_TRIALS}
+    if not pool_all:
+        return None
+    ok = {k: v for k, v in pool_all.items() if v["max_dd"] >= MAX_DD_FLOOR}
+    pool = ok or pool_all
+    return max(pool, key=lambda k: pool[k]["ir_spy"])

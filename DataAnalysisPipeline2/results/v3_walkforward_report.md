@@ -1291,3 +1291,143 @@ What round 10 established:
 * Announcement dates can be timed precisely for free: 8-K item 2.02 plus the EDGAR acceptance timestamp, with the 16:00 New York rule, puts the price reaction on day0 (|AR| 6.1% vs ~2% on surrounding days). This event table is reusable, for example for an analyst-revision block or for earnings-blackout logic in the bot.
 * An EDGAR-only SUE is almost the same signal as Round 4's (ρ 0.93) and again adds ≈ +0.002 IC. EAR adds the most large-cap information of anything since Round 8 (top-1000 IC 0.0208 → 0.0241, t 1.87), but the gain is far below the bar and slightly negative on the gate-c window (holdout proxy 0.153 vs 0.162).
 * As in Round 9, information that is strong standalone or that the literature says should be strong is largely already in the model: TTM growth, recent returns, staleness, size and liquidity. Earnings surprises measured without analyst expectations do not close the gap to SPY. Whether true analyst revisions do can only be tested once the daily estimate snapshots have accumulated history.
+
+## Round 11 — pre-registration (committed before any round-11 evaluation)
+
+Five construction / target trials on top of the incumbent (`sn30_altall_hd` through `mv_abs_all` at $100M: Sharpe 1.02, max DD −28.5%, CAGR 15.2% vs SPY 16.1%, IR vs SPY −0.13, IR vs EW +0.25, DSR 0.860 at N = 98). The incumbent's decisive failure is IR vs SPY, and the book is low-beta (ex-ante risk-model beta ≈ 0.4 vs the cap-weighted universe in the live dry run), so a SPY-relative test penalises it for the missing market exposure in a rising market. Registered in `v3/gate.py` (`R11_*`, `N_TRIALS_R11`, `choose_config_r11`); thresholds and the Round 10 gate criteria unchanged. Code: `v3/round11.py`. At registration the only round-11 input fetched was the FRED rate series; no book, walk-forward, residual target, blackout set or ex-ante beta had been computed.
+
+**Hypotheses.** (H1/H2) Restoring market exposure to beta 1 — with SPY as a cheap beta asset (1) or with modest leverage (2) — turns the incumbent's Sharpe edge into an excess return over SPY. (H3) A target purged of the risk-model factor returns (beta, size, momentum, volatility, industries) teaches the model stock-specific return and so improves the optimizer's alpha, which is a residual-return forecast. (H4) Rebalancing on fresher signals every two weeks, with the optimizer's cost term deciding how much to trade, beats monthly. (H5) Not opening or adding to positions just before an expected earnings announcement removes uncompensated event risk.
+
+**Common.** The signal is the `sn30_altall_hd` walk-forward OOS predictions; trial 3 uses its own retrained predictions. Every trial uses:
+* the Round 5 prep (risk models, costs) and the `mv_abs_all` spec;
+* $100M, with `costs.py` on every trade;
+* cash at 0%, Feb 2019 → 2026-11-04;
+* the R5 trailing-IC rule, computed from the IC of the book's own signal vs the raw 30-session return.
+
+*Ex-ante beta vs SPY* (trials 1–2) is the risk-model beta to an SPY proxy: the cap-weighted top-500 by cleaned market cap among the names the book may hold on the decision date, β_i = (Σ b500)_i / b500′Σ b500. That set covers the S&P 500 closely; see Round 5's coverage section.
+
+1. **`beta1_spy`.** The spec as written cannot be met. Scaling the incumbent sleeve down and filling with SPY (weights sum ≤ 1) mixes a beta-below-1 sleeve with a beta-1 asset, so the result has beta < 1 for any sleeve weight above 0. Beta = 1 is reached only at 100% SPY, which by construction has IR vs SPY = −costs. The trial is therefore registered in its only non-degenerate form:
+   * **SPY as an asset.** SPY enters the `mv_abs_all` problem as an extra asset. Its alpha is 0, its factor exposure is X′b500 and its specific variance is Σ b500²D; its covariance with stock i is (XFX′b500)_i + D_i b500_i.
+   * **Constraints.** Long-only, weights sum to 1, stock caps as in `mv_abs_all`, SPY weight in [0, 1]. **Ex-ante portfolio beta vs SPY = 1.0 is an equality row.** Sector bands apply to look-through weights, with SPY contributing b500's sector shares.
+   * **What this does.** The optimizer decides how much of the book is SPY. The stock sleeve must then carry beta 1 itself.
+   * **SPY costs.** Half-spread 0.5 bp plus k·σ₆₀·√(trade/ADV₂₀), using SPY's own dollar volume. SPY earns its adjusted daily return.
+2. **`beta1_lev`.** The incumbent `mv_abs_all` sleeve w, held at leverage L = min(1.5, 1 / β_ex-ante(w)); if L < 1 the rest is cash.
+   * **Optimizer inputs.** The optimizer sees AUM × 1.5 for its impact and liquidity terms. w_prev is the drifted sleeve weights divided by their sum.
+   * **Trading costs.** Every change in exposure L·w is costed with the same cost model.
+   * **Financing.** The borrowed amount max(Σ exposure − NAV, 0) is charged daily at the previous session's 3-month T-bill rate + 1%/yr.
+   * **Rate series.** FRED `DTB3` (3-month Treasury bill, secondary market, % p.a., daily), free CSV `https://fred.stlouisfed.org/graph/fredgraph.csv?id=DTB3`, downloaded 2026-11-08 to `$BDA_DATA_V3/rates/DTB3.csv` and forward-filled over holidays.
+3. **`resid_target`.** The `sn30_altall_hd` features, folds, embargo and hyperparameters (`train.walk_forward` on the Round 8 frame), with a new target.
+   * **Target.** The per-date percentile rank, over eligible rows, of the residual 30-session return fwd_ret_30 − X_t f_t.
+   * **Exposures.** X_t holds the point-in-time risk-model exposures on weekly date t to beta, size, momentum and volatility plus the FF12 industries.
+   * **Factor returns.** f_t is the √mcap-WLS cross-sectional regression of the 30-session forward return on X_t over eligible rows. Returns are clipped to [−50%, +100%] for the fit only.
+   * **Factors left in the target.** Value, reversal, liquidity and quality are characteristics the model may legitimately forecast, so they are not removed.
+   * **Missing exposures.** Rows without exposures have a missing target: they are not trained on but are still predicted.
+   * **Book.** `mv_abs_all`, with no IC screen; the book is the trial.
+4. **`biweekly`.** The incumbent signal through `mv_abs_all`, rebalanced at every second weekly decision date from the first monthly decision date on, and traded at the next session.
+   * **Horizon** = 10 sessions. Alpha, risk and the once-per-rebalance cost are then on the same per-rebalance scale as monthly's horizon of 21, which equals its interval.
+   * **Alpha** is pro-rated from the 30-session label by H/30, as in `optimizer.grinold_alpha`. The trailing-IC rule is unchanged.
+   * **Effect.** Each trade must be paid for by two weeks of alpha.
+5. **`earn_blackout`.** The incumbent `mv_abs_all`, except for names with an expected earnings announcement in the window [R − 10 calendar days, session R + 5], where R is the rebalance session. The overdue tolerance covers late reporters not yet known to have announced.
+   * **Restriction.** These names may not be bought or increased: their upper bound is the current drifted weight. They may be held or reduced.
+   * **Expected date** = the last retained 8-K 2.02 event + 91 calendar days, using Round 10's `sec_earn/events.parquet` (src10q = 0).
+   * **No look-ahead.** Only events whose acceptance (America/New_York date) is on or before the decision date count.
+   * **Retained events.** An event is retained only if it comes ≥ 60 days after the CIK's previous retained event. This drops intra-quarter extra 2.02 filings and uses past data only.
+   * **Mapping.** Ticker → CIK comes from the decision date's `alt10_weekly` row. Names with no CIK or no event are never blacked out.
+
+**Engineering check (not a trial).** The generalised round-11 runner with no overlay must reproduce Round 8's `sn30_altall_hd` book.
+
+**Trials:** 5 books → **N = 103** (98 + 5).
+
+**Selection.** Among the five books, the highest IR vs SPY with max DD ≥ −35%; if none qualifies, the highest IR vs SPY.
+
+**Gate** (Round 10's criteria):
+* a1–a3: the book's signal, weekly IC over v3-eligible names.
+* b1: Sharpe above EW.
+* b2: max DD ≥ −35%.
+* b3: DSR ≥ 0.90 at N = 103, with dispersion from every trial that has a Sharpe ratio.
+* c1: holdout IC proxy ≥ 0.12 (2026 fold, gate-c window).
+* r5: IR vs SPY > 0, with a stationary-bootstrap 95% CI.
+
+Also reported for information: realised beta vs SPY and book returns over the gate-c window and in 2026.
+
+## Round 11 — results
+
+**FAIL — nothing replaces production.** The pre-registered rule (highest IR vs SPY among books with max DD ≥ −35%) selects `earn_blackout`, which fails b3 (DSR 0.862 < 0.90) and r5 (IR vs SPY −0.10). Only `beta1_lev` has a positive IR vs SPY (+0.29), and it is excluded by its −41.0% max drawdown. N = 103; the incumbent's DSR at N = 103 is **0.848**.
+
+**Engineering check passed.** The generalised runner with no overlay reproduces Round 8's `sn30_altall_hd` / `mv_abs_all` book exactly: maximum absolute daily-return difference 0.0, Sharpe 1.0218 in both.
+
+| trial | CAGR | vol | Sharpe | maxDD | maxDD ex Feb–Apr 2020 | IR vs SPY [95% CI] | IR vs EW | beta vs SPY realised (ex-ante) | TO/reb | cost/yr | names | DSR (N=103) | gate |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| incumbent (reference) | 15.2% | 15.0% | 1.02 | -28.5% | -16.2% | -0.13 | 0.25 | 0.63 (0.54) | 19% | 1.88% | 81 | 0.848 | – |
+| beta1_spy | 12.1% | 20.1% | 0.67 | -33.5% | -29.1% | -0.63 [-1.26, 0.05] | 0.21 | 1.03 (1.00) | 19% | 1.56% | 100 | 0.528 | FAIL (b3, r5) |
+| beta1_lev | 19.9% | 22.6% | 0.92 | **-41.0%** | -25.4% | **+0.29** [-0.37, 0.95] | 0.55 | 0.96 (0.80) | 28% | 2.82% | 84 | 0.772 | FAIL (b2, b3) |
+| resid_target | 14.8% | 14.7% | 1.02 | -28.5% | -16.9% | -0.16 [-0.83, 0.48] | 0.22 | 0.61 (0.53) | 16% | 1.65% | 97 | 0.846 | FAIL (b3, r5) |
+| biweekly | 13.8% | 14.5% | 0.96 | -27.9% | -17.1% | -0.27 [-0.91, 0.33] | 0.17 | 0.62 (0.53) | 6% | 1.37% | 88 | 0.804 | FAIL (b3, r5) |
+| **earn_blackout** (selected) | 15.6% | 14.9% | 1.04 | -27.7% | -16.2% | -0.10 [-0.79, 0.51] | 0.27 | 0.63 (0.54) | 19% | 1.87% | 81 | 0.862 | FAIL (b3, r5) |
+| SPY | 16.1% | 18.9% | 0.89 | -33.8% | -24.5% | | 0.50 | 1 | | | | | |
+
+How to read the table:
+* TO/reb is one-way turnover per rebalance; biweekly rebalances twice as often.
+* Ex-ante beta is the risk-model beta to the cap-weighted top-500 proxy.
+* SR* = 0.65 annualised for every trial.
+
+Gate of the selected book (`earn_blackout`):
+
+| # | criterion | value | threshold | result |
+|---|---|---|---|---|
+| a1 | mean weekly IC > 0 | 0.0734 | > 0 | PASS |
+| a2 | Newey-West t of IC | 5.0995 | > 2.0 | PASS |
+| a3 | years with IC > 0 | 8 | >= 6 of 8 | PASS |
+| b1 | Sharpe(chosen) vs Sharpe(EW universe) | 1.0442 | > 0.477 | PASS |
+| b2 | max drawdown | -0.2773 | >= -0.35 | PASS |
+| b3 | Deflated Sharpe prob (N=103) | 0.8618 | >= 0.9 | FAIL |
+| c1 | holdout IC proxy (2026 fold, gate-c window) | 0.1622 | >= 0.12 | PASS |
+| r5 | IR vs SPY (95% CI -0.79 .. 0.51) | -0.1009 | > 0.0 | FAIL |
+
+Holdout period (books; information only):
+
+| trial | gate-c window 2026-07-15..09-23: return / SPY / IR vs SPY | 2026 to 11-04: return / SPY / IR vs SPY |
+|---|---|---|
+| incumbent | 2.1% / 2.4% / -0.13 | 12.6% / 13.3% / -0.09 |
+| beta1_spy | 1.9% / 2.4% / -0.61 | 9.6% / 13.3% / -0.75 |
+| beta1_lev | 2.5% / 2.4% / +0.05 | 16.2% / 13.3% / +0.22 |
+| resid_target | 3.1% / 2.4% / +0.28 | 14.7% / 13.3% / +0.09 |
+| biweekly | 1.6% / 2.4% / -0.36 | 10.6% / 13.3% / -0.27 |
+| earn_blackout | 2.1% / 2.4% / -0.15 | 13.5% / 13.3% / -0.03 |
+
+### Findings per trial
+
+* **`beta1_spy`: forcing beta 1 destroys the book.**
+  * Given SPY as an asset and an equality constraint on beta, the optimizer almost never buys SPY: weight 0 at the median rebalance, 2.7% on average, up to 86% on a few dates. It meets the beta constraint with high-beta stocks instead, because those carry alpha and SPY does not.
+  * The result is a beta-1.03, 20%-vol stock book with a lower Sharpe (0.67) and the worst IR vs SPY of the round (−0.63).
+  * The incumbent's Sharpe edge is its low-beta / low-vol tilt. Taking that tilt away removes the edge rather than converting it into excess return.
+  * As registered, the literal overlay ("scale the sleeve down, SPY fills, weights ≤ 1") cannot reach beta 1 except at 100% SPY.
+* **`beta1_lev`: the only positive IR vs SPY, but it fails on drawdown.**
+  * Leverage sat at the 1.5× cap on 90 of 94 rebalances (minimum 1.41×), because ex-ante sleeve betas are ~0.54. Ex-ante beta was therefore 0.80, not 1.0; realised beta was 0.96.
+  * Costs: turnover and trading cost scale with leverage (2.8%/yr). Financing at DTB3 (mean 2.8% over the period) + 1% on ~50% borrowed is ≈ 1.9%/yr.
+  * Results: CAGR 19.9% vs SPY 16.1%, IR vs SPY +0.29 (CI −0.37…0.95), IR vs EW +0.55, Sharpe 0.92.
+  * It fails the gate on two counts. Max drawdown is −41.0% (the COVID crash at 1.5×; ex-COVID −25.4%). DSR is 0.77, because leverage costs Sharpe (1.02 → 0.92) through financing and costs.
+  * The point estimate of excess return is positive but statistically indistinguishable from zero.
+* **`resid_target`: no improvement.**
+  * The residual-target model has a lower raw-return IC: 0.0633 vs 0.0734 (NW t 5.09; top-1000 IC 0.019 vs 0.021). Its holdout proxy is higher: 0.173 vs 0.162.
+  * Its book is essentially the incumbent: Sharpe 1.02, slightly less turnover, IR vs SPY −0.16.
+  * Purging factor returns from the label does not add stock-specific skill that the optimizer can monetise.
+  * It is the best book of the round in the gate-c window and in 2026 (+0.7% / +1.4% over SPY). That is a short period and not evidence.
+* **`biweekly`: worse.** With the horizon at 10 sessions the cost term makes the optimizer trade much less per rebalance (6%), and fresher signals do not pay. CAGR fell 1.4 points, Sharpe 0.96, IR vs SPY −0.27.
+* **`earn_blackout`: a small, consistent improvement.**
+  * On average 11% of names (332) were blacked out per rebalance, holding ~10% of the book's weight.
+  * Vs the incumbent: Sharpe +0.02 (1.04), max DD 0.8 points smaller, IR vs SPY +0.025 (−0.10), IR vs EW +0.27.
+  * This is the highest DSR of the project (0.862 at N = 103) but still below 0.90. The change is well inside the noise (CI −0.79…0.51).
+
+### Recommendation (round 11)
+
+**Do not replace production; the paper `altall` experiment can stay as it is.** No trial passes the gate.
+
+What round 11 established:
+1. **The gap to SPY is a beta gap, not an alpha gap.** The incumbent earns about SPY's Sharpe-adjusted return at beta ~0.6. Levering it to beta ~1 gives +3.8%/yr over SPY over 2019–2026 (IR +0.29), but it costs a −41% drawdown and Sharpe (financing). Forcing beta 1 inside the optimizer gives up the low-beta edge altogether.
+2. **A free, PIT earnings blackout is the only construction change that weakly helps every metric.** It is cheap to wire, but the gain (+0.02 Sharpe, +0.025 IR) is not statistically meaningful.
+3. **Neither a residual target nor faster rebalancing helps.**
+
+If the user wants to act anyway, both options would be explicit, gate-failing opt-ins:
+* **The blackout.** It is a risk-hygiene change. It satisfies the selection rule but has the same gate failures as the incumbent. Wiring: `round11.optimize_ext(..., ub_cap=...)` or an equivalent `ub_cap` argument in `optimizer.optimize_portfolio`, plus `retained_events` / `expected_dates` / `blackout_window` on a refreshed 8-K 2.02 event table.
+* **Leverage to ~1.5×.** It is the only route to a positive point estimate vs SPY, and it needs a margin account.
