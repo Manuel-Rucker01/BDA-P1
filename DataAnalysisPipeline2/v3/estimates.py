@@ -66,6 +66,7 @@ CLI::
     python -m DataAnalysisPipeline2.v3.estimates universe            # refresh committed ticker list (local data)
     python -m DataAnalysisPipeline2.v3.estimates snapshot --out DIR  # fetch today's snapshot
     python -m DataAnalysisPipeline2.v3.estimates load                # summary of data/estimates
+    python -m DataAnalysisPipeline2.v3.estimates validate            # Yahoo 7/30/90-days-ago vs own snapshots
 """
 from __future__ import annotations
 
@@ -582,6 +583,141 @@ def estimate_features(snapshots: pd.DataFrame, keys: pd.DataFrame, max_age_days:
 
 
 # =========================================================================== #
+# Vendor-revision validation (Yahoo "N days ago" vs our own snapshot of that day)
+# =========================================================================== #
+VALIDATE_LAGS = (7, 30, 90)
+_BY_PERIOD = ("0q", "+1q", "0y", "+1y")
+
+
+def _rate(x) -> float | None:
+    return round(float(np.mean(x)), 4) if len(x) else None
+
+
+def _stat(x, f) -> float | None:
+    x = np.asarray(x, float)
+    x = x[np.isfinite(x)]
+    return round(float(f(x)), 6) if len(x) else None
+
+
+def validate_vendor_revisions(snapshots: pd.DataFrame, lags=VALIDATE_LAGS, abs_tol: float = 0.005,
+                              rel_tol: float = 0.01, window_days: int = 3) -> dict:
+    """Compare Yahoo's reported ``epsTrend`` "<L>daysAgo" consensus (columns
+    ``eps_trend_<L>d``) with what *we* stored on that day: our snapshot of the
+    same ticker / horizon (quarter or year) / fiscal ``period_end`` whose
+    ``asof_date`` is nearest to ``asof_date - L`` within +/- ``window_days``
+    (the workflow runs on weekdays only, so L-day-ago is sometimes a weekend).
+    Matching on ``period_end`` (not the ``0q``/``+1q`` label) follows a quarter
+    across the 0q roll-over.
+
+    Our value = ``eps_trend_current`` of that snapshot (the same Yahoo series),
+    also compared with ``eps_avg`` (earningsEstimate.avg) as a secondary
+    reference. A pair matches when ``|vendor - ours| <= max(abs_tol, rel_tol *
+    |ours|)``; bias = vendor - ours, also scaled by ``max(|ours|, 0.01)`` as in
+    the revision features. A lag is evaluated only when the snapshot history
+    spans at least L days (``status: insufficient history`` otherwise)."""
+    s = _prepare(snapshots) if snapshots is not None and len(snapshots) else _prepare(
+        pd.DataFrame(columns=SNAPSHOT_COLUMNS))
+    s = s[s["period_end"].notna()]
+    days = sorted(pd.to_datetime(s["asof_date"].unique()))
+    span = int((days[-1] - days[0]).days) if days else 0
+    rep = {"snapshot_days": len(days), "span_days": span,
+           "first_snapshot": str(days[0].date()) if days else None,
+           "last_snapshot": str(days[-1].date()) if days else None,
+           "rule": {"abs_tol": abs_tol, "rel_tol": rel_tol, "window_days": window_days,
+                    "ours": "eps_trend_current of our snapshot nearest to asof - L (same ticker, horizon, "
+                            "period_end)"},
+           "lags": {}}
+    if not days:
+        return rep
+    ours = s.sort_values(["ticker", "horizon", "period_end", "asof_date", "_ord"], kind="mergesort")
+    ours = ours.drop_duplicates(["ticker", "horizon", "period_end", "asof_date"], keep="first")
+    ours = ours[["ticker", "horizon", "period_end", "asof_date", "eps_trend_current", "eps_avg"]].rename(
+        columns={"asof_date": "our_asof", "eps_trend_current": "our_trend", "eps_avg": "our_avg"})
+    ours = ours[ours["our_trend"].notna() | ours["our_avg"].notna()]
+    first = days[0]
+    for L in lags:
+        col = f"eps_trend_{int(L)}d"
+        if span < L or col not in s:
+            rep["lags"][int(L)] = {"status": "insufficient history", "need_days": int(L), "have_days": span}
+            continue
+        v = s[s[col].notna()][["ticker", "horizon", "period", "period_end", "asof_date", col]].copy()
+        v["target"] = v["asof_date"] - pd.Timedelta(days=int(L))
+        v = v[v["target"] >= first - pd.Timedelta(days=window_days)].rename(columns={col: "vendor"})
+        if v.empty:
+            rep["lags"][int(L)] = {"status": "no vendor values", "n_vendor_rows": 0}
+            continue
+        m = pd.merge_asof(v.sort_values("target", kind="mergesort"),
+                          ours.assign(_t=ours["our_asof"]).sort_values("_t", kind="mergesort"),
+                          left_on="target", right_on="_t", by=["ticker", "horizon", "period_end"],
+                          direction="nearest", tolerance=pd.Timedelta(days=window_days))
+        m = m[m["our_asof"].notna()]
+        found = len(m)
+        res = {"status": "ok", "n_vendor_rows": int(len(v)), "n_pairs": int(found),
+               "pair_coverage": round(found / len(v), 4)}
+        if found:
+            ref = m["our_trend"].fillna(m["our_avg"]).to_numpy(float)
+            vend = m["vendor"].to_numpy(float)
+            diff = vend - ref
+            rel = diff / np.maximum(np.abs(ref), 0.01)
+            ok = np.abs(diff) <= np.maximum(abs_tol, rel_tol * np.abs(ref))
+            avg = m["our_avg"].to_numpy(float)
+            has_avg = np.isfinite(avg)
+            ok_avg = np.abs(vend - avg)[has_avg] <= np.maximum(abs_tol, rel_tol * np.abs(avg[has_avg]))
+            res.update({
+                "exact_date_share": _rate((m["our_asof"] == m["target"]).to_numpy()),
+                "match_rate": _rate(ok), "match_rate_vs_eps_avg": _rate(ok_avg),
+                "bias_mean": _stat(diff, np.mean), "bias_median": _stat(diff, np.median),
+                "rel_bias_mean": _stat(rel, np.mean), "rel_bias_median": _stat(rel, np.median),
+                "abs_rel_err_median": _stat(np.abs(rel), np.median),
+                "abs_rel_err_p90": _stat(np.abs(rel), lambda x: np.quantile(x, 0.9)),
+                "n_tickers": int(m["ticker"].nunique()),
+                "by_period": {}})
+            per = m["period"].to_numpy()
+            for p in _BY_PERIOD + tuple(sorted(set(per) - set(_BY_PERIOD))):
+                k = per == p
+                if k.any():
+                    res["by_period"][p or "?"] = {"n": int(k.sum()), "match_rate": _rate(ok[k]),
+                                                  "rel_bias_median": _stat(rel[k], np.median),
+                                                  "abs_rel_err_median": _stat(np.abs(rel[k]), np.median)}
+        rep["lags"][int(L)] = res
+    return rep
+
+
+def format_validation(rep: dict) -> str:
+    """Human-readable report; ``insufficient history (N days)`` when no lag can be checked."""
+    lines = []
+    if not any(r.get("status") == "ok" for r in rep["lags"].values()):
+        lines.append(f"insufficient history ({rep['span_days']} days)")
+        lines.append(f"  {rep['snapshot_days']} snapshot days"
+                     + (f" ({rep['first_snapshot']} .. {rep['last_snapshot']})" if rep["first_snapshot"] else "")
+                     + f"; lags need >= {', '.join(str(k) for k in rep['lags'])} days of history")
+        return "\n".join(lines)
+    r = rep["rule"]
+    lines.append(f"Yahoo vendor-revision validation: {rep['snapshot_days']} snapshot days "
+                 f"{rep['first_snapshot']} .. {rep['last_snapshot']} (span {rep['span_days']} d); match = "
+                 f"|vendor - ours| <= max({r['abs_tol']}, {r['rel_tol']} x |ours|), our snapshot within "
+                 f"+/-{r['window_days']} d of asof - L")
+    for L, x in rep["lags"].items():
+        if x.get("status") != "ok":
+            lines.append(f"  {L:>3}d ago: {x['status']}"
+                         + (f" ({x['have_days']} days, need {x['need_days']})" if "need_days" in x else ""))
+            continue
+        lines.append(f"  {L:>3}d ago: pairs {x['n_pairs']:,}/{x['n_vendor_rows']:,} (coverage {x['pair_coverage']:.1%}"
+                     + (f", exact date {x['exact_date_share']:.1%}" if x.get("exact_date_share") is not None else "")
+                     + ")")
+        if x["n_pairs"]:
+            lines.append(f"        match {x['match_rate']:.1%} (vs eps_avg "
+                         f"{x['match_rate_vs_eps_avg'] if x['match_rate_vs_eps_avg'] is None else format(x['match_rate_vs_eps_avg'], '.1%')}); "
+                         f"bias mean {x['bias_mean']:+.4f} / median {x['bias_median']:+.4f}; rel bias median "
+                         f"{x['rel_bias_median']:+.4f}; |rel err| median {x['abs_rel_err_median']:.4f}, "
+                         f"p90 {x['abs_rel_err_p90']:.4f}")
+            for p, y in x["by_period"].items():
+                lines.append(f"        {p:>4}: n {y['n']:,}, match {y['match_rate']:.1%}, rel bias median "
+                             f"{y['rel_bias_median']:+.4f}, |rel err| median {y['abs_rel_err_median']:.4f}")
+    return "\n".join(lines)
+
+
+# =========================================================================== #
 # Universe + snapshot run
 # =========================================================================== #
 def build_universe_file(path: str = UNIVERSE_FILE, lookback_sessions: int = 21) -> list[str]:
@@ -671,6 +807,14 @@ def main(argv=None) -> int:
                     help="exit 2 if the share of tickers with a 0q EPS consensus is below this")
     ld = sub.add_parser("load", help="summarise snapshots on the data branch")
     ld.add_argument("--no-fetch", action="store_true")
+    va = sub.add_parser("validate", help="Yahoo 'N days ago' consensus vs our own snapshot of that day")
+    va.add_argument("--no-fetch", action="store_true", help="do not fetch the data branch first")
+    va.add_argument("--dir", default=None, help="read snapshots from a local root instead of the data branch")
+    va.add_argument("--lags", default=",".join(str(x) for x in VALIDATE_LAGS))
+    va.add_argument("--abs-tol", type=float, default=0.005)
+    va.add_argument("--rel-tol", type=float, default=0.01)
+    va.add_argument("--window", type=int, default=3, help="+/- calendar days around asof - L for our snapshot")
+    va.add_argument("--json", default=None, help="also write the report as JSON to this path")
     a = ap.parse_args(argv)
 
     if a.cmd == "universe":
@@ -696,6 +840,15 @@ def main(argv=None) -> int:
         days = sorted(df["asof_date"].dropna().unique())
         print(f"[estimates] {len(df)} rows, {df['ticker'].nunique()} tickers, {len(days)} snapshot days"
               + (f" ({days[0]} .. {days[-1]})" if days else ""))
+        return 0
+    if a.cmd == "validate":
+        df = load_dir(a.dir) if a.dir else load_branch_snapshots(fetch=not a.no_fetch)
+        rep = validate_vendor_revisions(df, lags=[int(x) for x in a.lags.split(",") if x.strip()],
+                                        abs_tol=a.abs_tol, rel_tol=a.rel_tol, window_days=a.window)
+        print(format_validation(rep))
+        if a.json:
+            with open(a.json, "w") as f:
+                json.dump(rep, f, indent=1, default=str)
         return 0
     return 1
 

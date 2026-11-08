@@ -80,11 +80,15 @@ def build_frame(log=print) -> dict:
     return info
 
 
-def train(log=print, out_dir: str = OUT_DIR, name: str = ARTEFACT_NAME) -> tuple[str, str]:
+def train(log=print, out_dir: str = OUT_DIR, name: str = ARTEFACT_NAME, calendar=None) -> tuple[str, str]:
+    """Fit the fixed recipe on every labelled row of the final frame. ``calendar``
+    (session dates, for the embargo) defaults to the base v3 dataset's; the
+    quarterly retrain (``v3/retrain_altall.py``) passes the refreshed EDGAR
+    dataset's calendar, which holds the same sessions plus the new ones."""
     feats = feature_columns()
     w = pd.read_parquet(frame_path(), columns=["ticker", "Date", TARGET] + feats)
     w = w[w[TARGET].notna()].reset_index(drop=True)
-    cal = ds.calendar_from_dataset()
+    cal = ds.calendar_from_dataset() if calendar is None else calendar
     frame_info = json.load(open(frame_path() + ".json")) if os.path.exists(frame_path() + ".json") else {}
     log(f"[final] training {SIGNAL}: {len(w):,} labelled rows, {w['Date'].nunique()} dates "
         f"{w['Date'].min()}..{w['Date'].max()}, {len(feats)} features")

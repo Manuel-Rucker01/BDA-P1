@@ -18,7 +18,7 @@ HALT     := DataAnalysisPipeline2/trading_agent/agent_logs/accounts/$(ACCOUNT)/.
 
 .DEFAULT_GOAL := help
 .PHONY: help install run-ui ui propose run-live account rebalance-check rebalance-start \
-        rebalance monitor retrain backtest backtest-full test clean reset-halt
+        rebalance monitor retrain retrain-altall backtest backtest-full test clean reset-halt
 
 help: ## Show this help
 	@echo "BDA Quant — available commands:"
@@ -69,6 +69,9 @@ retrain: ## Quarterly retrain via the v3 pipeline CLI (refresh -> train -> gate)
 		echo "  retrain manually with the v2 notebooks/scripts and follow the 'Quarterly retrain due' issue checklist."; \
 		exit 1; \
 	fi
+
+retrain-altall: ## Retrain the paper model (model_v3_altall) with the fixed recipe + validation; pass RETRAIN_ARGS=...
+	$(PY) -m DataAnalysisPipeline2.v3.retrain_altall $(RETRAIN_ARGS)
 
 backtest: ## Fast canonical OOS backtest (clean post-training window only)
 	cd $(BT) && BACKTEST_POST_ONLY=1 $(PY) canonical_oos.py
