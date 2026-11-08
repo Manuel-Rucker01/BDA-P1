@@ -233,7 +233,7 @@ def expected_dates(kept: pd.DataFrame, decision: str, gap_days: int = gate.R11_E
     """cik -> expected next announcement date (last kept event known by the
     decision date + ``gap_days``). Uses only events accepted on/before
     ``decision`` (New York date)."""
-    k = kept[kept["adate"] <= decision]
+    k = kept[kept["adate"] <= str(decision)]
     last = k.groupby("cik")["adate"].max()
     return (pd.to_datetime(last) + pd.Timedelta(days=gap_days)).dt.strftime("%Y-%m-%d")
 
@@ -241,6 +241,7 @@ def expected_dates(kept: pd.DataFrame, decision: str, gap_days: int = gate.R11_E
 def blackout_window(reb: str, calendar, sessions: int = gate.R11_BLACKOUT_SESSIONS,
                     overdue_days: int = gate.R11_BLACKOUT_OVERDUE_DAYS) -> tuple[str, str]:
     cal = np.asarray(calendar).astype(str)
+    reb = str(reb)
     i = int(np.searchsorted(cal, reb))
     end = cal[min(i + sessions, len(cal) - 1)] if i + sessions < len(cal) else \
         (pd.Timestamp(reb) + pd.offsets.BDay(sessions)).strftime("%Y-%m-%d")
