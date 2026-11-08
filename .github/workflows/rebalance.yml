@@ -75,6 +75,12 @@ jobs:
       # Switch: repository variable BDA_SIGNAL=altall.
       BDA_SIGNAL: ${{ vars.BDA_SIGNAL || 'production' }}
       BDA_ALT_INSIDER_MAX_AGE_DAYS: ${{ vars.BDA_ALT_INSIDER_MAX_AGE_DAYS || '14' }}
+      # Round-11 earn_blackout (PAPER; selected in Round 11 but FAILS the gate): with the
+      # altall signal + optimized_v3, names with an expected earnings date in
+      # [rebalance - 10 d, 5th session after] are capped at their current weight. Uses
+      # trading_agent/data/altdata_snapshot/earnings_events.parquet; skipped (logged) if
+      # older than 14 days. Only applies while the altall signal is in use. Off: '0'.
+      BDA_EARN_BLACKOUT: ${{ vars.BDA_EARN_BLACKOUT || '1' }}
       # Optional: with a SEC_USER_AGENT secret the runner tops up the Form 4 feed since the
       # snapshot (<= 8 req/s, time-boxed); without it the committed snapshot is used.
       SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}

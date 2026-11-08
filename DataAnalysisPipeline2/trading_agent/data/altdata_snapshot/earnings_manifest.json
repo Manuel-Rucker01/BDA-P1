@@ -1,0 +1,12 @@
+{
+ "as_of": "2026-11-06",
+ "built": "2026-11-08",
+ "keep_per_cik": 3,
+ "rows": 12274,
+ "ciks": 4296,
+ "last_event": "2026-11-06",
+ "raw_8k_202_events": 142025,
+ "bytes": 46626,
+ "source": "EDGAR 8-K item 2.02: bulk submissions.zip ($BDA_DATA_V3/sec_earn/events.parquet) + daily index / per-CIK submissions JSON top-up (v3/earnlive.py)",
+ "note": "Round-11 earn_blackout input. Refresh: `python -m DataAnalysisPipeline2.v3.altlive refresh` then `python -m DataAnalysisPipeline2.trading_agent.altall snapshot`; the bot skips the blackout when as_of is older than BDA_EARN_MAX_AGE_DAYS before the decision date."
+}

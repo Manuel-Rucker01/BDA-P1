@@ -86,6 +86,12 @@ def refresh(log=print) -> dict:
     got = ad.download_si(start=f"{last[:4]}-{last[4:6]}", log=log)
     ad.load_si(refresh_cache=True)
     info["si_files"] = len(got)
+    try:                       # Round-11 earnings blackout events (8-K 2.02); optional, never blocks the rest
+        from . import earnlive
+        info["earnings_8k"] = earnlive.refresh(log=log)
+    except Exception as e:     # noqa: BLE001
+        log(f"[altlive] 8-K 2.02 refresh failed ({type(e).__name__}: {e}); the earnings snapshot keeps its date")
+        info["earnings_8k"] = {"error": f"{type(e).__name__}: {e}"}
     return info
 
 

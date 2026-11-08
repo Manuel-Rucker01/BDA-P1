@@ -26,7 +26,10 @@ Data sources in the cloud (no ``$BDA_DATA_V3``):
 
       python -m DataAnalysisPipeline2.v3.altlive refresh           # local caches
       python -m DataAnalysisPipeline2.trading_agent.optimized snapshot
-      python -m DataAnalysisPipeline2.trading_agent.altall snapshot
+      python -m DataAnalysisPipeline2.trading_agent.altall snapshot   # + earnings_events.parquet
+
+  The same directory holds the Round-11 earnings-blackout events
+  (``earnings_events.parquet`` / ``earnings_manifest.json``, ``earnings.py``).
 
 Freshness (``load_sources``): the insider feed must reach within
 ``BDA_ALT_INSIDER_MAX_AGE_DAYS`` (default 14) calendar days of the decision
@@ -400,6 +403,12 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     if a.cmd == "snapshot":
         print(json.dumps(build_snapshot(a.out, a.days), indent=1))
+        try:                   # Round-11 earnings blackout events (optional; never fails this command)
+            from . import earnings
+            print(json.dumps({"earnings": earnings.build_snapshot(a.out)}, indent=1))
+        except Exception as e:  # noqa: BLE001
+            print(f"[altall] earnings snapshot NOT rebuilt ({type(e).__name__}: {e}); the bot skips the "
+                  f"blackout once it is older than BDA_EARN_MAX_AGE_DAYS")
     else:
         src = read_snapshot(a.out)
         try:

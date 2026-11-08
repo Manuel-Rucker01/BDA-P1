@@ -1520,6 +1520,22 @@ class BDATradingAgent:
             print(f"[Agent] optimized_v3: current positions unavailable ({e}); w_prev = cash.")
             return {}
 
+    def _earn_blackout_fn(self, w_prev):
+        """(cap_fn for ``optimized.optimized_book`` or None, note when None).
+        Round-11 earnings blackout: on when ``config.EARN_BLACKOUT`` and the
+        altall signal is in use. Errors / stale events inside cap_fn -> no caps."""
+        if not config.EARN_BLACKOUT:
+            return None, {"applied": False, "skipped": "disabled (BDA_EARN_BLACKOUT=0)"}
+        if getattr(self, "signal", "production") != "altall":
+            return None, {"applied": False, "skipped": f"signal {getattr(self, 'signal', None)!r} is not altall"}
+
+        def cap_fn(tickers, meta):
+            from . import earnings
+            return earnings.live_caps(tickers, meta["decision_date"], w_prev, config.OPT_TARGET_EXPOSURE,
+                                      meta["fund_dir"], max_age_days=config.EARN_MAX_AGE_DAYS,
+                                      snapshot_dir=config.ALT_SNAPSHOT_DIR)
+        return cap_fn, None
+
     def _optimized_v3_or_fallback(self, predictions_df):
         """optimized_v3 book, or -- on ANY failure (fundamentals / risk model /
         solver / constraint check) -- the long_only_v3 book. The optimizer
@@ -1531,19 +1547,35 @@ class BDATradingAgent:
             if bars is None or len(bars) == 0:
                 raise optimized.OptimizerUnavailable("no bar history (fetch_live_data not run)")
             ic = config.OPT_IC_ALTALL if getattr(self, "signal", "production") == "altall" else config.OPT_IC
+            w_prev = self._current_weights()
+            cap_fn, bl_note = self._earn_blackout_fn(w_prev)
             w, diag = optimized.optimized_book(
                 predictions_df, bars, aum=config.OPT_AUM, ic=ic,
-                target_exposure=config.OPT_TARGET_EXPOSURE, w_prev=self._current_weights(),
+                target_exposure=config.OPT_TARGET_EXPOSURE, w_prev=w_prev,
                 fund_dir=config.OPT_FUND_DIR or None, max_age_days=config.OPT_FUND_MAX_AGE_DAYS,
                 min_universe=config.OPT_MIN_UNIVERSE, min_names=config.OPT_MIN_NAMES,
-                spec={"min_weight": config.OPT_MIN_WEIGHT})
+                spec={"min_weight": config.OPT_MIN_WEIGHT}, cap_fn=cap_fn)
+            if diag.get("earn_blackout") is None:
+                diag["earn_blackout"] = bl_note
             self.last_book_diagnostics = diag
             self.last_construction = {"requested": "optimized_v3", "construction": "optimized_v3",
                                       **{k: diag[k] for k in ("ic", "n_names", "long", "ex_ante_vol_ann",
                                                                "turnover_oneway", "solve_seconds", "status",
                                                                "ex_ante_beta_vs_cw", "ex_ante_te_ann_vs_cw")},
                                       "fundamentals_source": diag["fundamentals"]["source"],
-                                      "fundamentals_as_of": diag["fundamentals"]["as_of"]}
+                                      "fundamentals_as_of": diag["fundamentals"]["as_of"],
+                                      "earn_blackout": diag["earn_blackout"]}
+            bl = diag["earn_blackout"] or {}
+            if bl.get("applied"):
+                print(f"[Agent] earn_blackout: {bl['n_blackout']} names blocked ({bl['n_blackout_held']} held, "
+                      f"{bl['blackout_held_w']:.2%} of equity; {bl.get('book_w_blackout', 0.0):.2%} in the book, "
+                      f"{bl.get('n_blackout_trimmed', 0)} trimmed) | window {bl['window']} | "
+                      f"events {bl.get('events_source')} as of {bl.get('events_as_of')}")
+                print(f"[Agent] earn_blackout names: {bl['names']}")
+                if bl.get("held"):
+                    print(f"[Agent] earn_blackout held (capped at current weight): {bl['held']}")
+            else:
+                print(f"[Agent] earn_blackout not applied: {bl.get('skipped', bl)}")
             print(f"[Agent] optimized_v3 ({diag['spec']}, AUM ${diag['aum']:,.0f}, IC {diag['ic']:.4f}): "
                   f"{diag['n_names']} names | long={diag['long']:.3f} cash={diag['cash']:.3f} | "
                   f"max w={diag['max_weight']:.2%} | ex-ante vol {diag['ex_ante_vol_ann']:.1%} | "

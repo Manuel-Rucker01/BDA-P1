@@ -284,13 +284,18 @@ def optimized_book(preds: pd.DataFrame, bars: pd.DataFrame, *, aum: float, ic: f
                    target_exposure: float, w_prev: dict | None = None, fund_dir: str | None = None,
                    max_age_days: int = 120, min_universe: int = 300, min_names: int = 20,
                    spec: dict | None = None, rank_col: str = "pred_rank", today=None,
-                   candidates: list | None = None, log=print) -> tuple[dict, dict]:
+                   candidates: list | None = None, cap_fn=None, log=print) -> tuple[dict, dict]:
     """Long-only ``mv_abs_all`` book for the live decision.
 
     ``preds``: ticker, ``rank_col``. ``bars``: the live daily bars (ticker, Date,
     High, Low, company_close, company_volume) with >= ~300 sessions. ``w_prev``:
     current weights (fraction of equity; names outside the universe are sold by
     the executor). Returns (weights summing to <= ``target_exposure``, diag).
+    ``cap_fn`` (optional, the Round-11 earnings blackout): called as
+    ``cap_fn(tickers, {**meta, 'fund_dir': ...})`` -> (ticker -> extra upper
+    bound on the fully-invested book, info dict). ANY exception from it, or a
+    capped book that fails the solver / constraint checks, means NO caps
+    (logged in ``diag['earn_blackout']``); it never makes the book unavailable.
     Raises on any failure -- the caller falls back to ``long_only_v3``."""
     from DataAnalysisPipeline2.v3 import optimizer as op
     t0 = time.time()
@@ -310,10 +315,26 @@ def optimized_book(preds: pd.DataFrame, bars: pd.DataFrame, *, aum: float, ic: f
     if meta["n_universe"] < min_universe:
         raise OptimizerUnavailable(f"universe of {meta['n_universe']} names < minimum {min_universe}")
     sp = live_spec(spec)
+    caps, bl = None, None
+    if cap_fn is not None:
+        try:
+            caps, bl = cap_fn(inputs["tickers"], {**meta, "fund_dir": fd["path"]})
+        except Exception as e:      # noqa: BLE001 -- the blackout is optional
+            bl = {"applied": False, "skipped": f"{type(e).__name__}: {e}"[:500]}
+            log(f"[optimized_v3] earnings blackout skipped -- {bl['skipped']}")
     t1 = time.time()
-    wd, diag = op.optimize_portfolio(sp, aum=float(aum), ic=float(ic), w_prev=w_prev or {}, **inputs)
-    t_solve = time.time() - t1
+    wd, diag = op.optimize_portfolio(sp, aum=float(aum), ic=float(ic), w_prev=w_prev or {}, ub_cap=caps, **inputs)
     w = np.array([wd.get(t, 0.0) for t in inputs["tickers"]])
+    if caps is not None:
+        try:
+            check_book(w, inputs, sp, float(aum), diag)
+        except OptimizerUnavailable as e:
+            bl = {**bl, "applied": False, "skipped": f"capped book rejected ({e}); solved without the blackout"}
+            log(f"[optimized_v3] earnings blackout dropped -- {bl['skipped']}")
+            caps = None
+            wd, diag = op.optimize_portfolio(sp, aum=float(aum), ic=float(ic), w_prev=w_prev or {}, **inputs)
+            w = np.array([wd.get(t, 0.0) for t in inputs["tickers"]])
+    t_solve = time.time() - t1
     check_book(w, inputs, sp, float(aum), diag)
     # The cardinality step re-solves once; the re-solve can leave a few new
     # residual positions below min_weight (untradable: below the executor's
@@ -333,6 +354,15 @@ def optimized_book(preds: pd.DataFrame, bars: pd.DataFrame, *, aum: float, ic: f
     adv = np.asarray(inputs["adv"], float)
     cap = np.minimum(sp["name_cap"], np.where(np.isfinite(adv) & (adv > 0), sp["liq_frac"] * adv / float(aum), 0.0))
     w = np.minimum(w * float(target_exposure), cap)
+    if caps is not None:            # blacked-out names never above their current weight
+        ubc = np.array([caps.get(str(t), np.inf) for t in inputs["tickers"]])
+        w = np.minimum(w, np.maximum(ubc, 0.0) * float(target_exposure))
+        tick = np.asarray(inputs["tickers"]).astype(str)
+        blk = np.isin(tick, list(caps))
+        prev = np.array([max(float((w_prev or {}).get(t, 0.0) or 0.0), 0.0) for t in tick])
+        bl = {**bl, "book_w_blackout": float(w[blk].sum()),
+              "n_blackout_trimmed": int(((w < prev - 1e-9) & blk).sum()),
+              "n_blackout_in_book": int(((w > 0) & blk).sum())}
     weights = {str(t): float(x) for t, x in zip(inputs["tickers"], w) if x > 0}
     names = meta["sector_names"]
     other = len(names) - 1 if "Other" not in names else names.index("Other")
@@ -352,6 +382,7 @@ def optimized_book(preds: pd.DataFrame, bars: pd.DataFrame, *, aum: float, ic: f
            "n_prev_held": int(sum(1 for v in (w_prev or {}).values() if v)),
            "solve_seconds": round(t_solve, 2), "build_seconds": round(t_build, 2),
            "fundamentals": fd, **{k: v for k, v in meta.items() if k != "sector_names"},
+           "earn_blackout": bl,
            "sector_weights": {s: round(float(r.w), 4) for s, r in by_sec.iterrows() if r.w > 0},
            "sector_bench": {s: round(float(r.b), 4) for s, r in by_sec.iterrows()},
            "top_weights": [(t, round(x, 4)) for t, x in top],

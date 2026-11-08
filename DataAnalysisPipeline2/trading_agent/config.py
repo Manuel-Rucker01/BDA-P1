@@ -284,6 +284,15 @@ ALT_INSIDER_MAX_AGE_DAYS = _env_num("ALT_INSIDER_MAX_AGE_DAYS", 14, int)
 # feed only if SEC_USER_AGENT is set, time-boxed to ALT_REFRESH_BUDGET_S seconds.
 ALT_REFRESH = bool(_env_num("ALT_REFRESH", 1, int))
 ALT_REFRESH_BUDGET_S = _env_num("ALT_REFRESH_BUDGET_S", 900.0)
+# --- Round-11 earnings blackout (optimized_v3 + the altall signal; trading_agent/earnings.py) ---
+# Names whose expected earnings date (last retained 8-K 2.02 + 91 d) is in
+# [rebalance - 10 d, 5th session after] cannot be bought / increased (cap = current
+# weight). Round 11 selected it (Sharpe 1.04, max DD -27.7%) but it FAILS the gate
+# (IR vs SPY -0.10, DSR 0.862): PAPER only. BDA_EARN_BLACKOUT=1/0 overrides; unset =
+# ON iff BDA_SIGNAL=altall. Applied only while the altall signal is in use. Events
+# older than EARN_MAX_AGE_DAYS before the decision date -> blackout skipped (logged).
+EARN_BLACKOUT = bool(_env_num("EARN_BLACKOUT", 1 if SIGNAL == "altall" else 0, int))
+EARN_MAX_AGE_DAYS = _env_num("EARN_MAX_AGE_DAYS", 14, int)
 
 # Exposure-reducing orders (sells / covers) are sent first and the bot waits up
 # to FILL_WAIT_TIMEOUT_S for them to fill (polling every FILL_POLL_INTERVAL_S)

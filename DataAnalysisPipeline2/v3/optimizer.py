@@ -372,9 +372,22 @@ DEFAULT_SPEC = {"kind": "active", "te": 0.04, "lam": 1.0, "name_cap": 0.05, "act
                 "cost_mult": 1.0, "impact_k": 0.2}
 
 
+def _cap_array(ub_cap, tickers) -> np.ndarray | None:
+    """``ub_cap`` (dict ticker -> cap or (N,) array) -> (N,) array >= 0, np.inf = no cap."""
+    if ub_cap is None:
+        return None
+    if isinstance(ub_cap, dict):
+        cap = np.array([float(ub_cap.get(t, np.inf)) for t in np.asarray(tickers)])
+    else:
+        cap = np.asarray(ub_cap, float)
+        if cap.shape != (len(tickers),):
+            raise ValueError(f"ub_cap has shape {cap.shape}, expected ({len(tickers)},)")
+    return np.maximum(np.where(np.isnan(cap), np.inf, cap), 0.0)
+
+
 def optimize_portfolio(spec: dict, *, tickers, scores, X, F_daily, D_daily, mcap, sector, factors,
                        half_spread, sigma_daily, adv, aum: float, ic: float, w_prev: dict | None = None,
-                       shortable=None, borrow_annual=None, solver_kw: dict | None = None):
+                       shortable=None, borrow_annual=None, solver_kw: dict | None = None, ub_cap=None):
     """Cost-aware mean-variance book for one rebalance.
 
     ``spec['kind']``:
@@ -393,6 +406,11 @@ def optimize_portfolio(spec: dict, *, tickers, scores, X, F_daily, D_daily, mcap
     k sigma sqrt(trade/ADV) (``costs.py``) on w - w_prev, times ``cost_mult``.
     All risk/alpha terms are over ``horizon`` sessions. Names in ``w_prev`` that
     are not in ``tickers`` are NOT handled here (the caller sells them).
+    ``ub_cap`` (optional): extra per-name upper bound, a dict ticker -> cap
+    (missing = none) or an (N,) array (np.inf = none); negative caps count as 0.
+    It is applied as an upper bound and again after the budget polish (the
+    polish must not lift a capped name; the leftover stays in cash) -- for
+    ``kind == 'absolute'`` exactly ``round11.optimize_ext(..., ub_cap=...)``.
 
     Returns (weights dict ticker -> w, diagnostics dict)."""
     from . import costs as cs
@@ -414,6 +432,9 @@ def optimize_portfolio(spec: dict, *, tickers, scores, X, F_daily, D_daily, mcap
         ub = np.minimum(sp["name_cap"], liq)
     else:
         ub = np.minimum(b + sp["active_cap"], liq)
+    cap = _cap_array(ub_cap, tickers)
+    if cap is not None:
+        ub = np.minimum(ub, cap)
     lb = np.zeros(n)
     short_budget = None
     borrow = None
@@ -465,6 +486,8 @@ def optimize_portfolio(spec: dict, *, tickers, scores, X, F_daily, D_daily, mcap
         w[pos] = w[pos] * (1.0 + (1.0 - net) / w[pos].sum())
     elif net > 1.0:
         w = w / net
+    if cap is not None:                          # the polish must not lift a capped name (leftover -> cash)
+        w = np.minimum(w, cap + 1e-12)
     weights = {t: float(x) for t, x in zip(tickers, w) if x != 0.0}
     a = w - b
     t_ = w - wp

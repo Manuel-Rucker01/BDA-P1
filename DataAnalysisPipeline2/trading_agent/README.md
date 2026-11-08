@@ -117,6 +117,15 @@ Customize your stock universe and basket size:
   (14) or a missing public FINRA file, a feature error, or an optimized_v3 book that could not
   be built all fall back to the production model and its usual optimized_v3 -> long_only_v3
   path; `CONSTRUCTION_JSON` / `RESULT_JSON` carry `signal` and `signal_fallback_reason`.
+* **Earnings blackout (`BDA_EARN_BLACKOUT`, default on with `BDA_SIGNAL=altall`)**: the
+  Round-11 `earn_blackout` rule (`earnings.py`; selected in Round 11 but it fails the gate --
+  PAPER only). With `optimized_v3` and the altall signal in use, a name whose expected
+  earnings date (last retained 8-K item 2.02 + 91 d) falls in [rebalance - 10 d, 5th session
+  after] is capped at its current Alpaca weight (0 if not held) via `optimize_portfolio(ub_cap=...)`.
+  Events: `data/altdata_snapshot/earnings_events.parquet` + `earnings_manifest.json`, refreshed
+  by the same two commands (`v3.altlive refresh` tops up the 8-K feed from EDGAR, `altall
+  snapshot` rewrites the file). Events older than `BDA_EARN_MAX_AGE_DAYS` (14) before the
+  decision date, or any error, skip the blackout (logged; `CONSTRUCTION_JSON.earn_blackout`).
 
 ### 5. Market Regime Override
 To manually force the market trend regime (bypassing S&P 500 HMM decoders):
