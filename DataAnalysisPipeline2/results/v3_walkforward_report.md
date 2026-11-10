@@ -1431,3 +1431,8 @@ What round 11 established:
 If the user wants to act anyway, both options would be explicit, gate-failing opt-ins:
 * **The blackout.** It is a risk-hygiene change. It satisfies the selection rule but has the same gate failures as the incumbent. Wiring: `round11.optimize_ext(..., ub_cap=...)` or an equivalent `ub_cap` argument in `optimizer.optimize_portfolio`, plus `retained_events` / `expected_dates` / `blackout_window` on a refreshed 8-K 2.02 event table.
 * **Leverage to ~1.5×.** It is the only route to a positive point estimate vs SPY, and it needs a margin account.
+
+## Risk & monitoring (2026-11-10, zero trials, N stays 103)
+
+- **Stress test** (`v3/stress.py`, `results/stress_test.md`): current book (2026-11-02, 104 names, ex-ante beta 0.39) — COVID replay −33.6% (≈SPY), 2022 −9.0% vs SPY −24.1%, Apr 2025 −10.7% vs −11.5%. Factor shocks small (momentum ≈0, value ±0.4%). Risk-model bias stat 1.16 overall, **1.60 in high-vol regimes** (0.86 calm): tails underestimated in stress; low-beta protection mostly vanishes in sharp crashes. Candidate for one pre-registered trial: vol-regime risk multiplier.
+- **Monte Carlo** (`v3/montecarlo.py`, `results/montecarlo_bands.md`): stationary block bootstrap (21d, 10k paths). 12m median +15.7%, P(beat SPY) 48% raw / 21% with 50% haircut. Frozen YELLOW/RED bands in `ops/mc_bands.json`, checked each workflow run (`--check-only`; RED opens an issue recommending halt/revert).

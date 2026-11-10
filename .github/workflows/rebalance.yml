@@ -173,6 +173,24 @@ jobs:
           git commit -m "ops: rebalance log $(date -u +%F)" || exit 0
           git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && git push || echo "log push failed (non-fatal)"
 
+      - name: Monte-Carlo band check (pre-registered 2026-11-10, ops/mc_bands.json)
+        # Read-only: compares the live paper track with the frozen bootstrap bands.
+        # YELLOW = below the haircut 5th pct; RED = below the 1st pct -> opens an issue
+        # recommending a halt / revert to best_model.pkl. Never changes trading here.
+        if: always() && steps.pre.outcome != 'skipped' && inputs.mode != 'check'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -m DataAnalysisPipeline2.v3.montecarlo --check-only | tee mc.log && exit 0
+          TITLE="Monte-Carlo RED: monthly $(date -u +%Y-%m)"
+          if gh issue list --repo "$GITHUB_REPOSITORY" --state all --limit 100 --search "\"$TITLE\" in:title" \
+               --json title -q '.[].title' | grep -Fxq "$TITLE"; then exit 0; fi
+          { echo "The live paper track fell below the pre-registered 1st-percentile Monte-Carlo band."
+            echo; echo '```'; cat mc.log; echo '```'
+            echo; echo "Pre-registered action: halt the bot or revert to best_model.pkl (set BDA_SIGNAL=production)."; } > mc_issue.md
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file mc_issue.md
+
       - name: Open issue on monitoring alerts
         # Deduplicated by title: at most one alert issue per account and month.
         if: always() && steps.pre.outcome != 'skipped' && inputs.mode != 'check'
