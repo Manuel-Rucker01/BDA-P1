@@ -804,3 +804,37 @@ def choose_config_r11(perf: dict):
     ok = {k: v for k, v in pool_all.items() if v["max_dd"] >= MAX_DD_FLOOR}
     pool = ok or pool_all
     return max(pool, key=lambda k: pool[k]["ir_spy"])
+
+
+# --------------------------------------------------------------------------- #
+# Round 12 (pre-registered in results/round12_preregistration.md, committed
+# before any Round-12 book was run): one trial, "vra" -- the Round-11
+# earn_blackout book with F and D scaled by lambda_t^2 at each rebalance,
+# lambda_t^2 = EWMA (R12_VRA_HL sessions) of B_d^2 = mean_i z_{i,d}^2 over the
+# names of the latest stored weekly model strictly before d (equal-weighted,
+# returns clipped to risk.EST_CLIP, >= R12_MIN_NAMES names), lambda_t = 1 with
+# < R12_MIN_DAYS days, clipped to R12_LAMBDA_CLIP. Gate = Round 11's at
+# N = 104. Adoption if the gate passes, else only if ALL R12_ADOPT_* hold vs
+# the earn_blackout incumbent rerun under identical code.
+# --------------------------------------------------------------------------- #
+R12_BASE_TRIAL = "earn_blackout"
+R12_TRIALS = ("vra",)
+R12_VRA_HL = 42
+R12_LAMBDA_CLIP = (0.7, 2.0)
+R12_MIN_NAMES = 100
+R12_MIN_DAYS = 20
+R12_COVID = ("2020-02-19", "2020-03-23")
+R12_ADOPT_SHARPE_TOL = 0.03
+R12_ADOPT_DD_GAIN = 0.020
+R12_ADOPT_IR_TOL = 0.05
+N_TRIALS_R12 = N_TRIALS_R11 + len(R12_TRIALS)                         # 103 + 1 = 104
+
+
+def adopt_r12(vra: dict, inc: dict, passed_gate: bool) -> dict:
+    """Pre-registered adoption rule. ``vra`` / ``inc``: sharpe, max_dd, covid_dd, ir_spy."""
+    checks = {"sharpe": vra["sharpe"] >= inc["sharpe"] - R12_ADOPT_SHARPE_TOL,
+              "max_dd": vra["max_dd"] - inc["max_dd"] >= R12_ADOPT_DD_GAIN - 1e-12,
+              "covid_dd": vra["covid_dd"] > inc["covid_dd"],
+              "ir_spy": vra["ir_spy"] >= inc["ir_spy"] - R12_ADOPT_IR_TOL}
+    return {"passed_gate": bool(passed_gate), "checks": checks,
+            "adopt": bool(passed_gate or all(checks.values()))}
