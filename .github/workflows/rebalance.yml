@@ -72,8 +72,10 @@ jobs:
       # FAILS the gate (DSR 0.863 at N = 92, IR vs SPY -0.13). Needs fresh committed
       # snapshots (trading_agent/data/{altdata,fundamentals}_snapshot); any failure falls
       # back to production + optimized_v3 -> long_only_v3 (logged in CONSTRUCTION_JSON).
-      # Switch: repository variable BDA_SIGNAL=altall.
-      BDA_SIGNAL: ${{ vars.BDA_SIGNAL || 'production' }}
+      # PROMOTED to the default paper model on 2026-11-10 by explicit user decision
+      # (still fails the pre-registered gate; see results/v3_walkforward_report.md).
+      # Set the repository variable BDA_SIGNAL=production to go back to best_model.pkl.
+      BDA_SIGNAL: ${{ vars.BDA_SIGNAL || 'altall' }}
       BDA_ALT_INSIDER_MAX_AGE_DAYS: ${{ vars.BDA_ALT_INSIDER_MAX_AGE_DAYS || '14' }}
       # Round-11 earn_blackout (PAPER; selected in Round 11 but FAILS the gate): with the
       # altall signal + optimized_v3, names with an expected earnings date in

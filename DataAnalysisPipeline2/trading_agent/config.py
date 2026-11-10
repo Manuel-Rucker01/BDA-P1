@@ -260,7 +260,7 @@ OPT_FUND_DIR = os.getenv("BDA_OPT_FUND_DIR", "")             # override; else lo
 OPT_FUND_MAX_AGE_DAYS = _env_num("OPT_FUND_MAX_AGE_DAYS", 120, int)
 OPT_MIN_UNIVERSE = _env_num("OPT_MIN_UNIVERSE", 300, int)
 OPT_MIN_NAMES = _env_num("OPT_MIN_NAMES", 20, int)
-# --- Signal selection: BDA_SIGNAL = production (default) | altall ---
+# --- Signal selection: BDA_SIGNAL = altall (default since 2026-11-10, user decision) | production ---
 # altall = the best Round-8 book's signal sn30_altall_hd (v3 core + EDGAR
 # fundamentals + SEC insider (hot-decked) + FINRA short interest), artefact
 # ExploitationZone/model_v3_altall.pkl (git LFS; trained with the exact Round-8
@@ -271,7 +271,7 @@ OPT_MIN_NAMES = _env_num("OPT_MIN_NAMES", 20, int)
 # ANY failure (artefact missing / invalid, stale or missing snapshot, feature
 # error, optimized_v3 not built) falls back to the production model and the
 # usual optimized_v3 -> long_only_v3 path, logged in CONSTRUCTION_JSON.
-SIGNAL = (os.getenv("BDA_SIGNAL", "production") or "production").strip().lower()
+SIGNAL = (os.getenv("BDA_SIGNAL", "altall") or "altall").strip().lower()
 ALTALL_MODEL_PATH = os.getenv("BDA_MODEL_PATH_ALTALL", "") or os.path.join(EXPLOITATION_DIR, "model_v3_altall.pkl")
 # OPT_IC for the altall signal: Round-8 trailing IC of sn30_altall_hd at the last
 # walk-forward decision (2026-11-04) under the pre-registered R5 rule (last 104

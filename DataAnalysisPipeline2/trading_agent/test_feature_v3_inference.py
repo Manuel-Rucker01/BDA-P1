@@ -102,6 +102,7 @@ def test_v3_artifact_roundtrip_through_load_model(tmp_path, monkeypatch, offline
                                   models=("lgbm",), log=lambda *a: None)
     pkl, js = artefact.save_artifact(art, out_dir=str(tmp_path))
     monkeypatch.setattr(config, "MODEL_PATH", pkl)
+    monkeypatch.setattr(config, "SIGNAL", "production")   # test the MODEL_PATH artefact, not altall
     a = bot.BDATradingAgent()
     a.load_model()
     assert a.feature_version == 3 and a.pca_cols == [] and a.tabular_cols == FEATS
