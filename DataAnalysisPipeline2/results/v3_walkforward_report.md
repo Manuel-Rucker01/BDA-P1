@@ -1436,3 +1436,33 @@ If the user wants to act anyway, both options would be explicit, gate-failing op
 
 - **Stress test** (`v3/stress.py`, `results/stress_test.md`): current book (2026-11-02, 104 names, ex-ante beta 0.39) — COVID replay −33.6% (≈SPY), 2022 −9.0% vs SPY −24.1%, Apr 2025 −10.7% vs −11.5%. Factor shocks small (momentum ≈0, value ±0.4%). Risk-model bias stat 1.16 overall, **1.60 in high-vol regimes** (0.86 calm): tails underestimated in stress; low-beta protection mostly vanishes in sharp crashes. Candidate for one pre-registered trial: vol-regime risk multiplier.
 - **Monte Carlo** (`v3/montecarlo.py`, `results/montecarlo_bands.md`): stationary block bootstrap (21d, 10k paths). 12m median +15.7%, P(beat SPY) 48% raw / 21% with 50% haircut. Frozen YELLOW/RED bands in `ops/mc_bands.json`, checked each workflow run (`--check-only`; RED opens an issue recommending halt/revert).
+
+## Round 12: volatility regime adjustment (`vra`), 1 trial, N = 104
+
+Pre-registered in `results/round12_preregistration.md` (commit 8860d7e, before any book was run) and `v3/gate.py` (`R12_*`). Code: `v3/round12.py` (reuses `round11.run_book` via a new `model_hook`), tests `v3/tests/test_round12.py`. Outputs: `eval/r12_{base,vra}_{daily,log}.parquet`, `r12_lambda.parquet`, `r12_bias_daily.parquet`, `results_r12.json`, `gate_r12.json`.
+
+**Spec.** At each decision date t: B_d² = equal-weighted mean of z² over eligible names, where z = clipped daily return / predicted total vol. The vol comes from the latest stored weekly model strictly before d: a documented proxy for "previous day", up to 5 sessions stale. λ_t = sqrt(EWMA_hl42 of B_d²), clipped to [0.7, 2.0]. F and D are scaled by λ_t² on top of the engine's existing USE4 VRA. Everything else is the `earn_blackout` book.
+
+**Engineering check.** The hook-free runner reproduces `r11_earn_blackout` exactly (max |diff| 0.0 over 1,951 sessions).
+
+| book | CAGR | Sharpe | max DD | COVID DD | IR vs SPY | DSR (N=104) | bias high-vol / calm |
+|---|---|---|---|---|---|---|---|
+| earn_blackout (incumbent rerun) | 15.6% | 1.044 | −27.73% | −27.73% | −0.101 | 0.858 | 1.60 / 0.86 |
+| vra | 15.2% | 1.032 | −27.75% | −27.75% | −0.128 | 0.850 | 1.50 / 0.87 |
+
+λ_t: median 1.01, range 0.78–1.64, never clipped. Around COVID, λ was 1.05 at the 2020-01-31 decision, 1.20 at 2020-02-28 and 1.64 at 2020-03-27 (after the trough).
+
+**Gate:** FAIL (b3 DSR 0.850 < 0.90; r5 IR vs SPY −0.13 ≤ 0).
+**Adoption rule:** FAIL on 2 of 4 conditions.
+* Sharpe within −0.03: pass.
+* Max DD better by ≥ 2 pp: fail (−0.01 pp).
+* COVID DD improves: fail (slightly worse).
+* IR within −0.05: pass (−0.027).
+
+**Not adopted; production unchanged.**
+
+**Why it does nothing.**
+* λ is a trailing estimate. In a sharp crash it rises only after the losses, and the monthly book has already been set.
+* A uniform λ² on F and D (with the Grinold alpha scaling by λ through the specific vol) only raises the effective risk aversion of `mv_abs_all` by λ. It does not change relative risk, so the composition barely moves.
+* High-vol calibration improves a little (1.60 → 1.50), because ex-ante vol is scaled up after stress begins. The P&L does not.
+* Crash protection would need a forward-looking or intra-month trigger, or a structurally different risk measure (e.g. downside/crash beta), not a regime multiplier at monthly frequency.

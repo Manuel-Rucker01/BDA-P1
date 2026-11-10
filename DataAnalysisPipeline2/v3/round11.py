@@ -295,9 +295,12 @@ def biweekly_plan(pred_dates, calendar) -> dict:
 # Book simulation (generalised round5.run_config for mv_abs_all)
 # --------------------------------------------------------------------------- #
 def run_book(trial: str, prep: dict, aum: float = gate.R11_AUM, spy: dict | None = None, rates=None,
-             bl: dict | None = None, log=print) -> dict:
+             bl: dict | None = None, log=print, model_hook=None) -> dict:
     """trial in {'base', 'resid_target', 'biweekly', 'beta1_spy', 'beta1_lev',
-    'earn_blackout'}; 'base' / 'resid_target' are exactly r5.run_config('mv_abs_all')."""
+    'earn_blackout'}; 'base' / 'resid_target' are exactly r5.run_config('mv_abs_all').
+    ``model_hook(decision_date, RiskModel) -> RiskModel`` (optional, Round 12):
+    replaces the decision date's risk model for that rebalance step (None =
+    unchanged; the book is then identical to the hook-free runner)."""
     spec = {**gate.R5_COMMON, **gate.R5_CONFIGS["mv_abs_all"]}
     if trial == "biweekly":
         spec["horizon"] = gate.R11_BIWEEKLY_HORIZON
@@ -337,7 +340,7 @@ def run_book(trial: str, prep: dict, aum: float = gate.R11_AUM, spy: dict | None
         if d in plan:
             dd = plan[d]
             x = by_date[dd]
-            m = x["model"]
+            m = x["model"] if model_hook is None else model_hook(dd, x["model"])
             um = r5.universe_mask(x, "all")
             tick = m.tickers[um]
             ci = np.array([cols[t] for t in tick])
