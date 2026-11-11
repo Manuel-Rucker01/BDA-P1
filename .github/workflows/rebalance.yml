@@ -152,6 +152,16 @@ jobs:
           python -m DataAnalysisPipeline2.trading_agent.scheduled_rebalance \
             --account monthly --execute --notify ${{ steps.pre.outputs.force }} | tee run.log
 
+      - name: Transaction-cost analysis (ops/tca.*)
+        # Read-only (Alpaca orders + SIP quotes/bars): implementation shortfall of every paper
+        # fill vs the decision close / arrival mid / day VWAP, next to what v3/costs.py would
+        # charge (trading_agent/tca.py). Never changes the exit code. Also runs on the later
+        # no-op runs of days 1-7, because a fill's same-day VWAP/close is only final after the
+        # close; the output is deterministic, so it is only committed when it changed.
+        if: always() && steps.pre.outcome == 'success' && inputs.mode != 'check'
+        continue-on-error: true
+        run: python -m DataAnalysisPipeline2.trading_agent.tca --account monthly
+
       - name: Append to ops/rebalance_log.md (+ monitoring files)
         # Runs that did something (trade, halt, error) and manual monitor runs; not no-op
         # skips or read-only checks. The monthly trade commit also keeps the schedule
@@ -167,11 +177,24 @@ jobs:
           git config user.name "bda-rebalance-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add ops/rebalance_log.md
-          for f in ops/predictions ops/monitoring.csv ops/monitoring.md; do
+          for f in ops/predictions ops/monitoring.csv ops/monitoring.md ops/tca.csv ops/tca.md; do
             if [ -e "$f" ]; then git add "$f"; fi
           done
           git commit -m "ops: rebalance log $(date -u +%F)" || exit 0
           git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && git push || echo "log push failed (non-fatal)"
+
+      - name: Commit TCA refresh (no-op runs)
+        # The step above commits nothing on skip runs; commit ops/tca.* here when it changed.
+        if: >-
+          always() && steps.pre.outputs.decision == 'skip' && inputs.mode != 'check' && inputs.mode != 'monitor'
+        continue-on-error: true
+        run: |
+          for f in ops/tca.csv ops/tca.md; do [ -e "$f" ] && git add "$f"; done
+          if git diff --cached --quiet; then echo "TCA unchanged"; exit 0; fi
+          git config user.name "bda-rebalance-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "ops: TCA refresh $(date -u +%F)"
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && git push || echo "TCA push failed (non-fatal)"
 
       - name: Monte-Carlo band check (pre-registered 2026-11-10, ops/mc_bands.json)
         # Read-only: compares the live paper track with the frozen bootstrap bands.
