@@ -1435,7 +1435,7 @@ If the user wants to act anyway, both options would be explicit, gate-failing op
 ## Risk & monitoring (2026-11-10, zero trials, N stays 103)
 
 - **Stress test** (`v3/stress.py`, `results/stress_test.md`): current book (2026-11-02, 104 names, ex-ante beta 0.39) — COVID replay −33.6% (≈SPY), 2022 −9.0% vs SPY −24.1%, Apr 2025 −10.7% vs −11.5%. Factor shocks small (momentum ≈0, value ±0.4%). Risk-model bias stat 1.16 overall, **1.60 in high-vol regimes** (0.86 calm): tails underestimated in stress; low-beta protection mostly vanishes in sharp crashes. Candidate for one pre-registered trial: vol-regime risk multiplier.
-- **Monte Carlo** (`v3/montecarlo.py`, `results/montecarlo_bands.md`): stationary block bootstrap (21d, 10k paths). 12m median +15.7%, P(beat SPY) 48% raw / 21% with 50% haircut. Frozen YELLOW/RED bands in `ops/mc_bands.json`, checked each workflow run (`--check-only`; RED opens an issue recommending halt/revert).
+- **Monte Carlo** (`v3/montecarlo.py`, `results/montecarlo_bands.md`): stationary block bootstrap (21d, 10k paths). 12m median +15.7%, P(beat SPY) 48% raw / 21% with 50% haircut. Frozen YELLOW/RED bands in `ops/mc_bands.json`, checked each workflow run (`--check-only`; RED opens an issue recommending halt/revert). Re-frozen 2026-11-11 on the levered `r13_lev125` stream (12m median +18.2% raw, P(beat SPY) 55% raw / 24% haircut); the unlevered bands are in `ops/mc_bands_unlevered_2026-11-10.json`.
 
 ## Round 12: volatility regime adjustment (`vra`), 1 trial, N = 104
 
@@ -1504,6 +1504,14 @@ Gate-c window (2026-07-15..09-23), return vs SPY 2.4%: incumbent 2.1%, lev125 2.
 * `pa_iwm`: fails on max DD (−47.6%) and Sharpe (0.77). Not adoptable.
 
 **Nothing is wired; production is unchanged.** Leverage and shorting on the paper account are the user's decision.
+
+**lev125 on paper (user decision 2026-11-11).** The user chose to activate `lev125` on the paper account. It fails the gate only on DSR (0.811 at N = 106) and meets the pre-registered adoption rule. How it is wired:
+* `BDA_LEVERAGE` (default 1.25, clamped to [1.0, 1.5]; `trading_agent/config.py`, `rebalance.yml`). It applies only to the `optimized_v3` book on the altall signal.
+* The book mirrors `round13.run_book`. The sleeve is solved and checked at impact/liquidity AUM × L, so the 5% and 10%-of-ADV caps bind on the sleeve. `w_prev` and the blackout caps use sleeve weights (current / their sum). Every weight is then multiplied by L, so gross is 1.25 × `BDA_TARGET_EXPOSURE` (0.98) = 1.225.
+* Before solving, the bot reads the account (read-only). It trades at 1.0× if the multiplier is below 2, if Reg-T buying power is less than 1.05 × the extra long notional, or on any error. It also trades at 1.0× when a levered book fails (rebuilt unlevered), on `long_only_v3`, and on the production signal. Before orders, a book with long exposure above 100% is scaled to 1.0× unless the account reports multiplier ≥ 2.
+* The Monte-Carlo bands were re-frozen on `r13_lev125_daily` (`ops/mc_bands.json`, 2026-11-11). The unlevered bands are kept as `ops/mc_bands_unlevered_2026-11-10.json`.
+* Off: repository variable `BDA_LEVERAGE=1`.
+* The paper account (`monthly`) reported multiplier 4 on 2026-11-11.
 
 ### Findings
 

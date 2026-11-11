@@ -284,7 +284,8 @@ def optimized_book(preds: pd.DataFrame, bars: pd.DataFrame, *, aum: float, ic: f
                    target_exposure: float, w_prev: dict | None = None, fund_dir: str | None = None,
                    max_age_days: int = 120, min_universe: int = 300, min_names: int = 20,
                    spec: dict | None = None, rank_col: str = "pred_rank", today=None,
-                   candidates: list | None = None, cap_fn=None, log=print) -> tuple[dict, dict]:
+                   candidates: list | None = None, cap_fn=None, leverage: float = 1.0,
+                   log=print) -> tuple[dict, dict]:
     """Long-only ``mv_abs_all`` book for the live decision.
 
     ``preds``: ticker, ``rank_col``. ``bars``: the live daily bars (ticker, Date,
@@ -296,9 +297,21 @@ def optimized_book(preds: pd.DataFrame, bars: pd.DataFrame, *, aum: float, ic: f
     bound on the fully-invested book, info dict). ANY exception from it, or a
     capped book that fails the solver / constraint checks, means NO caps
     (logged in ``diag['earn_blackout']``); it never makes the book unavailable.
+    ``leverage`` L (Round-13 ``lev125``, ``v3/round13.run_book``): the
+    fully-invested sleeve is solved, checked and capped at AUM x L (so the
+    per-name 5% and 10%-of-ADV caps bind on the sleeve BEFORE scaling), then
+    every weight is multiplied by L: gross = L x ``target_exposure``, at most
+    5% x L per name, at most 10% of ADV / AUM per name after scaling. With
+    L > 1 the caller passes ``w_prev`` as SLEEVE weights (current weights / their
+    sum, as round13) and the blackout caps are on the sleeve too (final weight
+    <= cap x target_exposure x L). L = 1 is the unchanged Round-11 book.
     Raises on any failure -- the caller falls back to ``long_only_v3``."""
     from DataAnalysisPipeline2.v3 import optimizer as op
     t0 = time.time()
+    lev = float(leverage)
+    if not (1.0 <= lev <= 1.5):
+        raise OptimizerUnavailable(f"leverage {leverage} outside [1.0, 1.5]")
+    aum_opt = float(aum) * lev
     if preds is None or len(preds) == 0 or rank_col not in preds:
         raise OptimizerUnavailable("no model scores")
     if not (0.0 < float(target_exposure) <= 1.0):
@@ -323,19 +336,19 @@ def optimized_book(preds: pd.DataFrame, bars: pd.DataFrame, *, aum: float, ic: f
             bl = {"applied": False, "skipped": f"{type(e).__name__}: {e}"[:500]}
             log(f"[optimized_v3] earnings blackout skipped -- {bl['skipped']}")
     t1 = time.time()
-    wd, diag = op.optimize_portfolio(sp, aum=float(aum), ic=float(ic), w_prev=w_prev or {}, ub_cap=caps, **inputs)
+    wd, diag = op.optimize_portfolio(sp, aum=aum_opt, ic=float(ic), w_prev=w_prev or {}, ub_cap=caps, **inputs)
     w = np.array([wd.get(t, 0.0) for t in inputs["tickers"]])
     if caps is not None:
         try:
-            check_book(w, inputs, sp, float(aum), diag)
+            check_book(w, inputs, sp, aum_opt, diag)
         except OptimizerUnavailable as e:
             bl = {**bl, "applied": False, "skipped": f"capped book rejected ({e}); solved without the blackout"}
             log(f"[optimized_v3] earnings blackout dropped -- {bl['skipped']}")
             caps = None
-            wd, diag = op.optimize_portfolio(sp, aum=float(aum), ic=float(ic), w_prev=w_prev or {}, **inputs)
+            wd, diag = op.optimize_portfolio(sp, aum=aum_opt, ic=float(ic), w_prev=w_prev or {}, **inputs)
             w = np.array([wd.get(t, 0.0) for t in inputs["tickers"]])
     t_solve = time.time() - t1
-    check_book(w, inputs, sp, float(aum), diag)
+    check_book(w, inputs, sp, aum_opt, diag)
     # The cardinality step re-solves once; the re-solve can leave a few new
     # residual positions below min_weight (untradable: below the executor's
     # minimum trade). They go to cash -- only if that is a rounding-size amount.
@@ -350,16 +363,16 @@ def optimized_book(preds: pd.DataFrame, bars: pd.DataFrame, *, aum: float, ic: f
 
     # scale the fully-invested book to the target exposure, then make the caps
     # exact (the optimizer's budget polish can leave a name a hair above them;
-    # the excess stays in cash)
+    # the excess stays in cash); caps on the sleeve (AUM x L), then x L
     adv = np.asarray(inputs["adv"], float)
-    cap = np.minimum(sp["name_cap"], np.where(np.isfinite(adv) & (adv > 0), sp["liq_frac"] * adv / float(aum), 0.0))
-    w = np.minimum(w * float(target_exposure), cap)
-    if caps is not None:            # blacked-out names never above their current weight
+    cap = np.minimum(sp["name_cap"], np.where(np.isfinite(adv) & (adv > 0), sp["liq_frac"] * adv / aum_opt, 0.0))
+    w = np.minimum(w * float(target_exposure), cap) * lev
+    if caps is not None:            # blacked-out names never above their (sleeve) weight x L
         ubc = np.array([caps.get(str(t), np.inf) for t in inputs["tickers"]])
-        w = np.minimum(w, np.maximum(ubc, 0.0) * float(target_exposure))
+        w = np.minimum(w, np.maximum(ubc, 0.0) * float(target_exposure) * lev)
         tick = np.asarray(inputs["tickers"]).astype(str)
         blk = np.isin(tick, list(caps))
-        prev = np.array([max(float((w_prev or {}).get(t, 0.0) or 0.0), 0.0) for t in tick])
+        prev = np.array([max(float((w_prev or {}).get(t, 0.0) or 0.0), 0.0) for t in tick]) * lev
         bl = {**bl, "book_w_blackout": float(w[blk].sum()),
               "n_blackout_trimmed": int(((w < prev - 1e-9) & blk).sum()),
               "n_blackout_in_book": int(((w > 0) & blk).sum())}
@@ -372,9 +385,12 @@ def optimized_book(preds: pd.DataFrame, bars: pd.DataFrame, *, aum: float, ic: f
     by_sec = pd.DataFrame({"s": sec_name, "w": w, "b": bw}).groupby("s")[["w", "b"]].sum()
     top = sorted(weights.items(), key=lambda kv: -kv[1])[:10]
     out = {"construction": "optimized_v3", "spec": SPEC_NAME, "aum": float(aum), "ic": float(ic),
-           "target_exposure": float(target_exposure), "status": diag["status"], "iters": diag["iters"],
-           "n_names": len(weights), "long": float(w.sum()), "cash": float(1.0 - w.sum()),
-           "max_weight": float(w.max()), "ex_ante_vol_ann": diag["ex_ante_vol_ann"] * float(target_exposure),
+           "target_exposure": float(target_exposure), "leverage": lev, "aum_opt": aum_opt,
+           "status": diag["status"], "iters": diag["iters"],
+           "n_names": len(weights), "long": float(w.sum()), "gross": float(np.abs(w).sum()),
+           "cash": float(1.0 - w.sum()),
+           "max_weight": float(w.max()),
+           "ex_ante_vol_ann": diag["ex_ante_vol_ann"] * float(target_exposure) * lev,
            "ex_ante_vol_ann_full": diag["ex_ante_vol_ann"], "ex_ante_te_ann_vs_cw": diag["ex_ante_te_ann"],
            "ex_ante_beta_vs_cw": diag["ex_ante_beta"], "alpha_ann": diag["alpha_ann"],
            "exp_cost": diag["exp_cost"], "turnover_oneway": diag["turnover_oneway"],

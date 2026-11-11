@@ -83,6 +83,12 @@ jobs:
       # trading_agent/data/altdata_snapshot/earnings_events.parquet; skipped (logged) if
       # older than 14 days. Only applies while the altall signal is in use. Off: '0'.
       BDA_EARN_BLACKOUT: ${{ vars.BDA_EARN_BLACKOUT || '1' }}
+      # Round-13 lev125 (PAPER; user decision 2026-11-11; FAILS the gate on DSR 0.811 but meets
+      # the pre-registered adoption rule): the optimized_v3 + altall book at constant 1.25x
+      # (gross = 1.25 x BDA_TARGET_EXPOSURE), clamped to [1.0, 1.5]. Only on that path, and only
+      # if the account is margin-enabled (multiplier >= 2) with enough Reg-T buying power
+      # (+5% cushion); every fallback trades at 1.0x. Off: repository variable BDA_LEVERAGE=1.
+      BDA_LEVERAGE: ${{ vars.BDA_LEVERAGE || '1.25' }}
       # Optional: with a SEC_USER_AGENT secret the runner tops up the Form 4 feed since the
       # snapshot (<= 8 req/s, time-boxed); without it the committed snapshot is used.
       SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
@@ -196,10 +202,12 @@ jobs:
           git commit -m "ops: TCA refresh $(date -u +%F)"
           git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && git push || echo "TCA push failed (non-fatal)"
 
-      - name: Monte-Carlo band check (pre-registered 2026-11-10, ops/mc_bands.json)
-        # Read-only: compares the live paper track with the frozen bootstrap bands.
-        # YELLOW = below the haircut 5th pct; RED = below the 1st pct -> opens an issue
-        # recommending a halt / revert to best_model.pkl. Never changes trading here.
+      - name: Monte-Carlo band check (re-frozen 2026-11-11 for lev125, ops/mc_bands.json)
+        # Read-only: compares the live paper track with the frozen bootstrap bands
+        # (levered r13_lev125 stream; unlevered 2026-11-10 bands kept in
+        # ops/mc_bands_unlevered_2026-11-10.json). YELLOW = below the haircut 5th pct;
+        # RED = below the 1st pct -> opens an issue recommending a halt / BDA_LEVERAGE=1 /
+        # revert to best_model.pkl. Never changes trading here.
         if: always() && steps.pre.outcome != 'skipped' && inputs.mode != 'check'
         continue-on-error: true
         env:
@@ -211,7 +219,7 @@ jobs:
                --json title -q '.[].title' | grep -Fxq "$TITLE"; then exit 0; fi
           { echo "The live paper track fell below the pre-registered 1st-percentile Monte-Carlo band."
             echo; echo '```'; cat mc.log; echo '```'
-            echo; echo "Pre-registered action: halt the bot or revert to best_model.pkl (set BDA_SIGNAL=production)."; } > mc_issue.md
+            echo; echo "Pre-registered action: halt the bot, drop the leverage (BDA_LEVERAGE=1) or revert to best_model.pkl (set BDA_SIGNAL=production)."; } > mc_issue.md
           gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file mc_issue.md
 
       - name: Open issue on monitoring alerts

@@ -176,6 +176,7 @@ def main():
         print(f"[Strategy] optimized_v3 (EXPERIMENTAL, fails the promotion gate): mv_abs_all | "
               f"AUM ${config.OPT_AUM:,.0f} | IC {config.OPT_IC_ALTALL if config.SIGNAL == 'altall' else config.OPT_IC} (signal {config.SIGNAL}) | exposure {config.OPT_TARGET_EXPOSURE:.2f} | "
               f"min weight {config.OPT_MIN_WEIGHT:.2%} | {config.OPT_HISTORY_DAYS} days of history | "
+              f"leverage {config.LEVERAGE:.2f}x (altall + margin account only, else 1.0x) | "
               f"fallback long_only_v3")
     elif args.strategy == "long_short_neutral":
         print(f"[Strategy] long_short_neutral: {config.LS_N_LONG} long / {config.LS_N_SHORT} short | "

@@ -130,6 +130,23 @@ Customize your stock universe and basket size:
   by the same two commands (`v3.altlive refresh` tops up the 8-K feed from EDGAR, `altall
   snapshot` rewrites the file). Events older than `BDA_EARN_MAX_AGE_DAYS` (14) before the
   decision date, or any error, skip the blackout (logged; `CONSTRUCTION_JSON.earn_blackout`).
+* **Leverage (`BDA_LEVERAGE`, default 1.25, clamped to [1.0, 1.5])**: Round-13 `lev125`, put
+  on paper by user decision 2026-11-11. It fails the gate on DSR (0.811 at N = 106) and meets the
+  adoption rule. It applies only to the `optimized_v3` book on the altall signal:
+  * the sleeve is solved at `BDA_OPT_AUM` × L, with `w_prev` and the blackout caps on sleeve weights;
+  * every weight is then × L, so gross = L × `BDA_OPT_TARGET_EXPOSURE` and each name is ≤ 5% × L.
+
+  Before solving, the bot reads the account (read-only). It trades at 1.0× in any of these cases:
+  * multiplier < 2;
+  * Reg-T buying power below 1.05 × the extra long notional;
+  * any error;
+  * the levered book fails;
+  * `long_only_v3`;
+  * the production signal.
+
+  Before orders, a long side above 100% of equity is scaled to 1.0× unless the account reports
+  multiplier ≥ 2. `CONSTRUCTION_JSON` has `leverage` and `leverage_check`. Turn it off with the
+  repository variable `BDA_LEVERAGE=1`.
 
 ### 5. Market Regime Override
 To manually force the market trend regime (bypassing S&P 500 HMM decoders):

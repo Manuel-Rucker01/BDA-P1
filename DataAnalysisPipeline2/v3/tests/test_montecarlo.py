@@ -48,7 +48,7 @@ def test_band_table_and_frozen(monkeypatch):
     assert bands["p_beat_spy"].between(0, 1).all()
     fr = mc.build_frozen(df, sims)
     t = fr["thresholds"]
-    assert fr["created"] == "2026-11-10" and fr["seed"] == mc.SEED and len(fr["data_hash_sha256"]) == 64
+    assert fr["created"] == "2026-11-11" and fr["refrozen"]["date"] == "2026-11-11" and fr["seed"] == mc.SEED and len(fr["data_hash_sha256"]) == 64
     assert all(r <= y for r, y in zip(t["active_q01"], t["active_q05"]))
     assert all(r <= y for r, y in zip(t["mdd_q01"], t["mdd_q05"]))
     # interpolation lies between neighbouring knots

@@ -827,6 +827,69 @@ def passes_min_trade(delta_val, curr_val, target_val, equity):
     return abs(delta_val) >= getattr(config, "MIN_TRADE_PCT", 0.0) * float(equity)
 
 
+def resolve_leverage(requested, *, multiplier, equity, buying_power, long_market_value,
+                     target_exposure, regt_buying_power=None, cushion=None):
+    """Leverage to trade (Round-13 lev125) given a read of the account.
+
+    Returns (leverage, info). ``requested`` is clamped to [1.0, 1.5]; the result
+    is ``requested`` only if the account is margin-enabled (multiplier >= 2)
+    and the overnight buying power (min of buying_power and regt_buying_power
+    when the latter is given) covers the extra long notional
+    ``requested x target_exposure x equity - long_market_value`` with a
+    ``cushion`` (default config.LEVERAGE_BP_CUSHION = 5%). Anything else -> 1.0
+    with the reason. Never raises."""
+    cushion = config.LEVERAGE_BP_CUSHION if cushion is None else float(cushion)
+    req = config.clamp_leverage(requested)
+    info = {"requested": req, "applied": 1.0}
+    if req <= 1.0:
+        return 1.0, {**info, "reason": "leverage 1.0 requested"}
+    try:
+        mult = float(multiplier)
+        eq = float(equity)
+        bp = float(buying_power)
+        if regt_buying_power is not None:
+            bp = min(bp, float(regt_buying_power))
+        lmv = float(long_market_value or 0.0)
+        te = float(target_exposure)
+        vals = np.array([mult, eq, bp, lmv, te])
+        if not np.all(np.isfinite(vals)):
+            raise ValueError(f"non-finite account fields {vals.tolist()}")
+        if eq <= 0:
+            raise ValueError(f"equity {eq} <= 0")
+        required = max(req * te * eq - lmv, 0.0)
+        info.update({"multiplier": mult, "equity": eq, "buying_power_used": bp,
+                     "long_market_value": lmv, "target_gross": req * te,
+                     "required_notional": required, "cushion": cushion})
+        if mult < 2:
+            return 1.0, {**info, "reason": f"account not margin-enabled (multiplier {mult:g} < 2)"}
+        if required * (1.0 + cushion) > bp:
+            return 1.0, {**info, "reason": f"insufficient buying power: need ${required:,.0f} x "
+                                            f"{1 + cushion:.2f} > ${bp:,.0f}"}
+        return req, {**info, "applied": req, "reason": "ok"}
+    except Exception as e:      # noqa: BLE001 -- anything odd -> unlevered
+        return 1.0, {**info, "reason": f"account check failed: {type(e).__name__}: {e}"[:300]}
+
+
+def guard_long_exposure(target_weights, multiplier, tol=1e-6):
+    """Last line of defence before orders: a book whose long side exceeds 100%
+    of equity (lev125) is only sent to a margin-enabled account (multiplier
+    >= 2). Otherwise -- or if the multiplier is unknown / unreadable -- the
+    long weights are scaled to sum to 1.0 (shorts untouched) with a warning."""
+    long = float(sum(w for w in target_weights.values() if w > 0))
+    if long <= 1.0 + tol:
+        return target_weights
+    try:
+        mult = float(multiplier)
+    except (TypeError, ValueError):
+        mult = float("nan")
+    if mult >= 2:
+        print(f"[Broker] long exposure {long:.3f}x of equity on a margin account (multiplier {mult:g}).")
+        return target_weights
+    print(f"[WARNING] long exposure {long:.3f}x but account multiplier is {multiplier!r} (< 2 or unknown): "
+          f"scaling the long book to 1.0x.")
+    return {t: (w / long if w > 0 else w) for t, w in target_weights.items()}
+
+
 _FILLED = "filled"
 _TERMINAL_UNFILLED = {"canceled", "cancelled", "expired", "rejected", "done_for_day",
                       "replaced", "stopped", "suspended"}
@@ -1520,6 +1583,39 @@ class BDATradingAgent:
             print(f"[Agent] optimized_v3: current positions unavailable ({e}); w_prev = cash.")
             return {}
 
+    def _leverage_decision(self):
+        """(leverage, info) for the optimized_v3 book. Only the altall signal is
+        levered (config.LEVERAGE); everything else 1.0. Reads the account with
+        a read-only GET; no credentials / any error / not margin-enabled /
+        insufficient buying power -> 1.0 with a [WARNING]."""
+        req = config.clamp_leverage(getattr(config, "LEVERAGE", 1.0))
+        if getattr(self, "signal", "production") != "altall":
+            return 1.0, {"requested": req, "applied": 1.0,
+                         "reason": f"signal {getattr(self, 'signal', None)!r} is not altall (unlevered)"}
+        if req <= 1.0:
+            return 1.0, {"requested": req, "applied": 1.0, "reason": "disabled (BDA_LEVERAGE=1)"}
+        try:
+            if not (config.ALPACA_API_KEY and config.ALPACA_SECRET_KEY):
+                raise RuntimeError("no Alpaca credentials")
+            from alpaca.trading.client import TradingClient
+            acc = TradingClient(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY,
+                                paper=config.ALPACA_PAPER_TRADING).get_account()
+            lev, info = resolve_leverage(
+                req, multiplier=acc.multiplier, equity=acc.equity, buying_power=acc.buying_power,
+                regt_buying_power=getattr(acc, "regt_buying_power", None),
+                long_market_value=getattr(acc, "long_market_value", 0.0) or 0.0,
+                target_exposure=config.OPT_TARGET_EXPOSURE)
+        except Exception as e:      # noqa: BLE001
+            lev, info = 1.0, {"requested": req, "applied": 1.0,
+                              "reason": f"account check failed: {type(e).__name__}: {e}"[:300]}
+        if lev > 1.0:
+            print(f"[Agent] leverage {lev:.2f}x (lev125): multiplier {info['multiplier']:g}, "
+                  f"target gross {info['target_gross']:.3f}, extra notional ${info['required_notional']:,.0f} "
+                  f"vs buying power ${info['buying_power_used']:,.0f}")
+        else:
+            print(f"[WARNING] leverage {req:.2f}x requested but trading UNLEVERED at 1.0x -- {info['reason']}")
+        return lev, info
+
     def _earn_blackout_fn(self, w_prev):
         """(cap_fn for ``optimized.optimized_book`` or None, note when None).
         Round-11 earnings blackout: on when ``config.EARN_BLACKOUT`` and the
@@ -1547,21 +1643,45 @@ class BDATradingAgent:
             if bars is None or len(bars) == 0:
                 raise optimized.OptimizerUnavailable("no bar history (fetch_live_data not run)")
             ic = config.OPT_IC_ALTALL if getattr(self, "signal", "production") == "altall" else config.OPT_IC
-            w_prev = self._current_weights()
-            cap_fn, bl_note = self._earn_blackout_fn(w_prev)
-            w, diag = optimized.optimized_book(
-                predictions_df, bars, aum=config.OPT_AUM, ic=ic,
-                target_exposure=config.OPT_TARGET_EXPOSURE, w_prev=w_prev,
-                fund_dir=config.OPT_FUND_DIR or None, max_age_days=config.OPT_FUND_MAX_AGE_DAYS,
-                min_universe=config.OPT_MIN_UNIVERSE, min_names=config.OPT_MIN_NAMES,
-                spec={"min_weight": config.OPT_MIN_WEIGHT}, cap_fn=cap_fn)
-            if diag.get("earn_blackout") is None:
-                diag["earn_blackout"] = bl_note
+            w_cur = self._current_weights()
+            lev, lev_info = self._leverage_decision()
+
+            def build(L):
+                # lev125 (v3/round13.run_book): w_prev and the blackout caps on
+                # the SLEEVE = current weights / their sum
+                w_prev = w_cur
+                if L > 1.0:
+                    g = float(sum(v for v in w_cur.values() if v > 0))
+                    w_prev = {t: v / g for t, v in w_cur.items()} if g > 0 else {}
+                cap_fn, bl_note = self._earn_blackout_fn(w_prev)
+                w, diag = optimized.optimized_book(
+                    predictions_df, bars, aum=config.OPT_AUM, ic=ic,
+                    target_exposure=config.OPT_TARGET_EXPOSURE, w_prev=w_prev,
+                    fund_dir=config.OPT_FUND_DIR or None, max_age_days=config.OPT_FUND_MAX_AGE_DAYS,
+                    min_universe=config.OPT_MIN_UNIVERSE, min_names=config.OPT_MIN_NAMES,
+                    spec={"min_weight": config.OPT_MIN_WEIGHT}, cap_fn=cap_fn, leverage=L)
+                if diag.get("earn_blackout") is None:
+                    diag["earn_blackout"] = bl_note
+                return w, diag
+
+            try:
+                w, diag = build(lev)
+            except Exception as e:
+                if lev <= 1.0:
+                    raise
+                lev_info = {**lev_info, "applied": 1.0,
+                            "reason": f"levered book failed ({type(e).__name__}: {e}); rebuilt at 1.0x"[:400]}
+                print(f"[WARNING] {lev:.2f}x optimized_v3 book failed -- {type(e).__name__}: {e}. "
+                      f"Rebuilding UNLEVERED at 1.0x.")
+                lev = 1.0
+                w, diag = build(1.0)
+            diag["leverage_check"] = lev_info
             self.last_book_diagnostics = diag
             self.last_construction = {"requested": "optimized_v3", "construction": "optimized_v3",
                                       **{k: diag[k] for k in ("ic", "n_names", "long", "ex_ante_vol_ann",
                                                                "turnover_oneway", "solve_seconds", "status",
                                                                "ex_ante_beta_vs_cw", "ex_ante_te_ann_vs_cw")},
+                                      "leverage": diag.get("leverage", 1.0), "leverage_check": lev_info,
                                       "fundamentals_source": diag["fundamentals"]["source"],
                                       "fundamentals_as_of": diag["fundamentals"]["as_of"],
                                       "earn_blackout": diag["earn_blackout"]}
@@ -1576,7 +1696,8 @@ class BDATradingAgent:
                     print(f"[Agent] earn_blackout held (capped at current weight): {bl['held']}")
             else:
                 print(f"[Agent] earn_blackout not applied: {bl.get('skipped', bl)}")
-            print(f"[Agent] optimized_v3 ({diag['spec']}, AUM ${diag['aum']:,.0f}, IC {diag['ic']:.4f}): "
+            print(f"[Agent] optimized_v3 ({diag['spec']}, AUM ${diag['aum']:,.0f}, IC {diag['ic']:.4f}, "
+                  f"leverage {diag.get('leverage', 1.0):.2f}x): "
                   f"{diag['n_names']} names | long={diag['long']:.3f} cash={diag['cash']:.3f} | "
                   f"max w={diag['max_weight']:.2%} | ex-ante vol {diag['ex_ante_vol_ann']:.1%} | "
                   f"exp. cost {diag['exp_cost'] * 1e4:.1f} bp | turnover {diag['turnover_oneway']:.1%} | "
@@ -2004,6 +2125,7 @@ class BDATradingAgent:
             equity = float(account.portfolio_value)
             print(f"[Broker] Connected to Alpaca. Endpoint: {config.ALPACA_URL}")
             print(f"[Broker] Net Liquidity / Account Equity: ${equity:,.2f}")
+            target_weights = guard_long_exposure(target_weights, getattr(account, "multiplier", None))
 
             # Fetch active positions (short positions carry a negative market_value)
             positions = client.get_all_positions()

@@ -294,6 +294,35 @@ ALT_REFRESH_BUDGET_S = _env_num("ALT_REFRESH_BUDGET_S", 900.0)
 EARN_BLACKOUT = bool(_env_num("EARN_BLACKOUT", 1 if SIGNAL == "altall" else 0, int))
 EARN_MAX_AGE_DAYS = _env_num("EARN_MAX_AGE_DAYS", 14, int)
 
+# --- Round-13 constant leverage (lev125; optimized_v3 + the altall signal only) ---
+# The optimized_v3 book (altall + earn_blackout) is scaled by LEVERAGE exactly as
+# v3/round13.py builds `lev125`: the fully-invested sleeve is solved at AUM x L
+# (so the 5% name cap / 10%-of-ADV liquidity cap bind on the sleeve, i.e. <= 5% x L
+# per name after scaling), then every weight is multiplied by L (gross = L x
+# OPT_TARGET_EXPOSURE). It FAILS the pre-registered gate (DSR 0.811 at N = 106) but
+# meets the Round-13 adoption rule (CAGR 17.9%, Sharpe 0.98, max DD -34.0%, IR vs
+# SPY +0.12); activated on PAPER by user decision 2026-11-11. Hard-clamped to
+# [1.0, 1.5]. Every other path (production signal, long_only_v3, any failure, an
+# account that is not margin-enabled or lacks buying power) trades at 1.0x.
+# Turn it off with the repository variable BDA_LEVERAGE=1.
+LEVERAGE_MIN, LEVERAGE_MAX = 1.0, 1.5
+LEVERAGE_BP_CUSHION = 0.05      # buying power must cover the extra notional x (1 + cushion)
+
+
+def clamp_leverage(v) -> float:
+    """Leverage clamped to [LEVERAGE_MIN, LEVERAGE_MAX]; unparsable / non-finite -> 1.0."""
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return 1.0
+    if x != x or x in (float("inf"), float("-inf")):
+        return 1.0
+    return min(max(x, LEVERAGE_MIN), LEVERAGE_MAX)
+
+
+_lev_env = os.getenv("BDA_LEVERAGE")
+LEVERAGE = 1.25 if _lev_env in (None, "") else clamp_leverage(_lev_env)   # unparsable -> 1.0
+
 # Exposure-reducing orders (sells / covers) are sent first and the bot waits up
 # to FILL_WAIT_TIMEOUT_S for them to fill (polling every FILL_POLL_INTERVAL_S)
 # before sending buys / new shorts. Unfilled orders are reported.

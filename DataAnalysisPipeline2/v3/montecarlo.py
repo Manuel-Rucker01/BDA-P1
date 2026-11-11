@@ -1,9 +1,14 @@
 """Monte-Carlo expected-outcome bands and pre-registered live monitoring rules
-for the paper bot (altall signal + optimized_v3 + Round-11 earnings blackout).
+for the paper bot (altall signal + optimized_v3 + Round-11 earnings blackout,
+at Round-13 constant 1.25x leverage ``lev125`` since 2026-11-11).
 
 Zero new model trials: this only resamples the already-selected walk-forward
-daily returns (``v3model/eval/r11_earn_blackout_daily.parquet``) jointly with
-SPY daily returns (``v3model/spy.parquet``).
+daily returns (``v3model/eval/r13_lev125_daily.parquet``, net of financing)
+jointly with SPY daily returns (``v3model/spy.parquet``).
+
+Re-frozen 2026-11-11 for the levered stream (user decision to run lev125 on
+paper). The original unlevered bands (``r11_earn_blackout``, frozen 2026-11-10)
+are kept for the record in ``ops/mc_bands_unlevered_2026-11-10.json``.
 
 Method
 ------
@@ -15,7 +20,7 @@ Method
   (cum strategy - cum SPY, the same definition as ``excess_vs_spy`` in
   ``trading_agent/monitoring.py``) and max drawdown of the strategy.
 * Two versions: ``raw`` and ``haircut`` (strategy daily returns shifted so their
-  mean is 50 % of the backtest mean -- backtest overfitting at N=103 trials;
+  mean is 50 % of the backtest mean -- backtest overfitting at N=106 trials;
   SPY untouched, same bootstrap indices).
 
 Pre-registered monitoring rules (frozen in ``ops/mc_bands.json``)
@@ -25,7 +30,7 @@ interpolated in d between the stored knots (held flat beyond 252 -> re-freeze
 after 12 months). With the *haircut* distribution:
 
 * RED    -- live active return < q01(active, d)  or  live max drawdown < q01(mdd, d)
-            -> recommend halting the paper bot / reverting to fallback best_model.pkl
+            -> recommend halting the paper bot / BDA_LEVERAGE=1 / reverting to best_model.pkl
 * YELLOW -- live active return < q05(active, d)  or  live max drawdown < q05(mdd, d)
 * GREEN  -- otherwise.
 
@@ -56,8 +61,16 @@ BANDS_JSON = OPS_DIR / "mc_bands.json"
 MONITORING_CSV = OPS_DIR / "monitoring.csv"
 
 # ---- pre-registered constants (do not change after freezing) -------------- #
-CREATED = "2026-11-10"
-SEED = 20261110
+CREATED = "2026-11-11"          # re-freeze for lev125 (first freeze 2026-11-10, unlevered)
+SEED = 20261110                 # unchanged from the first freeze
+STRATEGY_FILE = "r13_lev125_daily.parquet"
+MODEL = "altall + optimized_v3 + Round-11 earn_blackout at Round-13 constant 1.25x leverage (lev125, paper)"
+N_TRIALS = 106
+REFREEZE = {"date": "2026-11-11",
+            "reason": "user decision 2026-11-11 to run Round-13 lev125 (1.25x leverage) on the paper "
+                      "account; bands re-derived from the levered walk-forward stream (net of DTB3 + 1% "
+                      "financing). Same method, seed, block length and knots as the 2026-11-10 freeze.",
+            "previous": "ops/mc_bands_unlevered_2026-11-10.json (r11_earn_blackout, unlevered)"}
 N_PATHS = 10_000
 MEAN_BLOCK = 21
 MAX_DAYS = 252
@@ -75,7 +88,7 @@ METRICS = ("cum", "active", "mdd")
 # Data
 # --------------------------------------------------------------------------- #
 def strategy_path() -> str:
-    return os.path.join(ds.v3_dir("eval"), "r11_earn_blackout_daily.parquet")
+    return os.path.join(ds.v3_dir("eval"), STRATEGY_FILE)
 
 
 def load_returns() -> pd.DataFrame:
@@ -162,7 +175,8 @@ def thresholds(sims: dict, version: str = "haircut") -> dict:
 def build_frozen(df: pd.DataFrame, sims: dict) -> dict:
     return {
         "created": CREATED,
-        "model": "altall + optimized_v3 + Round-11 earn_blackout (paper)",
+        "refrozen": REFREEZE,
+        "model": MODEL,
         "source": os.path.relpath(strategy_path(), ds.v3_dir()) + " (v3model/) + v3model/spy.parquet",
         "data_hash_sha256": data_hash(df),
         "data_span": [df.index[0], df.index[-1]], "n_obs": int(len(df)),
@@ -171,7 +185,7 @@ def build_frozen(df: pd.DataFrame, sims: dict) -> dict:
         "live_start_rule": f"close of the first monitored decision_date >= {LIVE_START_MIN}",
         "rules": {
             "RED": f"active < active_q{RED_Q:02d}(d) or max_drawdown < mdd_q{RED_Q:02d}(d) -> "
-                   "recommend halting the paper bot / reverting to fallback best_model.pkl",
+                   "recommend halting the paper bot / setting BDA_LEVERAGE=1 / reverting to best_model.pkl",
             "YELLOW": f"active < active_q{YELLOW_Q:02d}(d) or max_drawdown < mdd_q{YELLOW_Q:02d}(d)",
             "GREEN": "otherwise",
             "interpolation": "linear in elapsed trading days d between knots; flat beyond 252 (re-freeze then)",
@@ -242,7 +256,7 @@ def check_live(equity_series: pd.Series, spy_series: pd.Series, start_date,
             status = "YELLOW" if status == "GREEN" else status
             reasons.append(f"{name} {val:+.2%} < q{YELLOW_Q:02d} {lim[f'{k}_q{YELLOW_Q:02d}']:+.2%} at d={days}")
     if status == "RED":
-        reasons.append("recommendation: halt the paper bot / revert to fallback best_model.pkl")
+        reasons.append("recommendation: halt the paper bot / set BDA_LEVERAGE=1 / revert to best_model.pkl")
     if not reasons:
         reasons.append(f"within haircut bands at d={days}")
     return {"status": status, "elapsed_days": days, "cum_return": cum, "active_return": active,
@@ -291,17 +305,19 @@ def write_report(bands: pd.DataFrame, frozen: dict, df: pd.DataFrame, check: dic
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     bands.to_csv(RESULTS_DIR / "montecarlo_bands.csv", index=False, float_format="%.6f")
     t = frozen["thresholds"]
-    L = ["# Monte-Carlo expected-outcome bands (paper bot: altall + optimized_v3 + earn_blackout)", "",
+    L = ["# Monte-Carlo expected-outcome bands (paper bot: altall + optimized_v3 + earn_blackout, "
+         "lev125 = 1.25x)", "",
+         f"Re-frozen {REFREEZE['date']}: {REFREEZE['reason']} Previous bands: `{REFREEZE['previous']}`.", "",
          f"Generated by `DataAnalysisPipeline2/v3/montecarlo.py`. Stationary block bootstrap "
          f"(Politis-Romano, mean block {MEAN_BLOCK} sessions), {N_PATHS:,} paths, seed {SEED}; strategy "
          f"and SPY resampled jointly. Source: walk-forward daily returns {df.index[0]} .. {df.index[-1]} "
          f"({len(df)} sessions; data sha256 `{frozen['data_hash_sha256'][:16]}...`). "
-         f"Haircut = strategy mean daily return shrunk by {HAIRCUT:.0%} (overfitting at N=103 trials). "
+         f"Haircut = strategy mean daily return shrunk by {HAIRCUT:.0%} (overfitting at N={N_TRIALS} trials). "
          "Active = cum strategy - cum SPY. MDD = strategy max drawdown within the horizon.", ""]
     L += _md_table(bands)
     L += [f"## Frozen monitoring thresholds (haircut distribution, created {frozen['created']})", "",
           f"`{BANDS_JSON.relative_to(REPO_ROOT)}` -- YELLOW below q{YELLOW_Q:02d}, RED below q{RED_Q:02d} "
-          "(halt / revert to best_model.pkl); linear interpolation in elapsed trading days.", "",
+          "(halt / BDA_LEVERAGE=1 / revert to best_model.pkl); linear interpolation in elapsed trading days.", "",
           "| d | active q05 | active q01 | MDD q05 | MDD q01 |", "|---|---|---|---|---|"]
     for i, d in enumerate(t["knots_days"]):
         if d in (5, 10, 21, 42, 63, 126, 189, 252):
