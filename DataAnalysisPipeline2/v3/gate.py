@@ -896,3 +896,17 @@ def adopt_r13(trials: dict, inc: dict, spy_cagr: float, passed_gate: dict) -> di
     if out["adoptable"]:
         out["winner"] = max(out["adoptable"], key=lambda k: trials[k]["ir_spy"])
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Round 14 (pre-registered 2026-11-11; results/round14_preregistration.md)
+# --------------------------------------------------------------------------- #
+R14_BASE_TRIAL = "earn_blackout"
+R14_TRIALS = ("sn30_spill", "sn30_lazy", "sn30_graphtext", "gnn_spill")
+R14_SPILL_WINDOWS = (5, 21, 63)
+R14_LAZY_STALE_DAYS = 400
+R14_GNN = dict(layers=2, hidden=64, dropout=0.3, blend=0.5, seed=20261111)
+R14_ADOPT_SHARPE_MIN_GAIN = 0.03
+R14_ADOPT_IR_MIN_GAIN = 0.05
+R14_ADOPT_DD_TOL = 0.01
+N_TRIALS_R14 = 106 + len(R14_TRIALS)                                    # 110
