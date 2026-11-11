@@ -1,0 +1,134 @@
+# Monthly refresh of the committed live-data snapshots (SEC EDGAR + FINRA, free public sources).
+#
+# The monthly paper rebalance (rebalance.yml, days 1-7) needs fresh snapshots:
+#   trading_agent/data/altdata_snapshot/      insider Form 4 events (<= 14 d old, else the bot falls
+#                                             back to best_model.pkl), FINRA short interest, 8-K 2.02
+#                                             earnings events (blackout skipped if > 14 d old)
+#   trading_agent/data/fundamentals_snapshot/ EDGAR fundamentals (<= 120 d old)
+# Until 2026-11 they were refreshed only by a local scheduled task on day 28, which needs the
+# laptop's $BDA_DATA_V3 caches. This job tops each snapshot up from its committed state instead
+# (trading_agent/snapshot_refresh.py):
+#   * Form 4/5: EDGAR daily index + one request per filing (~400-550 filings/day for the universe
+#     -> ~10k requests ~ 25-40 min for a month at <= 8 req/s);
+#   * FINRA: the bi-monthly files from FINRA's public CDN (a few requests);
+#   * 8-K 2.02: EDGAR daily index + per-CIK submissions JSON (~2-4k requests);
+#   * fundamentals: SEC's nightly companyfacts.zip (one ~1.4 GB request), rebuilt per CIK.
+# SEC fair access: one declared User-Agent, <= 8 requests/s (limit 10), sequential parts.
+#
+# REQUIRED: repository secret SEC_USER_AGENT = "Your Name your.email@example.com" (SEC rejects
+# requests without a real contact). Missing secret or any failed part -> the job fails and opens an
+# issue "Snapshot refresh failed: YYYY-MM". Parts that succeeded are still committed; a failed part
+# leaves its snapshot as it was. The local scheduled task (day 28) stays as the backup.
+name: Monthly snapshot refresh (SEC/FINRA)
+
+on:
+  schedule:
+    # 07:17 UTC on days 26 and 27 (the second run only tops up one more day, or retries).
+    - cron: "17 7 26,27 * *"
+  workflow_dispatch:
+    inputs:
+      parts:
+        description: "Comma-separated parts: altdata,earnings,fundamentals"
+        default: "altdata,earnings,fundamentals"
+
+permissions:
+  contents: write   # commit the refreshed snapshots
+  issues: write     # open an issue on failure
+
+concurrency:
+  group: bda-snapshot-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+      BDA_DATA_V3: ${{ runner.temp }}/bda_data_v3   # scratch only; nothing is read from it
+      BDA_ALT_INSIDER_MAX_AGE_DAYS: ${{ vars.BDA_ALT_INSIDER_MAX_AGE_DAYS || '14' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+          fetch-depth: 1
+
+      - name: Require the SEC_USER_AGENT secret
+        run: |
+          if [ -z "$SEC_USER_AGENT" ]; then
+            echo "::error::Repository secret SEC_USER_AGENT is not set (Settings -> Secrets and variables -> Actions). Value: 'Your Name your.email@example.com'."
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-bot.txt
+
+      - run: pip install -r requirements-bot.txt pytest
+
+      - name: Refresh snapshots
+        id: refresh
+        shell: bash
+        run: |
+          mkdir -p "$BDA_DATA_V3"
+          set +e
+          python -m DataAnalysisPipeline2.trading_agent.snapshot_refresh \
+            --parts "${{ inputs.parts || 'altdata,earnings,fundamentals' }}" 2>&1 | tee refresh.log
+          RC=${PIPESTATUS[0]}
+          {
+            echo "### Snapshot refresh (exit $RC)"
+            echo '```'
+            sed -n 's/^REFRESH_JSON: //p' refresh.log | python -m json.tool || echo "no REFRESH_JSON"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $RC
+
+      - name: Snapshot tests
+        id: tests
+        if: always() && steps.refresh.outcome != 'skipped'
+        run: python -m pytest -q DataAnalysisPipeline2/trading_agent/test_snapshot_refresh.py DataAnalysisPipeline2/trading_agent/test_altall.py DataAnalysisPipeline2/trading_agent/test_earnings.py
+
+      - name: Commit refreshed snapshots
+        # Also after a partial failure (each part only rewrites its files when it succeeded),
+        # but never when the snapshot tests fail.
+        if: always() && steps.refresh.outcome != 'skipped' && steps.tests.outcome == 'success'
+        run: |
+          git config user.name "bda-snapshot-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add DataAnalysisPipeline2/trading_agent/data/altdata_snapshot DataAnalysisPipeline2/trading_agent/data/fundamentals_snapshot
+          if git diff --cached --quiet; then echo "snapshots unchanged"; exit 0; fi
+          git commit -m "data: monthly snapshot refresh $(date -u +%F) (CI)"
+          for i in 1 2 3; do
+            git pull --rebase origin "${GITHUB_REF_NAME}" && git push && exit 0
+            sleep 10
+          done
+          echo "::error::push failed"; exit 1
+
+      - name: Open issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="Snapshot refresh failed: $(date -u +%Y-%m)"
+          if gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --search "\"$TITLE\" in:title" \
+               --json title -q '.[].title' | grep -Fxq "$TITLE"; then
+            echo "issue '$TITLE' already open"; exit 0
+          fi
+          RUN="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          {
+            echo "The monthly snapshot refresh failed ([run]($RUN))."
+            echo
+            if [ -z "$SEC_USER_AGENT" ]; then
+              echo "**The repository secret \`SEC_USER_AGENT\` is missing.** Add it (Settings -> Secrets and variables -> Actions) with a value like \`Your Name your.email@example.com\`, then re-run the workflow."
+            else
+              echo '```'
+              sed -n 's/^REFRESH_JSON: //p' refresh.log 2>/dev/null | python -m json.tool 2>/dev/null || tail -40 refresh.log 2>/dev/null || echo "no log"
+              echo '```'
+            fi
+            echo
+            echo "If the insider feed is still > 14 days old on the rebalance date the bot falls back to best_model.pkl."
+            echo "Backup: run the local task (\`python -m DataAnalysisPipeline2.v3.altlive refresh\`, \`... optimized snapshot\`, \`... altall snapshot\`) or re-run this workflow."
+          } > issue.md
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file issue.md

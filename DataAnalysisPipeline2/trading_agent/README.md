@@ -113,6 +113,10 @@ Customize your stock universe and basket size:
   come from `data/fundamentals_snapshot/` and `data/altdata_snapshot/` (`altall.py`); refresh
   both before each monthly run:
   `python -m DataAnalysisPipeline2.v3.altlive refresh && python -m DataAnalysisPipeline2.trading_agent.optimized snapshot && python -m DataAnalysisPipeline2.trading_agent.altall snapshot`.
+  In the cloud, `.github/workflows/refresh_snapshots.yml` (days 26-27; needs the repository
+  secret `SEC_USER_AGENT`) tops all three snapshots up from their committed state with
+  `python -m DataAnalysisPipeline2.trading_agent.snapshot_refresh` (EDGAR daily Form 4 + 8-K feed,
+  FINRA CDN, nightly `companyfacts.zip`; no `$BDA_DATA_V3` needed); the local commands stay the backup.
   A missing / invalid artefact, an insider feed older than `BDA_ALT_INSIDER_MAX_AGE_DAYS`
   (14) or a missing public FINRA file, a feature error, or an optimized_v3 book that could not
   be built all fall back to the production model and its usual optimized_v3 -> long_only_v3
