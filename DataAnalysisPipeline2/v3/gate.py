@@ -838,3 +838,61 @@ def adopt_r12(vra: dict, inc: dict, passed_gate: bool) -> dict:
               "ir_spy": vra["ir_spy"] >= inc["ir_spy"] - R12_ADOPT_IR_TOL}
     return {"passed_gate": bool(passed_gate), "checks": checks,
             "adopt": bool(passed_gate or all(checks.values()))}
+
+
+# --------------------------------------------------------------------------- #
+# Round 13 (pre-registered in results/round13_preregistration.md, committed
+# before any Round-13 book was run): two trials on the Round-11 earn_blackout
+# book.
+#  lev125 -- the earn_blackout sleeve held at constant leverage R13_LEV
+#    (Round-11 beta1_lev machinery: optimizer AUM x NAV x L, w_prev / blackout
+#    caps on drifted sleeve weights, costs on the full exposure change,
+#    financing max(exposure - NAV, 0) at DTB3(prev session) + R11_FIN_SPREAD).
+#  pa_iwm -- portable alpha: earn_blackout optimizer on the "all" universe minus
+#    its R13_PA_EXCLUDE_TOP largest names (sleeve w, sum 1); OLS betas over the
+#    R13_BETA_WINDOW sessions ending at the decision date of the fixed-w sleeve
+#    to IWM (b_pI >= 0) and SPY (b_pS) and of IWM to SPY (b_IS); legs
+#    s w, IWM -s b_pI, SPY 1 - s (b_pS - b_pI b_IS) (total ex-ante beta to SPY
+#    R13_PA_BETA_TARGET), s = min(1, (GROSS_CAP - 1) / (1 + b_pI - b_pS +
+#    b_pI b_IS)) so gross <= R13_PA_GROSS_CAP (SPY < 0 -> SPY 0, s = min(1,
+#    GROSS_CAP / (1 + b_pI))). ETFs R13_ETF_COST per side, IWM borrow
+#    R13_IWM_BORROW, financing on max(stock + SPY - NAV, 0) (short proceeds
+#    not netted). Optimizer AUM x NAV x s_prev (R13_PA_S0 first).
+# Gate = Round 11's at N = 106. Adoptable on paper if the gate passes, else
+# only if ALL: IR vs SPY > 0, max DD >= MAX_DD_FLOOR, Sharpe >= incumbent -
+# R13_ADOPT_SHARPE_TOL, CAGR > SPY's; both -> higher IR vs SPY.
+# --------------------------------------------------------------------------- #
+R13_BASE_TRIAL = "earn_blackout"
+R13_TRIALS = ("lev125", "pa_iwm")
+R13_LEV = 1.25
+R13_PA_EXCLUDE_TOP = 500
+R13_PA_GROSS_CAP = 1.9
+R13_PA_BETA_TARGET = 1.0
+R13_PA_S0 = 0.5
+R13_BETA_WINDOW = 252
+R13_BETA_MIN_OBS = 126
+R13_ETF_COST = 1e-4
+R13_IWM_BORROW = 0.01
+R13_COVID = R12_COVID
+R13_ADOPT_SHARPE_TOL = 0.10
+N_TRIALS_R13 = N_TRIALS_R12 + len(R13_TRIALS)                         # 104 + 2 = 106
+
+
+def adopt_r13(trials: dict, inc: dict, spy_cagr: float, passed_gate: dict) -> dict:
+    """Pre-registered adoption rule. ``trials``: name -> {ir_spy, max_dd, sharpe,
+    cagr}; ``inc``: the incumbent rerun's same keys; ``passed_gate``: name ->
+    bool. Returns per-trial checks, the adoptable set and the winner (highest
+    IR vs SPY among the adoptable, or None)."""
+    out = {"per_trial": {}, "adoptable": [], "winner": None}
+    for k, v in trials.items():
+        checks = {"ir_spy": v["ir_spy"] > R5_MIN_IR_SPY,
+                  "max_dd": v["max_dd"] >= MAX_DD_FLOOR,
+                  "sharpe": v["sharpe"] >= inc["sharpe"] - R13_ADOPT_SHARPE_TOL - 1e-12,
+                  "cagr_gt_spy": v["cagr"] > spy_cagr}
+        ok = bool(passed_gate.get(k, False) or all(checks.values()))
+        out["per_trial"][k] = {"passed_gate": bool(passed_gate.get(k, False)), "checks": checks, "adoptable": ok}
+        if ok:
+            out["adoptable"].append(k)
+    if out["adoptable"]:
+        out["winner"] = max(out["adoptable"], key=lambda k: trials[k]["ir_spy"])
+    return out
