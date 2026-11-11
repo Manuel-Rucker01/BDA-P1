@@ -39,7 +39,6 @@ import json
 import os
 import re
 import sys
-import threading
 import time
 import zipfile
 import zlib
@@ -66,7 +65,7 @@ LM_CATS = ("neg", "unc", "lit")
 LAZY_COLUMNS = ["lazy_cos", "lazy_jac", "lazy_dlen", "lazy_dneg", "lazy_dunc", "lazy_dlit",
                 "lazy_is10k", "lazy_days"]
 ARCHIVES = "https://www.sec.gov/Archives/edgar/data/{cik}/{acc}/{doc}"
-SHARD_SIZE = 250
+SHARD_SIZE = 200
 
 
 def lazy_dir(*parts: str) -> str:
@@ -317,9 +316,13 @@ def download(max_tier: int = 3, max_hours: float | None = None, threads: int = 4
              log=print) -> None:
     """Fetch + reduce every not-yet-done filing of tiers <= max_tier, in tier
     order (within a tier: by CIK, then date). Safe to kill and restart."""
+    import faulthandler
+    import signal
     import requests
     from . import altdata as ad
     from .form4 import Limiter, SECClient
+    faulthandler.register(signal.SIGUSR1, all_threads=True)
+    codes: Counter = Counter()
     idx = pd.read_parquet(os.path.join(lazy_dir(), "index.parquet"))
     done = done_accns()
     todo = idx[(idx["tier"] <= max_tier) & ~idx["accn"].isin(done)].sort_values(["tier", "cik", "acceptance"])
@@ -339,9 +342,11 @@ def download(max_tier: int = 3, max_hours: float | None = None, threads: int = 4
                 self.n += 1
                 try:
                     r = self.s.get(url, timeout=90)
-                except Exception:  # noqa: BLE001
+                except Exception as e:  # noqa: BLE001
+                    codes[type(e).__name__] += 1
                     self.sleep(2 ** k)
                     continue
+                codes[r.status_code] += 1
                 if r.status_code == 200:
                     return r.content
                 if r.status_code == 404:
@@ -350,8 +355,6 @@ def download(max_tier: int = 3, max_hours: float | None = None, threads: int = 4
             return b"__FAILED__"
 
     cl = _Client(session=sess, limiter=lim)
-    recs, seq, n_ok, n_bad = [], 0, 0, 0
-    lock = threading.Lock()
     rows = todo.to_dict("records")
 
     def fetch(r):
@@ -360,41 +363,60 @@ def download(max_tier: int = 3, max_hours: float | None = None, threads: int = 4
         acc = r["accn"].replace("-", "")
         return r, cl.get_bytes(ARCHIVES.format(cik=int(r["cik"]), acc=acc, doc=r["doc"]))
 
-    with ThreadPoolExecutor(threads) as tp, ProcessPoolExecutor(workers) as pp:
-        CH = 200
-        for i0 in range(0, len(rows), CH):
-            if max_hours is not None and time.time() - t0 > max_hours * 3600:
-                log("[lazy] time budget reached, stopping")
-                break
-            fetched = list(tp.map(fetch, rows[i0:i0 + CH]))
-            jobs = []
-            for r, raw in fetched:
-                base = {k: r[k] for k in ("cik", "accn", "form", "filing_date", "report_date", "acceptance")}
-                if raw is None:
-                    recs.append({**base, "status": "missing"})
-                elif raw == b"__FAILED__":
-                    n_bad += 1            # not recorded -> retried on the next run
-                elif len(raw) > MAX_DOC_BYTES:
-                    recs.append({**base, "status": "too_big"})
-                else:
-                    jobs.append((base, pp.submit(_parse_job, (raw, r["form"]))))
-            for base, fut in jobs:
-                res = fut.result()
-                if "error" in res:
-                    recs.append({**base, "status": "parse_error"})
-                else:
-                    recs.append({**base, **res, "status": "ok"})
-                    n_ok += 1
-            with lock:
-                if len(recs) >= SHARD_SIZE:
-                    _write_shard(recs, seq)
-                    seq += 1
-                    recs = []
+    from collections import deque
+    state = {"recs": [], "seq": 0, "ok": 0, "bad": 0, "n": 0}
+
+    def record(rec):
+        state["recs"].append(rec)
+        state["n"] += 1
+        state["ok"] += rec["status"] == "ok"
+        if len(state["recs"]) >= SHARD_SIZE:
+            _write_shard(state["recs"], state["seq"])
+            state["seq"] += 1
+            state["recs"] = []
             el = time.time() - t0
-            k = min(i0 + CH, len(rows))
-            log(f"[lazy] {k:,}/{len(rows):,} ok {n_ok:,} failed {n_bad} | {cl.n / max(el, 1):.2f} req/s | "
-                f"{el / 60:.0f} min, ETA {(len(rows) - k) * el / max(k, 1) / 3600:.1f} h | tier {rows[k - 1]['tier']}")
-        _write_shard(recs, seq)
+            k = state["n"] + state["bad"]
+            log(f"[lazy] {k:,}/{len(rows):,} ok {state['ok']:,} failed {state['bad']} | {cl.n / max(el, 1):.2f} req/s | "
+                f"{el / 60:.0f} min, ETA {(len(rows) - k) * el / max(k, 1) / 3600:.1f} h | tier {rec_tier[0]} | "
+                f"http {dict(codes)}")
+
+    rec_tier = [None]
+
+    def drain(pq, block):
+        while pq and (block or pq[0][1].done()):
+            base, fut = pq.popleft()
+            res = fut.result()
+            record({**base, "status": "parse_error"} if "error" in res else {**base, **res, "status": "ok"})
+
+    with ThreadPoolExecutor(threads) as tp, ProcessPoolExecutor(workers) as pp:
+        fq, pq, it = deque(), deque(), iter(rows)
+        stop = False
+        while True:
+            while not stop and len(fq) < 8 * threads:
+                r = next(it, None)
+                if r is None or (max_hours is not None and time.time() - t0 > max_hours * 3600):
+                    if r is not None:
+                        log("[lazy] time budget reached, stopping")
+                    stop = True
+                    break
+                fq.append(tp.submit(fetch, r))
+            if not fq:
+                break
+            r, raw = fq.popleft().result()
+            rec_tier[0] = r["tier"]
+            base = {k: r[k] for k in ("cik", "accn", "form", "filing_date", "report_date", "acceptance")}
+            if raw is None:
+                record({**base, "status": "missing"})
+            elif raw == b"__FAILED__":
+                state["bad"] += 1            # not recorded -> retried on the next run
+            elif len(raw) > MAX_DOC_BYTES:
+                record({**base, "status": "too_big"})
+            else:
+                pq.append((base, pp.submit(_parse_job, (raw, r["form"]))))
+            drain(pq, block=len(pq) > 64)
+        drain(pq, block=True)
+        _write_shard(state["recs"], state["seq"])
+        log(f"[lazy] download finished: ok {state['ok']:,}, failed {state['bad']}")
 
 
 def load_docs(columns=None) -> pd.DataFrame:
@@ -593,7 +615,7 @@ def feature_ics(rows: pd.DataFrame, log=print) -> dict:
     for c in LAZY_COLUMNS:
         row = {}
         for uname, m in (("all", np.ones(len(alt), bool)), ("tradable", alt["eligible"].astype(bool).to_numpy()),
-                         ("top1000", alt["_top"].fillna(False).to_numpy(dtype=bool))):
+                         ("top1000", alt["_top"].eq(True).to_numpy(dtype=bool))):
             sub = alt.loc[m, ["ticker", "Date", c, "fwd_ret_30"]].dropna()
             sub = sub[sub.groupby("Date")[c].transform("nunique") > 1]
             s = sub.groupby("Date").apply(lambda g: g[c].corr(g["fwd_ret_30"], method="spearman") if len(g) > 30
@@ -610,6 +632,73 @@ def feature_ics(rows: pd.DataFrame, log=print) -> dict:
     return out
 
 
+def report(path: str | None = None, runtime_note: str = "", log=print) -> str:
+    """As-of audit, coverage, standalone ICs -> results/round14_lazy_data.md
+    (+ the raw numbers in sec_lazy/report.json)."""
+    rows = pd.read_parquet(weekly_path())
+    ev = pd.read_parquet(events_path())
+    idx = pd.read_parquet(os.path.join(lazy_dir(), "index.parquet"))
+    docs = load_docs(columns=["accn", "form", "status", "n_tok"])
+    audit = asof_audit(rows, ev)
+    cov_w, cov_f = coverage_by_year(rows, ev, idx)
+    ics = feature_ics(rows, log=log)
+    tiers = idx.assign(done=idx["accn"].isin(set(docs["accn"]))).groupby("tier")["done"].agg(["size", "sum"])
+    json.dump({"audit": audit, "ics": ics, "tiers": tiers.to_dict()},
+              open(os.path.join(lazy_dir(), "report.json"), "w"), indent=1, default=str)
+    i1p = os.path.join(lazy_dir(), "item1_vectors.parquet")
+    n_i1 = len(pd.read_parquet(i1p, columns=["accn"])) if os.path.exists(i1p) else 0
+    L_ = ["# Round 14 `lazy` block: data, as-of audit, coverage, standalone ICs", "",
+          "Built by `v3/altdata_r14_lazy.py` under the definitions in `results/round14_addendum_lazy.md` "
+          "(committed before any forward-return statistic). No model trained, no book run.", ""]
+    if runtime_note:
+        L_ += [runtime_note, ""]
+    L_ += ["## Download coverage (filings 2016-01-01 .. 2026-11-05, submissions snapshot 2026-11-06)", "",
+           "| tier | content | filings in index | downloaded | share |", "|---|---|---|---|---|"]
+    lab = {1: "CIKs ever in weekly top-1000, 10-K + 10-Q", 2: "other ever-eligible CIKs, 10-K",
+           3: "other ever-eligible CIKs, 10-Q", 4: "never-eligible CIKs (not downloaded)"}
+    for t, r in tiers.iterrows():
+        L_.append(f"| {t} | {lab.get(t, '')} | {int(r['size']):,} | {int(r['sum']):,} | {r['sum'] / r['size']:.1%} |")
+    st = docs["status"].value_counts().to_dict()
+    L_ += ["", f"Documents processed: {len(docs):,} (status {st}); usable (>= {MIN_TOKENS} tokens): "
+           f"{len(ev):,} filings of {ev['cik'].nunique():,} CIKs; with a comparable prior: "
+           f"{int(np.isfinite(ev['lazy_cos']).sum()):,}. Item-1 vectors: {n_i1:,} 10-Ks.", "",
+           "Median tokens: 10-K " + f"{ev.loc[ev['form'] == '10-K', 'n_tok'].median():,.0f}, 10-Q "
+           f"{ev.loc[ev['form'] == '10-Q', 'n_tok'].median():,.0f}. Median `lazy_cos`: 10-K "
+           f"{ev.loc[ev['form'] == '10-K', 'lazy_cos'].median():.3f}, 10-Q {ev.loc[ev['form'] == '10-Q', 'lazy_cos'].median():.3f}.",
+           "", "### By filing year", "", "| year | index filings | parsed | with prior |", "|---|---|---|---|"]
+    for y, r in cov_f.fillna(0).iterrows():
+        L_.append(f"| {y} | {int(r['index_filings']):,} | {int(r['filings_parsed']):,} | {int(r['with_prior']):,} |")
+    L_ += ["", "### Weekly rows with a value (`lazy_cos` finite)", "",
+           "| year | all rows | eligible | eligible with CIK |", "|---|---|---|---|"]
+    for y, r in cov_w.iterrows():
+        L_.append(f"| {y} | {r['weekly_all']:.1%} | {r['weekly_eligible']:.1%} | {r['eligible_with_cik']:.1%} |")
+    L_ += ["", "## As-of audit", "", "Every weekly value traced back to its source filing (`lazy_accn`):", ""]
+    for k, v in audit.items():
+        L_.append(f"* {k}: {v}")
+    ok = audit["accepted_on_or_after_date"] == 0 and audit["avail_after_date"] == 0 and audit["cik_mismatch"] == 0 \
+        and audit["missing_source"] == 0 and audit["older_than_max_age"] == 0
+    L_ += ["", f"**{'PASS' if ok else 'FAIL'}**: no value is used on or before its filing's acceptance date "
+           "(the earliest use is the next session).", "",
+           "## Standalone weekly ICs (raw features vs 30-session return)", "",
+           "| feature | IC all | t | IC tradable | t | IC top-1000 | t | coverage tradable | decay 5d | 21d | 63d |",
+           "|---|---|---|---|---|---|---|---|---|---|---|"]
+    for c, r in ics.items():
+        L_.append(f"| {c} | {r['all']['ic']:.4f} | {r['all']['nw_t']:.2f} | {r['tradable']['ic']:.4f} | "
+                  f"{r['tradable']['nw_t']:.2f} | {r['top1000']['ic']:.4f} | {r['top1000']['nw_t']:.2f} | "
+                  f"{r['tradable']['coverage']:.0%} | {r['decay'][5]:.3f} | {r['decay'][21]:.3f} | {r['decay'][63]:.3f} |")
+    yrs = sorted({y for r in ics.values() for y in r["tradable"]["by_year"]})
+    L_ += ["", "Per-year IC, tradable names:", "", "| feature | " + " | ".join(yrs) + " |",
+           "|---|" + "---|" * len(yrs)]
+    for c, r in ics.items():
+        L_.append(f"| {c} | " + " | ".join(f"{r['tradable']['by_year'].get(y, float('nan')):.3f}" for y in yrs) + " |")
+    md = "\n".join(L_) + "\n"
+    path = path or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "results",
+                                "round14_lazy_data.md")
+    open(path, "w").write(md)
+    log(f"[lazy] report -> {path}")
+    return md
+
+
 if __name__ == "__main__":
     a = sys.argv[1:]
     if "index" in a:
@@ -620,3 +709,5 @@ if __name__ == "__main__":
         download(max_tier=tier, max_hours=hours)
     if "features" in a:
         build_features()
+    if "report" in a:
+        report()
