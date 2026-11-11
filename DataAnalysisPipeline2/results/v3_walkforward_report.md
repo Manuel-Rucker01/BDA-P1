@@ -1466,3 +1466,75 @@ Pre-registered in `results/round12_preregistration.md` (commit 8860d7e, before a
 * A uniform λ² on F and D (with the Grinold alpha scaling by λ through the specific vol) only raises the effective risk aversion of `mv_abs_all` by λ. It does not change relative risk, so the composition barely moves.
 * High-vol calibration improves a little (1.60 → 1.50), because ex-ante vol is scaled up after stress begins. The P&L does not.
 * Crash protection would need a forward-looking or intra-month trigger, or a structurally different risk measure (e.g. downside/crash beta), not a regime multiplier at monthly frequency.
+
+## Round 13: constant leverage (`lev125`) and portable alpha (`pa_iwm`), 2 trials, N = 106
+
+Pre-registered in `results/round13_preregistration.md` and `v3/gate.py` (`R13_*`, `adopt_r13`), commit 9550d18, pushed before the IWM download and before any book was run. Code: `v3/round13.py`; tests: `v3/tests/test_round13.py`. Outputs: `eval/r13_{earn_blackout,lev125,pa_iwm}_{daily,log}.parquet`, `results_r13.json`, `gate_r13.json`.
+
+**Data.** IWM daily bars come from Alpaca SIP (free tier, `adjustment=all`, so split- and dividend-adjusted, i.e. total return). They were downloaded once through the price-store code (`prices.fetch_chunk`) for 2016-01-04 .. 2026-11-04 (2,726 bars, the same sessions as `spy.parquet`) and stored as `v3model/iwm.parquet`. SPY is the existing `v3model/spy.parquet`. DTB3 is the stored Round-11 file.
+
+**Engineering check.** The Round-13 runner's `earn_blackout` reproduces `r11_earn_blackout` exactly (max |diff| 0.0, 1,951 sessions, same index).
+
+The window is 2019-02-01 .. 2026-11-04. The DSR uses 100 booked Sharpe ratios with N = 106.
+
+| book | CAGR | vol | Sharpe | max DD | COVID DD | beta vs SPY realised (ex-ante) | IR vs SPY [95% CI] | IR vs EW | cost / financing+borrow per yr | DSR (N=106) | gate |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| earn_blackout (incumbent rerun) | 15.6% | 14.9% | 1.04 | −27.7% | −27.7% | 0.63 (0.54) | −0.10 [−0.79, 0.51] | 0.27 | 1.87% / 0 | 0.856 | FAIL (b3, r5) |
+| **lev125** | 17.9% | 18.7% | 0.98 | −34.0% | −34.0% | 0.79 (0.67) | **+0.12** [−0.54, 0.77] | 0.43 | 2.33% / 0.94% | 0.811 | FAIL (b3) |
+| pa_iwm | 16.8% | 23.8% | 0.77 | **−47.6%** | −47.6% | 1.18 (1.00) | +0.18 [−0.46, 0.80] | 0.49 | 1.90% / 2.33% + 0.27% | 0.624 | FAIL (b2, b3) |
+| SPY | 16.1% | 18.9% | 0.89 | −33.8% | −33.8% | 1 | – | 0.50 | – | – | – |
+
+Calendar-year returns (2019 from Feb, 2026 to 11-04):
+
+| year | incumbent | lev125 | pa_iwm | SPY |
+|---|---|---|---|---|
+| 2019 | 19.1% | 23.6% | 25.0% | 21.5% |
+| 2020 | 39.1% | 47.6% | 27.0% | 18.5% |
+| 2021 | 24.6% | 28.7% | 42.4% | 28.6% |
+| 2022 | −4.3% | −6.8% | −19.4% | −18.2% |
+| 2023 | 6.8% | 6.7% | 24.3% | 26.2% |
+| 2024 | 20.4% | 24.1% | 24.9% | 24.9% |
+| 2025 | 6.5% | 7.1% | 4.6% | 17.7% |
+| 2026 YTD | 13.4% | 15.5% | 12.3% | 13.3% |
+
+Gate-c window (2026-07-15..09-23), return vs SPY 2.4%: incumbent 2.1%, lev125 2.3%, pa_iwm 2.9%.
+
+**Adoption rule** (gate pass, or all four of: IR vs SPY > 0, max DD ≥ −35%, Sharpe ≥ 1.044 − 0.10 = 0.944, CAGR > SPY's 16.1%):
+* `lev125`: all four hold (IR +0.12, DD −33.97%, Sharpe 0.977, CAGR 17.9%). **Adoptable on paper. It is the round's winner**, being the only qualifier.
+* `pa_iwm`: fails on max DD (−47.6%) and Sharpe (0.77). Not adoptable.
+
+**Nothing is wired; production is unchanged.** Leverage and shorting on the paper account are the user's decision.
+
+### Findings
+
+* **`lev125` is Round 11's `beta1_lev` at a size that just fits the drawdown floor.**
+  * Leverage adds +2.4%/yr CAGR over the incumbent. Financing (DTB3 + 1% on 25% borrowed) costs 0.94%/yr and extra trading 0.46%/yr. Sharpe drops 0.07.
+  * The −34.0% max drawdown is the COVID crash and sits 1 pp inside the floor. At about 1.3× the book would breach it.
+  * The IR vs SPY CI (−0.54…0.77) is as wide as ever. The positive point estimate is a beta-for-return trade (realised beta 0.79), not new skill. DSR falls (0.856 → 0.811).
+* **`pa_iwm`: the small/mid-cap selection skill is real, but the IWM hedge does not remove the small-cap crash beta.**
+  * The unit sleeve (ex-top-500, ~2,570 names, ~89 held) compounded 16.4%/yr vs IWM 10.0% (IR vs IWM +0.25).
+  * The ex-ante (252-day daily OLS) sleeve beta to IWM averaged only 0.40, which made the hedge small (IWM −0.27 NAV, s ≈ 0.69, SPY ≈ 0.94). The hedged sleeve kept a realised beta of 0.21 to SPY, so total realised beta was 1.18, not 1.0.
+  * In COVID the long small/mid book fell with IWM while the hedge was under-sized, giving −47.6%. 2022 was −19.4%.
+  * The gross cap of 1.9 binds at every rebalance. About 0.63 of NAV is financed, which costs 2.3%/yr, plus 0.27%/yr IWM borrow.
+  * Likely cause of the low ex-ante beta: non-synchronous daily trading of small caps biases daily OLS betas down, and the optimizer's low-vol tilt lowers them further. A Dimson or weekly beta, or a risk-model beta to an IWM proxy, would probably have hedged more. That would be a new trial, not a fix to this one.
+
+### Caveats
+
+* Every IR vs SPY CI spans zero, and no book reaches DSR 0.90 at N = 106.
+* `lev125` passes the adoption rule's drawdown test by 1 pp on a single event (COVID).
+* Financing is conservative: no interest is earned on cash, and the `pa_iwm` short proceeds are not netted against the debit. With broker-style netting, `pa_iwm`'s debit would be about 0.36 NAV instead of 0.63, saving roughly 1%/yr, which would not change its fails.
+* Book costs are at $100M AUM.
+
+### What wiring would require (not done)
+
+**`lev125`:**
+* Margin borrowing on the paper account (the paper account must allow buying power above equity, Reg-T 2×).
+* In the live `optimized_v3` path: solve the sleeve with impact AUM × 1.25 and w_prev / blackout caps on sleeve-normalised weights, then scale target notionals by 1.25.
+* Order sizing against equity × 1.25, plus a guard that re-checks buying power and stops leverage on a YELLOW/RED Monte-Carlo band. Those bands would have to be re-frozen for the levered return stream.
+
+**`pa_iwm`:**
+* All of the above.
+* Short-sale permission and IWM borrow availability.
+* The live universe split: ex-top-500 by PIT mcap.
+* A trailing-beta step on Alpaca bars for IWM and SPY.
+* Three-leg order generation (stocks, SPY long, IWM short) with the gross ≤ 1.9 check.
