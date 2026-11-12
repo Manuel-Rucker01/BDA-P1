@@ -910,3 +910,29 @@ R14_ADOPT_SHARPE_MIN_GAIN = 0.03
 R14_ADOPT_IR_MIN_GAIN = 0.05
 R14_ADOPT_DD_TOL = 0.01
 N_TRIALS_R14 = 106 + len(R14_TRIALS)                                    # 110
+
+
+def choose_config_r14(perf: dict):
+    """Pre-registered selection: highest IR vs SPY among the Round-14 trials with
+    max DD >= MAX_DD_FLOOR (else, as in Rounds 9-13, the highest IR vs SPY)."""
+    pool_all = {k: v for k, v in perf.items() if k in R14_TRIALS}
+    if not pool_all:
+        return None
+    ok = {k: v for k, v in pool_all.items() if v["max_dd"] >= MAX_DD_FLOOR}
+    pool = ok or pool_all
+    return max(pool, key=lambda k: pool[k]["ir_spy"])
+
+
+def adopt_r14(trial: dict, inc: dict, passed_gate: bool) -> dict:
+    """Pre-registered adoption rule for the selected trial vs the incumbent rerun
+    under identical code. ``trial`` / ``inc``: sharpe, ir_spy, max_dd, ic_tradable,
+    ic_top1000. Adoption additionally needs a live (cloud-refreshable) data path:
+    a separate engineering step and the user's decision (never automatic)."""
+    checks = {"sharpe": trial["sharpe"] >= inc["sharpe"] + R14_ADOPT_SHARPE_MIN_GAIN - 1e-12,
+              "ir_spy": trial["ir_spy"] >= inc["ir_spy"] + R14_ADOPT_IR_MIN_GAIN - 1e-12,
+              "max_dd": trial["max_dd"] >= inc["max_dd"] - R14_ADOPT_DD_TOL - 1e-12,
+              "ic_tradable_higher": trial["ic_tradable"] > inc["ic_tradable"],
+              "ic_top1000_not_lower": trial["ic_top1000"] >= inc["ic_top1000"]}
+    return {"passed_gate": bool(passed_gate), "checks": checks,
+            "rule_met": bool(passed_gate or all(checks.values())),
+            "needs_live_data_path": True}

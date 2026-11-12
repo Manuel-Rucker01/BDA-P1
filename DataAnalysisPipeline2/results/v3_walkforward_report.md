@@ -1546,3 +1546,131 @@ Gate-c window (2026-07-15..09-23), return vs SPY 2.4%: incumbent 2.1%, lev125 2.
 * The live universe split: ex-top-500 by PIT mcap.
 * A trailing-beta step on Alpaca bars for IWM and SPY.
 * Three-leg order generation (stocks, SPY long, IWM short) with the gross ≤ 1.9 check.
+
+## Round 14: graph spillover (`spill`), filing-text change (`lazy`) and a GNN, 4 trials, N = 110
+
+Pre-registered in `results/round14_preregistration.md` (constants `gate.R14_*`), with the data definitions in `results/round14_addendum_spill.md` and `results/round14_addendum_lazy.md`, and the trial-runner decisions in `results/round14_addendum_trials.md` (commit 2cb059e, pushed before any trial was run). Data reports: `results/round14_spill_data.md`, `results/round14_lazy_data.md`. Code: `v3/round14.py` (selection and adoption: `gate.choose_config_r14`, `gate.adopt_r14`). Tests: `v3/tests/test_round14.py`. Outputs (eval dir): `r14_*_{daily,log}.parquet`, `results_r14.json`, `gate_r14.json`, `r14_signal_ics.json`, `r14_leak.json`, `r14_importance.json`, `r14_check_{signal,book}.json`.
+
+**Verdict: FAIL. Nothing is adopted and nothing is wired.** Every trial's book is below the incumbent rerun on Sharpe, CAGR and IR vs SPY. The selected trial (`sn30_lazy`) fails the gate on b3 and r5, and it fails the adoption rule on Sharpe and IR.
+
+### Data completion (Step 0)
+
+The tier-3 lazy download (10-Qs of tradable firms outside the top-1000) was resumed and **completed**: 61,628 filings in 4.4 h, 0 failures. Tiers 1-3 are now 100% downloaded: 132,468 usable filings of 3,823 CIKs. The lazy has-flag therefore needed no restriction (fallback (c) was not triggered). The un-registered `lazy_is10k` was excluded from the block (decision (a)). With uniform coverage, its tradable IC drops from −0.043 to +0.000, and `lazy_days` goes from −0.025 to +0.018. In the partial build both had been coverage artefacts.
+
+### Engineering checks
+
+* The `sn30_altall_hd` walk-forward rerun under the Round-14 code is **bit-identical** to the stored predictions: 1,258,761 rows, max |diff| 0.0.
+* The `earn_blackout` book on the rerun signal reproduces `r11_earn_blackout` exactly: max |diff| 0.0, 1,951 sessions.
+
+### Leak checks
+
+Held-out AUC, rows 2017-2022, 30% of dates held out:
+
+| features | no EDGAR | delisted |
+|---|---|---|
+| base (incumbent 65) | 0.747 | 0.751 |
+| + spill raw | 0.969 | 0.961 |
+| + spill hd (E1 hot-decked, E2 as is) | 0.801 | 0.801 |
+| + E1 tnic hd / + E2 own | 0.787 / 0.760 | 0.783 / 0.766 |
+| E1 has-flag only / E2 has-flag only | 0.885 / 0.509 | 0.875 / 0.513 |
+| + lazy raw | 0.980 | 0.970 |
+| + lazy hd | 0.774 | 0.776 |
+| lazy has-flag only | 0.904 | 0.892 |
+| **+ both hd** | **0.807 (+0.060)** | **0.812 (+0.061)** |
+
+* **Raw blocks.** Both raw blocks are strong survivorship detectors (AUC 0.97-0.98), because E1 and lazy need a CIK.
+* **After the pre-registered hot-deck.** Spill adds +0.05 AUC and lazy +0.03. Both blocks together sit exactly at Round 10's +0.06 flag, so `sn30_graphtext` carries the same residual hot-deck signature as Rounds 8-10.
+
+**Own-value-row check** (rows with a CIK and the block's own value; IC gain vs the incumbent on the same rows):
+
+| trial | own-value gain |
+|---|---|
+| spill | +0.0008 |
+| lazy | +0.0006 |
+| graphtext | +0.0011 |
+| gnn | −0.0027 |
+
+The gains are small, so no leak drives the results.
+
+**Shuffled-date placebos.**
+* *Signal-level placebo* (prediction of t vs `fwd_ret_30` of a random date, same ticker, 20 permutations). The incumbent scores 0.043 and the trials score 0.043-0.047. This is within-ticker persistence, and it is the same for all signals.
+* *Retrained placebo* (block taken from the same ticker on a permuted date). It gains more than the real block: spill +0.0060 vs +0.0002, lazy +0.0014 vs +0.0007. **This placebo is not a clean null.** Half the permuted dates lie in the future, so the block imports the ticker's later returns (`spill_*_x*` contains the stock's own trailing return at π(t)) and its later 13F breadth and survival. It therefore confirms that the real block contains no comparable information, but it should not be read as a significance test. A within-date cross-ticker shuffle would be the cleaner design for a future round.
+
+**GNN graph checks** (inference only):
+* Without edges: IC 0.0676.
+* With node identities shuffled: IC 0.0685.
+* With the real graph: 0.0722.
+
+So the graph does carry information into the GNN, but not enough to beat the incumbent alone (0.0734).
+
+### Signals (weekly OOS IC vs 30-session return; all predicted rows = v3-eligible = tradable)
+
+| signal | IC tradable | NW t | years > 0 | top-1000 IC (t) | holdout proxy |
+|---|---|---|---|---|---|
+| incumbent rerun (`sn30_altall_hd`) | 0.0734 | 5.10 | 8/8 | 0.0208 (1.54) | 0.162 |
+| `sn30_spill` | 0.0736 | 5.16 | 8/8 | 0.0228 (1.81) | 0.158 |
+| `sn30_lazy` | 0.0741 | 5.13 | 8/8 | 0.0210 (1.56) | 0.160 |
+| `sn30_graphtext` | 0.0741 | 5.16 | 8/8 | 0.0211 (1.63) | 0.159 |
+| `gnn_spill` (50/50 blend) | 0.0722 | 5.06 | 7/8 (2020 < 0) | 0.0205 (1.53) | 0.159 |
+| GNN alone (information) | 0.0608 | 4.69 | 7/8 | 0.0134 (1.04) | 0.145 |
+
+**Graph.** One snapshot per weekly date: 3,023 nodes, 11.3k E1 and 24.7k E2 directed edges among eligible names, 55k non-zeros after symmetrisation. 3.2% of nodes are isolated. The GNN trained for 16-30 epochs (best epochs 6-20), and the first layer's neighbour-weight share was 0.53.
+
+### Books: unlevered `earn_blackout` (`mv_abs_all`, $100M, trailing IC, costs, blackout), 2019-02-01 .. 2026-11-04
+
+| book | CAGR | vol | Sharpe | max DD | IR vs SPY [95% CI] | IR vs EW | turnover / mo | cost / yr | DSR (N=110) | gate |
+|---|---|---|---|---|---|---|---|---|---|---|
+| incumbent rerun | 15.6% | 14.9% | **1.04** | −27.7% | **−0.10** [−0.79, 0.51] | 0.27 | 19.2% | 1.87% | 0.847 | FAIL (b3, r5) |
+| `sn30_spill` | 14.3% | 15.1% | 0.96 | −28.9% | −0.20 [−0.87, 0.43] | 0.20 | 19.0% | 1.84% | 0.789 | FAIL (b3, r5) |
+| **`sn30_lazy`** (selected) | 14.6% | 15.0% | 0.99 | −28.0% | −0.17 [−0.84, 0.45] | 0.22 | 19.3% | 1.89% | 0.807 | FAIL (b3, r5) |
+| `sn30_graphtext` | 14.5% | 15.0% | 0.98 | −28.0% | −0.18 [−0.85, 0.46] | 0.21 | 18.8% | 1.84% | 0.803 | FAIL (b3, r5) |
+| `gnn_spill` | 14.6% | 14.5% | 1.01 | −27.3% | −0.18 [−0.86, 0.41] | 0.21 | 18.4% | 1.78% | 0.824 | FAIL (b3, r5) |
+
+The DSR uses 104 booked Sharpe ratios for the dispersion, with N = 110.
+
+**Selection** is the highest IR vs SPY with max DD ≥ −35%: `sn30_lazy`. It passes a1-a3, b1, b2 and c1 (0.160), and fails b3 (DSR 0.807) and r5 (IR −0.17).
+
+**Adoption rule** for `sn30_lazy` vs the incumbent rerun:
+
+| check | trial | required | result |
+|---|---|---|---|
+| Sharpe | 0.987 | ≥ 1.044 + 0.03 | fail |
+| IR vs SPY | −0.17 | ≥ −0.10 + 0.05 | fail |
+| max DD | −28.0% | not worse than −27.7% by more than 1 pp | pass |
+| tradable IC | 0.0741 | > 0.0734 | pass |
+| top-1000 IC | 0.0210 | ≥ 0.0208 | pass |
+
+**Not met: nothing is adopted.** Production (altall + `lev125`) is unchanged.
+
+### Feature importance of the new blocks (gain share, mean over 3 models x 8 folds)
+
+* **`sn30_spill`: 10.6% of importance** from 14 of 79 columns (uniform share would be 17.7%).
+  * E2 own 8.2%, E1 tnic 2.4%.
+  * `spill_own_n` is the model's 2nd most important feature (5.6%). It is a count of co-held neighbours, i.e. a 13F-breadth / size characteristic, not spillover.
+* **`sn30_lazy`: 2.8%.** The best lazy column (`lazy_jac`, 1.3%) ranks 29th.
+* **`sn30_graphtext`**: spill 10.0%, lazy 2.2%.
+* **`gnn_spill`**: fixed 50% blend weight. Inside the GNN, the neighbour path holds 53% of the first-layer weight norm.
+
+### Findings
+
+* **No new information at the book level.**
+  * The blocks raise weekly IC by at most +0.0007 (lazy, graphtext). That is 1/7 of the +0.005 bar used in Rounds 8-10, and on own-value rows the gain is ≤ +0.0011.
+  * Every book is worse than the incumbent: Sharpe −0.03 to −0.08, IR vs SPY −0.07 to −0.10.
+  * This repeats Rounds 9-10: standalone ICs are small and largely characteristics the model already has (size, breadth, own-return reversal).
+* **Spillover.** The only consistent link signal in the data report (63-day peer momentum, about +0.01) does not survive the model. The trees mostly use the neighbour counts.
+* **Lazy Prices.** On the completed corpus the similarity features have a +0.017-0.019 tradable standalone IC, ≈ 0 in the top-1000. The model gain is +0.0007 IC and no book gain.
+* **GNN.** The graph adds information inside the GNN (0.0676 → 0.0722 blended), but the GNN alone (0.061) is far weaker than the tree ensemble, so the 50/50 blend dilutes the incumbent. The GNN has the lowest volatility and drawdown of the five books, but a lower IR.
+
+### Caveats
+
+* All IR vs SPY CIs span zero, and DSR < 0.90 for every book, including the incumbent (0.847 at N = 110).
+* Both blocks together add +0.06 AUC on the survivorship probes, at the Round-10 tolerance.
+* The retrained date-permuted placebo imports future information and is not a valid null (see Leak checks).
+* TNIC is a single 2024 vintage. The 2023 pairs are carried forward to November 2026, and the file itself was posted in November 2024.
+* The GNN's free details (Adam at 1e-3, patience 10, max 100 epochs, best-epoch weights without refit) were fixed in the addendum and not tuned. A different fixed choice could score differently; it would be a new trial.
+
+### What a live data path would need (not built; the rule was not met)
+
+* **spill:** an annual manual TNIC download (static URL) plus the `farr` gvkey-CIK table refresh; the quarterly 13F data sets (the Round-9 path); weekly edge snapshots in the cloud job.
+* **lazy:** a daily EDGAR pull of new 10-K / 10-Q primary documents for the universe's CIKs (about 60 a day, ≤ 4 req/s, SEC User-Agent), the text reducer, and the prior-filing match.
+* **GNN:** the edge snapshots above, plus torch in the cloud runner.
