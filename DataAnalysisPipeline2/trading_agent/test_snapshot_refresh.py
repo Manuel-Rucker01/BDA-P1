@@ -12,7 +12,22 @@ from DataAnalysisPipeline2.trading_agent import altall, earnings, optimized
 from DataAnalysisPipeline2.trading_agent import snapshot_refresh as sr
 from DataAnalysisPipeline2.v3 import round11 as r11
 
-TODAY, END = "2026-11-07", "2026-11-06"
+# Every date below is derived from the committed snapshots (insider / earnings /
+# fundamentals as-of, last FINRA settlement), never hard-coded: the snapshots move
+# forward every month and these tests run right after each cloud refresh.
+D = pd.Timedelta(days=1)
+
+
+def _day(ts):
+    return str(pd.Timestamp(ts).date())
+
+
+def _alt_as_of(alt):
+    return pd.Timestamp(altall.read_snapshot(alt)["insider_as_of"]).normalize()
+
+
+def _earn_as_of(alt):
+    return pd.Timestamp(earnings.read_snapshot(alt)["as_of"]).normalize()
 
 
 @pytest.fixture
@@ -30,7 +45,7 @@ def _files(d):
 # --------------------------------------------------------------------------- #
 # alt data
 # --------------------------------------------------------------------------- #
-def _stale_alt(alt, fund, as_of="2026-10-30"):
+def _stale_alt(alt, fund, as_of):
     """Rewrite the copied snapshot as if it had been built on ``as_of``."""
     src = altall.read_snapshot(alt)
     ev = src["events"]
@@ -45,7 +60,9 @@ def test_altdata_topup_reproduces_the_full_snapshot(dirs):
     built directly from the full event table."""
     alt, fund = dirs
     full_src = altall.read_snapshot(alt)
-    full, old = _stale_alt(alt, fund)
+    END = _alt_as_of(alt)
+    TODAY, stale = END + D, END - 7 * D
+    full, old = _stale_alt(alt, fund, _day(stale))
     missing = full[~full["accession"].isin(set(old["accession"]))]
     calls = {}
 
@@ -57,14 +74,14 @@ def test_altdata_topup_reproduces_the_full_snapshot(dirs):
 
     info = sr.refresh_altdata(END, out=alt, fund_dir=fund, today=TODAY, refresh_insider=fake_insider,
                               refresh_si=lambda si, d, log=print: si)
-    assert calls["start"] == pd.Timestamp("2026-10-30") and calls["end"] == pd.Timestamp(END)
+    assert calls["start"] == stale and calls["end"] == END
     assert calls["has_universe"]
     assert info["insider_as_of"] == str(full_src["insider_as_of"].date()) and info["new_events"] == len(missing)
     got = altall.read_snapshot(alt)
     key = ["avail_date", "accession", "code", "shares", "price"]
     pd.testing.assert_frame_equal(got["events"].sort_values(key).reset_index(drop=True),
                                   full_src["events"].sort_values(key).reset_index(drop=True))
-    assert "incremental" in got["manifest"]["source"] and got["manifest"]["refreshed_from"] == "2026-10-30"
+    assert "incremental" in got["manifest"]["source"] and got["manifest"]["refreshed_from"] == _day(stale)
     altall.check_fresh(got, TODAY, 14)
 
 
@@ -79,19 +96,22 @@ def _si_with(settlement):
 def test_altdata_feed_not_reaching_end_fails_and_keeps_files(dirs):
     alt, fund = dirs
     before = _files(alt)
+    end = _alt_as_of(alt) + 14 * D
+    today = end + D
     with pytest.raises(sr.RefreshFailed, match="Form 4 feed only reached"):
-        sr.refresh_altdata("2026-11-20", out=alt, fund_dir=fund, today="2026-11-21",
+        sr.refresh_altdata(end, out=alt, fund_dir=fund, today=today,
                            refresh_insider=lambda src, end, ciks, b, log=print: src,      # nothing new
-                           refresh_si=_si_with("2026-11-14"))
+                           refresh_si=_si_with(today - 7 * D))
     assert _files(alt) == before
 
 
 def test_altdata_missing_finra_file_fails(dirs):
     alt, fund = dirs
     before = _files(alt)
-    # by 2026-11-30 the 2026-11-14 settlement is public; the snapshot ends 2026-10-15 and no download happens
+    # 60 days after the snapshot's last settlement two newer FINRA files are public; no download happens
+    today = pd.Timestamp(altall.read_snapshot(alt)["si"]["settlement_date"].max()).normalize() + 60 * D
     with pytest.raises(sr.RefreshFailed, match="FINRA"):
-        sr.refresh_altdata("2026-11-27", out=alt, fund_dir=fund, today="2026-11-30",
+        sr.refresh_altdata(today - 3 * D, out=alt, fund_dir=fund, today=today,
                            refresh_insider=lambda *a, **k: pytest.fail("insider refresh must not run"),
                            refresh_si=lambda si, d, log=print: si)
     assert _files(alt) == before
@@ -152,7 +172,7 @@ def test_earnings_nothing_covered_fails(dirs):
     alt, fund = dirs
     before = _files(alt)
     with pytest.raises(sr.RefreshFailed):
-        sr.refresh_earnings("2026-11-20", out=alt, fund_dir=fund,
+        sr.refresh_earnings(_earn_as_of(alt) + 14 * D, out=alt, fund_dir=fund,
                             fetch=lambda *a, **k: (pd.DataFrame(), None, {"days": 0}))
     assert _files(alt) == before
 
@@ -160,7 +180,7 @@ def test_earnings_nothing_covered_fails(dirs):
 def test_earnings_up_to_date_is_a_no_op(dirs):
     alt, fund = dirs
     before = _files(alt)
-    info = sr.refresh_earnings("2026-11-06", out=alt, fund_dir=fund,
+    info = sr.refresh_earnings(_earn_as_of(alt), out=alt, fund_dir=fund,
                                fetch=lambda *a, **k: pytest.fail("no fetch when up to date"))
     assert info["up_to_date"] and _files(alt) == before
 
@@ -174,18 +194,20 @@ def test_fundamentals_rebuild_is_staged_and_trimmed(dirs, monkeypatch):
     _, fund = dirs
     committed = pd.read_parquet(os.path.join(fund, "fundamentals_asof.parquet"))
     monkeypatch.setattr(sr, "build_fund_asof", lambda zp, ciks, log=print: committed.copy())
-    info = sr.refresh_fundamentals(out=fund, today="2026-11-07", zip_path="unused.zip")
-    assert info["as_of"] == "2026-11-05"
+    was = json.load(open(os.path.join(fund, "manifest.json")))
+    today = was["built"]                      # same 3-year window as the committed build
+    info = sr.refresh_fundamentals(out=fund, today=today, zip_path="unused.zip")
+    assert info["as_of"] == was["as_of"]
     got = pd.read_parquet(os.path.join(fund, "fundamentals_asof.parquet"))
     pd.testing.assert_frame_equal(got, committed, check_categorical=False)
     man = json.load(open(os.path.join(fund, "manifest.json")))
-    assert "companyfacts" in man["source"] and man["window_start"] == "2023-11-07"
+    assert "companyfacts" in man["source"] and man["window_start"] == was["window_start"]
 
     before = _files(fund)
-    older = committed[committed["last_filed"] < "2026-10-01"]
+    older = committed[committed["last_filed"] < pd.Timestamp(was["as_of"]) - 35 * D]
     monkeypatch.setattr(sr, "build_fund_asof", lambda zp, ciks, log=print: older.copy())
     with pytest.raises(sr.RefreshFailed, match="older"):
-        sr.refresh_fundamentals(out=fund, today="2026-11-07", zip_path="unused.zip")
+        sr.refresh_fundamentals(out=fund, today=today, zip_path="unused.zip")
     assert _files(fund) == before
 
 
@@ -208,9 +230,10 @@ def test_build_fund_asof_skips_missing_and_malformed(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------- #
 def test_verify_uses_the_bot_rules(dirs):
     alt, fund = dirs
-    ok = sr.verify("2026-11-07", alt_dir=alt, fund_dir=fund)
+    a = _alt_as_of(alt)
+    ok = sr.verify(a + D, alt_dir=alt, fund_dir=fund)
     assert ok["problems"] == [] and ok["altdata"]["insider_age_days"] == 1
-    late = sr.verify("2026-12-01", alt_dir=alt, fund_dir=fund)
+    late = sr.verify(a + 25 * D, alt_dir=alt, fund_dir=fund)
     assert any(p.startswith("altdata") for p in late["problems"])
     assert any(p.startswith("earnings") for p in late["problems"])
 
