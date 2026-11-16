@@ -45,7 +45,7 @@ jobs:
     timeout-minutes: 240
     env:
       SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
-      BDA_DATA_V3: ${{ runner.temp }}/bda_data_v3   # scratch only; nothing is read from it
+      BDA_DATA_V3: /tmp/bda_data_v3   # scratch only; nothing is read from it
       BDA_ALT_INSIDER_MAX_AGE_DAYS: ${{ vars.BDA_ALT_INSIDER_MAX_AGE_DAYS || '14' }}
     steps:
       - uses: actions/checkout@v4
