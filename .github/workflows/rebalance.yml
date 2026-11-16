@@ -20,12 +20,22 @@ name: Monthly rebalance (paper)
 
 on:
   schedule:
-    # Days 1-7 of each month, twice a day, inside US market hours in both EST and
-    # EDT. (Don't also restrict day-of-week: cron ORs day-of-month and day-of-week
-    # when both are set, which would fire on every weekday of the month.) Weekend
-    # runs and runs after the monthly rebalance are cheap no-ops.
-    - cron: "45 15 1-7 * *"
-    - cron: "15 18 1-7 * *"
+    # Days 1-7 of each month, five times a day (see the note on delays below).
+    # (Don't also restrict day-of-week: cron ORs day-of-month and day-of-week when
+    # both are set, which would fire on every weekday of the month.) Weekend runs
+    # and runs after the monthly rebalance are cheap no-ops.
+    #
+    # GitHub starts scheduled runs late: in 2026-11 the delay was 3.5-5.5 hours and
+    # three of four runs landed after the close. So the slots are spread from well
+    # before the open to mid-session: for any delay between 0 and ~5.5 h at least
+    # one run starts inside 14:30-20:00 UTC (market hours in both EST and EDT).
+    # Runs that land outside market hours are no-ops. Off-the-hour minutes are
+    # used because the top of the hour is the most congested.
+    - cron: "7 10 1-7 * *"
+    - cron: "7 12 1-7 * *"
+    - cron: "47 14 1-7 * *"
+    - cron: "37 16 1-7 * *"
+    - cron: "17 18 1-7 * *"
   workflow_dispatch:
     inputs:
       mode:
