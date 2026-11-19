@@ -70,3 +70,11 @@ changes a threshold, a trial or the adoption rule.
 13. **DSR.** The dispersion set is the 108 booked prior Sharpe ratios plus the
     5 Round-15 trials, with N = 115 (`gate.N_TRIALS_R15`). The gate rows are
     Round 13's (signal `sn30_altall_hd`, unchanged).
+
+## Post-run note (factual correction, added with the results; no change of method)
+
+Item 13 should read: "the dispersion set is the 104 booked prior Sharpe ratios
+plus the 5 Round-15 trials (109), with N = 115". The code asserted the prior
+count (`N_TRIALS_R8 + |R11| + |R12| + |R13| + |R14|` = 104, the same 104 used by
+Round 14) before any result was seen. "108" was a counting slip in the text.
+No book crashed and no bug fix was needed after the code commit.

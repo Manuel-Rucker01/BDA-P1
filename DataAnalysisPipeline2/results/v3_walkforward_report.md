@@ -1674,3 +1674,116 @@ The DSR uses 104 booked Sharpe ratios for the dispersion, with N = 110.
 * **spill:** an annual manual TNIC download (static URL) plus the `farr` gvkey-CIK table refresh; the quarterly 13F data sets (the Round-9 path); weekly edge snapshots in the cloud job.
 * **lazy:** a daily EDGAR pull of new 10-K / 10-Q primary documents for the universe's CIKs (about 60 a day, ≤ 4 req/s, SEC User-Agent), the text reducer, and the prior-filing match.
 * **GNN:** the edge snapshots above, plus torch in the cloud runner.
+
+## Round 15: intra-month crisis triggers on `lev125` (de-lever, de-risk, off-cycle rebalance), 5 trials, N = 115
+
+Pre-registered in `results/round15_preregistration.md` and `v3/gate.py` (`R15_*`, `adopt_r15`), commit 293af01, pushed before any trigger series was computed or any book was run. The implementation choices are in `results/round15_addendum.md`, commit 5f84b4a, which also holds the code and tests and was pushed before the five trial books were run. Code: `v3/round15.py`; tests: `v3/tests/test_round15.py`. Outputs (eval dir): `r15_{lev125,delev_vol,derisk_vol,rebal_vol,rebal_delev_vol,delev_dd}_{daily,log,events}.parquet`, `r15_check_base.json`, `results_r15.json`, `gate_r15.json`.
+
+**Verdict: no trial meets the adoption rule. Nothing is adopted and nothing is wired.** Production (altall + `lev125`) is unchanged. The selected trial, `delev_dd` (highest Sharpe, since none is adoptable), passes three of the four checks but fails on IR vs SPY.
+
+**Pre-registered limitation.** The window holds two or three real stress episodes: COVID 2020, the 2022 bear market and the April 2025 tariff shock. Every result below is descriptive. It shows what these rules would have done in those episodes, not that they work in general.
+
+**Triggers.** Both come from the stored `spy.parquet` only. VOL is the 21-day realised vol: ON above 25%, OFF below 20%. DD is the drawdown from the trailing 252-session high: ON at −10% or worse, OFF at −5% or better. The state at the close of d is traded at the close of d + 1.
+
+**Engineering check.** With the trigger disabled, the Round-15 runner reproduces `r13_lev125_daily` **exactly**. Over 1,951 sessions on the same index, max |diff| is 0.0 for `ret`, `stock` and `financing`, and for the per-rebalance costs. That book is the incumbent rerun below.
+
+The window is 2019-02-01 .. 2026-11-04. The DSR uses 109 booked Sharpe ratios for the dispersion (104 prior + 5), with N = 115.
+
+| book | CAGR | vol | Sharpe | max DD | max DD ex Feb-Apr 2020 | beta vs SPY | IR vs SPY [95% CI] | cost / yr | financing / yr | DSR (N=115) | gate |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| lev125 (incumbent rerun) | 17.92% | 18.66% | 0.977 | −33.97% | −20.78% | 0.79 | +0.124 [−0.54, 0.77] | 2.33% | 0.94% | 0.790 | FAIL (b3) |
+| `delev_vol` | 16.58% | 17.05% | 0.985 | −28.88% | −21.30% | 0.71 | +0.004 [−0.65, 0.62] | 2.37% | 0.85% | 0.796 | FAIL (b3) |
+| `derisk_vol` | 13.27% | 14.85% | 0.914 | **−23.80%** | −23.80% | 0.55 | −0.232 [−0.88, 0.36] | 2.48% | 0.85% | 0.736 | FAIL (b3, r5) |
+| `rebal_vol` | 17.57% | 18.65% | 0.962 | −34.11% | −20.32% | 0.79 | +0.099 [−0.56, 0.75] | 2.41% | 0.94% | 0.778 | FAIL (b3) |
+| `rebal_delev_vol` | 16.36% | 17.06% | 0.974 | −29.02% | −20.94% | 0.70 | −0.012 [−0.68, 0.60] | 2.42% | 0.85% | 0.787 | FAIL (b3, r5) |
+| **`delev_dd`** (selected) | 17.05% | 16.62% | **1.031** | −29.79% | **−18.17%** | 0.68 | +0.031 [−0.62, 0.63] | 2.29% | 0.75% | **0.830** | FAIL (b3) |
+| SPY | 16.14% | 18.87% | 0.888 | −33.79% | −24.50% | 1 | – | – | – | – | – |
+
+Cost / yr includes the trigger trades. The pro-rata scaling share of it is 0.17% for `delev_vol`, 0.53% for `derisk_vol`, 0.09% for `rebal_delev_vol` and 0.15% for `delev_dd`. Every optimizer solve was `solved`.
+
+### Trigger diagnostics (book window, detection dates d; trades at d + 1)
+
+| trigger | ON episodes | sessions ON | share of time ON | episodes (ON .. OFF detection) |
+|---|---|---|---|---|
+| VOL | 6 | 241 | 12.4% | 2020-03-02..06-02; 2020-06-11..07-13; 2022-03-09..04-07; 2022-05-04..07-26; 2022-10-03..12-12; 2025-04-03..05-16 |
+| DD | 6 (1 already ON at the window start) | 416 | 21.3% | 2019-02-01*..02-15; 2020-02-27..06-08; 2020-06-11..07-14; 2022-02-22..03-25; 2022-04-22..2023-04-21; 2025-03-13..05-12 |
+
+\* The DD machine runs from 2016-01-04 and was ON from late 2018, so `delev_dd` starts the book at 1.00x and scales up on 2019-02-19.
+
+* **Off-cycle rebalances.** `rebal_vol` and `rebal_delev_vol` each did 6, one per VOL episode. None was skipped, because no OFF -> ON trade session fell on a scheduled rebalance.
+* **Pro-rata scalings.** `delev_vol` and `derisk_vol` each did 12, `rebal_delev_vol` 6 (the OFF events) and `delev_dd` 11.
+* **State changes on scheduled rebalance sessions:** none.
+* **Trigger levels.** The peak rv21 in the window was 87% (March 2020). The deepest 252-day SPY drawdown was −33.8%.
+* **Detection lag in COVID.** SPY peaked on 2020-02-19. DD fired on 02-27 (traded 02-28) and VOL on 03-02 (traded 03-03).
+
+### Per episode (5 sessions before the ON detection .. 21 sessions after the OFF detection): return / max DD
+
+| trigger | window | lev125 | delev_vol | derisk_vol | rebal_vol | rebal_delev_vol | delev_dd | SPY |
+|---|---|---|---|---|---|---|---|---|
+| VOL | 2020-02-24 .. 07-01 | 8.5% / −33.7% | 4.9% / −28.6% | −4.0% / −18.6% | 5.5% / −33.9% | 2.6% / −28.8% | 3.3% / −29.5% | −5.9% / −32.8% |
+| VOL | 2020-06-04 .. 08-11 | 7.3% / −6.3% | 5.4% / −6.2% | 0.9% / −6.0% | 5.0% / −6.3% | 3.5% / −6.2% | 4.5% / −6.2% | 7.1% / −6.9% |
+| VOL | 2022-03-02 .. 05-09 | −1.0% / −8.2% | −2.3% / −8.0% | −5.0% / −7.9% | −0.9% / −8.1% | −2.2% / −7.8% | −0.7% / −7.4% | −7.1% / −13.7% |
+| VOL | 2022-04-27 .. 08-24 | −1.3% / −11.9% | −0.4% / −9.4% | −0.7% / −5.7% | −0.9% / −11.8% | −0.1% / −9.4% | −0.5% / −9.4% | −0.2% / −14.5% |
+| VOL | 2022-09-26 .. 2023-01-12 | 14.6% / −4.9% | 11.8% / −4.8% | 6.0% / −4.7% | 14.6% / −4.9% | 11.8% / −4.8% | 12.0% / −3.9% | 8.4% / −7.2% |
+| VOL | 2025-03-27 .. 06-17 | −4.5% / −13.2% | −6.3% / −12.6% | −9.8% / −11.4% | −4.7% / −13.2% | −6.3% / −12.6% | −3.6% / −10.6% | 5.1% / −12.7% |
+| DD | 2019-02-01 .. 03-19 (clipped) | 4.3% / −2.1% | 4.3% / −2.1% | 4.3% / −2.1% | 4.3% / −2.1% | 4.3% / −2.1% | 3.5% / −2.1% | 5.2% / −2.1% |
+| DD | 2020-02-20 .. 07-08 | 13.1% / −33.8% | 8.5% / −28.7% | −2.3% / −18.6% | 10.2% / −33.9% | 6.3% / −28.8% | 6.8% / −29.6% | −5.6% / −33.8% |
+| DD | 2020-06-04 .. 08-12 | 8.1% / −6.3% | 6.2% / −6.2% | 1.7% / −6.0% | 5.8% / −6.3% | 4.3% / −6.2% | 5.4% / −6.2% | 8.6% / −6.9% |
+| DD | 2022-02-14 .. 04-26 | 1.7% / −5.4% | −0.0% / −5.4% | −3.3% / −5.4% | 1.7% / −5.4% | 0.0% / −5.4% | 0.7% / −5.1% | −5.2% / −9.8% |
+| DD | 2022-04-14 .. 2023-05-22 | −4.2% / −19.7% | −5.6% / −19.0% | −10.7% / −18.9% | −3.6% / −19.3% | −5.2% / −18.6% | −3.0% / −16.0% | −3.9% / −19.2% |
+| DD | 2025-03-06 .. 06-11 | −5.6% / −15.4% | −7.4% / −14.8% | −10.8% / −13.6% | −5.8% / −15.4% | −7.4% / −14.8% | −5.1% / −13.3% | 3.4% / −14.6% |
+
+### COVID window (2020-02-19 .. 03-23) and calendar 2022
+
+| book | COVID return (= max DD) | 2022 return | 2022 max DD |
+|---|---|---|---|
+| lev125 | −34.0% | −6.8% | −20.8% |
+| delev_vol | −28.9% | −9.7% | −21.3% |
+| derisk_vol | −18.9% | −17.2% | −23.8% |
+| rebal_vol | −34.1% | −6.3% | −20.3% |
+| rebal_delev_vol | −29.0% | −9.3% | −20.9% |
+| delev_dd | −29.8% | −6.6% | −18.2% |
+| SPY | −33.5% (max DD −33.8%) | −18.2% | −24.5% |
+
+### Adoption rule (gate pass, or all four checks vs the incumbent rerun)
+
+The incumbent rerun has Sharpe 0.977, max DD −33.97%, CAGR 17.92% and IR +0.124. The four checks are:
+
+* DD: max DD ≥ −30.97%.
+* Sharpe: ≥ 0.947.
+* CAGR: ≥ 16.92%.
+* IR: ≥ +0.074.
+
+No trial passes the gate (all fail b3).
+
+| trial | max DD gain ≥ 3.0 pt | Sharpe ≥ inc − 0.03 | CAGR ≥ inc − 1.0 pt | IR vs SPY ≥ inc − 0.05 | adoptable |
+|---|---|---|---|---|---|
+| delev_vol | pass (+5.1) | pass (0.985) | **fail** (16.58%, −1.34) | **fail** (+0.004) | no |
+| derisk_vol | pass (+10.2) | **fail** (0.914) | **fail** (13.27%) | **fail** (−0.232) | no |
+| rebal_vol | **fail** (−0.1) | pass (0.962) | pass (17.57%) | pass (+0.099) | no |
+| rebal_delev_vol | pass (+5.0) | pass (0.974) | **fail** (16.36%) | **fail** (−0.012) | no |
+| delev_dd | pass (+4.2) | pass (1.031) | pass (17.05%, −0.87) | **fail** (+0.031, −0.093) | no |
+
+**Selected:** `delev_dd` (highest Sharpe, reported only, not adopted). **Nothing changes in production.**
+
+### Findings
+
+* **De-levering reduces the COVID drawdown by 4-5 points, but it pays for that in return.**
+  * `delev_vol`, `rebal_delev_vol` and `delev_dd` cut the max DD from −34.0% to −28.9 .. −29.8%. Almost all of that gain is COVID: ex Feb-Apr 2020 the max DD is unchanged or slightly worse, except `delev_dd` (−18.2% vs −20.8%).
+  * They give back 0.9-1.6 points of CAGR and 0.09-0.14 of IR vs SPY. The rule's IR check is the one they all fail.
+  * The incumbent's IR edge over SPY comes from beta 0.79 levered through the recoveries. Cutting exposure in high-vol periods removes it.
+* **The cost is in the recoveries.** VOL turns OFF only once realised vol falls below 20%, and DD only once SPY is back within 5% of its high. Both happen well after the rebound has started.
+  * In April-June 2020, `lev125` made +8.5% over the VOL episode and `delev_vol` +4.9%.
+  * In Q4 2022 the gap was 14.6% vs 11.8%.
+  * The April 2025 shock was a fast V and the levered book recovered without the trigger.
+* **`derisk_vol` (0.5x)** has the smallest max DD (−23.8%; COVID −18.9% vs −34.0%). But it loses 4.7 points of CAGR, and its 2022 is much worse (−17.2%): it went to 0.5x after the first leg down and re-levered just before the next leg. It fails three of the four checks.
+* **The off-cycle rebalance on its own (`rebal_vol`) does nothing useful.** The optimizer's new book at the ON event turned over only 2-7% one-way in most episodes (28% in June 2020). The drawdown was −34.1%, the same as the incumbent.
+* **DD reacted earlier in COVID than VOL** (02-27 vs 03-02) and stayed ON through 2022 (250 sessions). That is why `delev_dd` has the best Sharpe (1.031), the best ex-COVID DD and the best 2022 max DD. Its IR still falls from +0.124 to +0.031.
+* As expected from the spec, no rule could avoid the first leg of the fast February 2020 crash. Every triggered book still lost 29-34% in the COVID window, except the 0.5x book.
+
+### Caveats
+
+* Two or three real episodes. The comparison is descriptive and every IR CI spans zero. No book reaches DSR 0.90; the incumbent is at 0.790 at N = 115.
+* `delev_dd` starts the window at 1.00x for its first 12 sessions, because the DD machine runs from 2016 (addendum item 1). This makes no material difference: those sessions return 3.5% vs 4.3%.
+* The addendum's item 13 says "108 booked prior Sharpe ratios". The correct count, enforced by the code's assertion, is 104 prior + 5 = 109, as in Round 14's 104. This is a wording error in the addendum, not a change of method.
+* Book costs are at $100M AUM. Scaling trades use the stock cost model at the latest weekly decision date's spreads, sigma and ADV.
