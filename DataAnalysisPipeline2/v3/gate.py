@@ -936,3 +936,62 @@ def adopt_r14(trial: dict, inc: dict, passed_gate: bool) -> dict:
     return {"passed_gate": bool(passed_gate), "checks": checks,
             "rule_met": bool(passed_gate or all(checks.values())),
             "needs_live_data_path": True}
+
+
+# --------------------------------------------------------------------------- #
+# Round 15 (pre-registered 2026-11-19; results/round15_preregistration.md,
+# committed before any Round-15 book was run): intra-month crisis triggers on
+# the Round-13 lev125 book. Triggers from SPY daily returns only, state known at
+# the close of d acted on at the close of d + 1.
+#  VOL: rv21 = sqrt(252) * std(ddof=1) of the last R15_VOL_WINDOW SPY returns;
+#       OFF -> ON above R15_VOL_ON, ON -> OFF below R15_VOL_OFF.
+#  DD:  close / trailing-R15_DD_WINDOW-session max close - 1; OFF -> ON at or
+#       below R15_DD_ON, ON -> OFF at or above R15_DD_OFF.
+# R15_SPECS: trial -> (trigger, leverage while ON, off-cycle rebalance at each
+# OFF -> ON event). Leverage while OFF = R13_LEV. Gate = Round 11's at N = 115.
+# --------------------------------------------------------------------------- #
+R15_BASE_TRIAL = "lev125"
+R15_TRIALS = ("delev_vol", "derisk_vol", "rebal_vol", "rebal_delev_vol", "delev_dd")
+R15_SPECS = {
+    "delev_vol": ("vol", 1.00, False),
+    "derisk_vol": ("vol", 0.50, False),
+    "rebal_vol": ("vol", 1.25, True),
+    "rebal_delev_vol": ("vol", 1.00, True),
+    "delev_dd": ("dd", 1.00, False),
+}
+R15_VOL_WINDOW = 21
+R15_VOL_ON = 0.25
+R15_VOL_OFF = 0.20
+R15_DD_WINDOW = 252
+R15_DD_ON = -0.10
+R15_DD_OFF = -0.05
+R15_EPISODE_PRE = 5
+R15_EPISODE_POST = 21
+R15_COVID = R12_COVID
+R15_ADOPT_DD_GAIN = 0.03
+R15_ADOPT_SHARPE_TOL = 0.03
+R15_ADOPT_CAGR_TOL = 0.010
+R15_ADOPT_IR_TOL = 0.05
+N_TRIALS_R15 = N_TRIALS_R14 + len(R15_TRIALS)                           # 110 + 5 = 115
+
+
+def adopt_r15(trials: dict, inc: dict, passed_gate: dict) -> dict:
+    """Pre-registered adoption rule vs the incumbent lev125 rerun. ``trials``:
+    name -> {sharpe, max_dd, cagr, ir_spy}; ``inc``: same keys; ``passed_gate``:
+    name -> bool. Selected = highest Sharpe among the adoptable, else the highest
+    Sharpe overall (reported, not adopted)."""
+    out = {"per_trial": {}, "adoptable": [], "selected": None, "adopt": False}
+    for k, v in trials.items():
+        checks = {"max_dd": v["max_dd"] - inc["max_dd"] >= R15_ADOPT_DD_GAIN - 1e-12,
+                  "sharpe": v["sharpe"] >= inc["sharpe"] - R15_ADOPT_SHARPE_TOL - 1e-12,
+                  "cagr": v["cagr"] >= inc["cagr"] - R15_ADOPT_CAGR_TOL - 1e-12,
+                  "ir_spy": v["ir_spy"] >= inc["ir_spy"] - R15_ADOPT_IR_TOL - 1e-12}
+        ok = bool(passed_gate.get(k, False) or all(checks.values()))
+        out["per_trial"][k] = {"passed_gate": bool(passed_gate.get(k, False)), "checks": checks, "adoptable": ok}
+        if ok:
+            out["adoptable"].append(k)
+    pool = out["adoptable"] or list(trials)
+    if pool:
+        out["selected"] = max(pool, key=lambda k: trials[k]["sharpe"])
+        out["adopt"] = bool(out["adoptable"])
+    return out
