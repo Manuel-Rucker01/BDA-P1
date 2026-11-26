@@ -1,10 +1,9 @@
 {
- "insider_as_of": "2026-11-13",
- "insider_last_filing": "2026-11-13",
- "insider_window_start": "2025-10-09",
- "si_last_settlement": "2026-10-30",
+ "insider_as_of": "2026-11-25",
+ "insider_last_filing": "2026-11-25",
+ "insider_window_start": "2025-10-21",
+ "si_last_settlement": "2026-11-13",
  "si_settlements": [
-  "2026-06-30",
   "2026-07-15",
   "2026-07-31",
   "2026-08-14",
@@ -12,18 +11,19 @@
   "2026-09-15",
   "2026-09-30",
   "2026-10-15",
-  "2026-10-30"
+  "2026-10-30",
+  "2026-11-13"
  ],
- "built": "2026-11-16",
+ "built": "2026-11-26",
  "rows": {
-  "insider_events": 123153,
-  "finra_si": 116769
+  "insider_events": 125560,
+  "finra_si": 117043
  },
  "bytes": {
-  "insider_events.parquet": 2364545,
-  "finra_si.parquet": 1452318
+  "insider_events.parquet": 2407065,
+  "finra_si.parquet": 1445516
  },
  "source": "incremental top-up from the committed snapshot (trading_agent/snapshot_refresh.py): EDGAR daily Form 4/5 feed + FINRA bi-monthly files on top of the previous snapshot",
  "note": "Refresh before each monthly rebalance: `python -m DataAnalysisPipeline2.v3.altlive refresh` then `python -m DataAnalysisPipeline2.trading_agent.altall snapshot`; the bot rejects it when the insider feed is older than BDA_ALT_INSIDER_MAX_AGE_DAYS or a FINRA file that is already public is missing.",
- "refreshed_from": "2026-11-06"
+ "refreshed_from": "2026-11-13"
 }

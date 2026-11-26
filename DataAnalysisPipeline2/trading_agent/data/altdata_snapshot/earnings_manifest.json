@@ -1,13 +1,13 @@
 {
- "as_of": "2026-11-13",
- "built": "2026-11-16",
+ "as_of": "2026-11-25",
+ "built": "2026-11-26",
  "keep_per_cik": 3,
- "rows": 12350,
- "ciks": 4309,
- "last_event": "2026-11-13",
- "bytes": 46724,
+ "rows": 12380,
+ "ciks": 4322,
+ "last_event": "2026-11-25",
+ "bytes": 46730,
  "source": "incremental top-up from the committed snapshot (trading_agent/snapshot_refresh.py): EDGAR daily index + per-CIK submissions JSON (v3/earnlive.fetch) on top of the previous snapshot's retained events",
  "note": "Round-11 earn_blackout input. Refresh: `python -m DataAnalysisPipeline2.v3.altlive refresh` then `python -m DataAnalysisPipeline2.trading_agent.altall snapshot`; the bot skips the blackout when as_of is older than BDA_EARN_MAX_AGE_DAYS before the decision date.",
- "raw_8k_202_events_added": 743,
- "refreshed_from": "2026-11-06"
+ "raw_8k_202_events_added": 296,
+ "refreshed_from": "2026-11-13"
 }
