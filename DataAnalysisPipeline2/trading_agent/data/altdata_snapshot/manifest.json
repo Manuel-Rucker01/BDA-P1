@@ -14,7 +14,7 @@
   "2026-10-30",
   "2026-11-13"
  ],
- "built": "2026-11-26",
+ "built": "2026-11-27",
  "rows": {
   "insider_events": 125560,
   "finra_si": 117043
@@ -25,5 +25,5 @@
  },
  "source": "incremental top-up from the committed snapshot (trading_agent/snapshot_refresh.py): EDGAR daily Form 4/5 feed + FINRA bi-monthly files on top of the previous snapshot",
  "note": "Refresh before each monthly rebalance: `python -m DataAnalysisPipeline2.v3.altlive refresh` then `python -m DataAnalysisPipeline2.trading_agent.altall snapshot`; the bot rejects it when the insider feed is older than BDA_ALT_INSIDER_MAX_AGE_DAYS or a FINRA file that is already public is missing.",
- "refreshed_from": "2026-11-13"
+ "refreshed_from": "2026-11-25"
 }
